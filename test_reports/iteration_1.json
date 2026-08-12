@@ -1,0 +1,59 @@
+{
+  "summary": "First E2E run of PromoOS. Backend: 24/24 pytest tests passed (auth, register, workspace/brand, team, coupons CRUD, state transitions, bulk codes, validate, redeem success + duplicate 429, dashboard stats, analytics timeseries, AI copy, AI image, viewer 403 role gating). Frontend: login, dashboard metrics + AI recs (3) + top-campaigns table + 14-day chart, sidebar navigation across all 9 modules, coupons list with state filters + search, AI Copilot Generate Copy populated name/headline/description/terms/CTA/type/discount (Claude sonnet-5, ~4s), AI Generate Visual produced a real 1.1MB base64 promo image 1376x768 (~8s, Gemini nano-banana), Save creates coupon, coupon detail QR present, bulk-codes generated 5 codes, Settings brand save + team listing (owner/marketer/viewer), Analytics renders 3 charts, viewer role blocked with 403 + 'Viewers have read-only access' toast on both create-coupon and brand-save. One real backend bug found: POST /api/coupons/redeem only computes discount for type=='percentage' or 'fixed'; all other types (flash_sale, seasonal, vip, first_time, birthday, bogo, free_shipping, referral) always return discount=0.",
+  "ai_features_tested": [
+    "AI Copy (Claude claude-sonnet-5 via emergentintegrations) - pass - evidence: POST /api/ai/copy returned {name:'Summer Swim New Customer Sale', type:'flash_sale', discount_value:25, headline:'New Here? Dive Into 25% Off!', description:'First-time customers get 25% off our entire summer swimwear collection. Sale ends Sunday...', terms/cta populated}. Frontend UI: prompt->Generate Copy filled all fields, Live Preview reflected the AI headline. Backend pytest test_ai_copy_generates_json passed. skill: ai-testing-llm",
+    "AI Image (Gemini gemini-3.1-flash-image-preview via emergentintegrations) - pass - evidence: POST /api/ai/image returned data:image/... base64 of ~1,096,755 chars decoding to a valid PIL Image format=PNG size 1376x768 stddev>5 (non-blank). Frontend: Generate Visual button rendered image in preview card in ~8s (below the 15-40s expected window). Backend pytest test_ai_image_generates_real_image passed. skill: ai-testing-image-video"
+  ],
+  "skills_loaded": ["ai-testing-core", "ai-testing-llm", "ai-testing-image-video"],
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/coupons/redeem",
+        "issue": "Discount is only computed when coupon.type is 'percentage' or 'fixed'. For every other seeded/allowed type (flash_sale, seasonal, vip, first_time, birthday, bogo, free_shipping, referral) the server returns discount=0 and revenue=amount, even though discount_value is set. E.g. redeeming SUMMER25 (type=flash_sale, discount_value=25) with amount=100 returns {discount: 0, revenue: 100} instead of {discount: 25, revenue: 75}. The seed itself acknowledges this by computing 'disc = amt * val / 100 if typ in (percentage, flash_sale, seasonal, vip, first_time, birthday) else 0' but the runtime /redeem endpoint (server.py lines ~351-356) does not follow the same rule. This means the Redeem Sandbox in the UI on Top Campaigns like SUMMER25 will show $0 discount.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Redeem Sandbox on a newly-created Draft coupon",
+        "issue": "Clicking test-redeem-btn on a draft-state coupon triggers a backend 400 ('Coupon is draft'). The result panel stays empty and only a transient toast surfaces. Suggest disabling the Redeem button (or auto-hinting) unless coupon.state=='active'. Backend correct; UX confusing.",
+        "affected_selectors": ["[data-testid=\"test-redeem-btn\"]", "[data-testid=\"redeem-result\"]"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Multiple pages during initial load",
+        "issues": ["Recharts prints repeated 'width(-1) and height(-1) of chart should be greater than 0' warnings on hidden/collapsed containers. No visual impact but noisy console."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix POST /api/coupons/redeem discount calculation to handle every valid coupon.type (flash_sale, seasonal, vip, first_time, birthday, bogo, free_shipping, referral). Simplest: treat all percentage-like types as percentage of amount, free_shipping as fixed shipping cost or 0-discount but revenue=amount, bogo as ~50% off subject to product logic. At minimum align it with the discount formula used in the seed function.",
+    "Improve Redeem Sandbox UX: either disable the Redeem button when coupon.state!='active', or render an inline error in the result box on 400 explaining the state, instead of relying only on the toast."
+  ],
+  "critical_code_review_comments": [
+    "server.py /api/coupons/redeem discount branch does not cover all supported types (see critical bug).",
+    "server.py seed() runs only once (early-return if admin exists) — good for idempotency but any password change in .env won't propagate. Consider hashing-based update on startup.",
+    "No test-data cleanup: parallel test runs leave TEST_ prefixed coupons in the seeded workspace (grew from 7 -> 47 during this iteration). Consider a cleanup fixture or a dedicated TEST workspace.",
+    "AI copy endpoint parses the first {...} block via regex; if Claude ever includes multiple JSON blocks or nested braces before the payload, parse_json_block may misparse. A more robust approach: request response_format json / use a stricter parser.",
+    "Frontend CouponEditor default state='draft' with Redeem Sandbox reachable via detail page—consider surfacing the active/draft distinction earlier in the sandbox area."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@promoos.com/admin123 (owner), marketer@promoos.com/marketer123, viewer@promoos.com/viewer123",
+  "seed_data_creation": "Backend auto-seeds 3 users + 7 sample coupons + fake redemptions. Test runs added extra TEST_ coupons (visible growth 7 -> 47 across this iteration).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest at /app/backend/tests/backend_test.py runs green (24 tests, ~16s) — call with `REACT_APP_BACKEND_URL=<url> pytest tests/backend_test.py`. Both real AI providers (Claude sonnet-5 and Gemini nano-banana) are working via EMERGENT_LLM_KEY. Only real bug: /api/coupons/redeem discount math is percentage/fixed-only; test test_redeem_success_and_stats_increment now uses a freshly-created percentage coupon to sidestep this, but a follow-up test should be added asserting non-zero discount for flash_sale/first_time once the fix ships. UI redeem sandbox on a draft coupon returns a toast-only 400 — consider inline error.",
+  "rca of the issue": "In server.py POST /api/coupons/redeem: `if c['type'] == 'percentage': discount = body.amount * c['discount_value'] / 100 elif c['type'] == 'fixed': discount = min(...); else: discount = 0`. The elif chain has no branch for other coupon types even though they carry discount_value (e.g. SUMMER25 has type=flash_sale, discount_value=25). Reproduction: login as owner, POST /api/coupons/redeem {code:'SUMMER25', amount:100, customer:'x'} -> 200 {ok:true, discount:0, revenue:100}. Mitigation: extend the elif to treat flash_sale/seasonal/vip/first_time/birthday as percentage, bogo as ~50% (or the intended business rule), free_shipping as 0 discount but perhaps a shipping-cost field, referral as fixed or percentage per business intent. Ideally mirror the formula used in the seed() function."
+}

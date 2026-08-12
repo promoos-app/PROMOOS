@@ -1,0 +1,63 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@500,700,800,900&f[]=satoshi@400,500,700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0A0A0A;
+  --surface: #141414;
+  --surface-hover: #1E1E1E;
+  --border: #27272A;
+  --text: #FAFAFA;
+  --text-dim: #A1A1AA;
+  --cobalt: #005CEE;
+  --cobalt-hover: #004BCC;
+  --lime: #CCFF00;
+}
+
+* { border-color: var(--border); }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Satoshi', -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display { font-family: 'Cabinet Grotesk', sans-serif; }
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: #2a2a2e; border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: #3a3a3e; }
+
+::selection { background: var(--lime); color: #0A0A0A; }
+
+.surface { background: var(--surface); border: 1px solid var(--border); }
+.card-hover { transition: transform .15s ease, border-color .15s ease, background-color .15s ease; }
+.card-hover:hover { transform: translateY(-1px); border-color: #3a3a3e; }
+
+.ai-glow {
+  position: relative;
+  border: 1px solid rgba(204,255,0,0.35);
+  box-shadow: 0 0 0 1px rgba(204,255,0,0.08), inset 0 0 24px rgba(204,255,0,0.04);
+}
+
+.btn-primary { background: var(--cobalt); color: #fff; transition: background-color .15s ease; }
+.btn-primary:hover { background: var(--cobalt-hover); }
+.btn-ai { background: var(--lime); color: #0A0A0A; transition: filter .15s ease; }
+.btn-ai:hover { filter: brightness(1.08); }
+
+@keyframes fadeUp { from { opacity:0; transform: translateY(8px);} to {opacity:1; transform:translateY(0);} }
+.fade-up { animation: fadeUp .4s ease both; }
+
+@keyframes spin360 { to { transform: rotate(360deg);} }
+.spin { animation: spin360 .8s linear infinite; }
+
+.grain::before {
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0; opacity:0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}

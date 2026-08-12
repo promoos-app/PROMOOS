@@ -1,0 +1,563 @@
+from dotenv import load_dotenv
+from pathlib import Path
+import os
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field, EmailStr
+from typing import List, Optional, Dict, Any
+import uuid, logging, jwt, bcrypt, io, base64, json, random, string, re
+from datetime import datetime, timezone, timedelta
+import qrcode
+
+mongo_url = os.environ['MONGO_URL']
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ['DB_NAME']]
+
+JWT_SECRET = os.environ['JWT_SECRET']
+JWT_ALGO = "HS256"
+EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
+
+app = FastAPI()
+api = APIRouter(prefix="/api")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("promoos")
+
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_password(pw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode(), hashed.encode())
+    except Exception:
+        return False
+
+
+def create_token(user_id: str, email: str) -> str:
+    payload = {"sub": user_id, "email": email,
+               "exp": datetime.now(timezone.utc) + timedelta(days=7)}
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+
+
+async def get_current_user(request: Request) -> dict:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401, "Not authenticated")
+    token = auth[7:]
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Invalid token")
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(401, "User not found")
+    return user
+
+
+def require_writer(user: dict):
+    if user.get("role") == "viewer":
+        raise HTTPException(403, "Viewers have read-only access")
+
+
+# ---------------- Models ----------------
+class RegisterIn(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    workspace_name: Optional[str] = None
+
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class BrandIn(BaseModel):
+    name: Optional[str] = None
+    logo_url: Optional[str] = None
+    primary_color: Optional[str] = None
+    secondary_color: Optional[str] = None
+    font: Optional[str] = None
+    currency: Optional[str] = None
+
+
+class CouponRules(BaseModel):
+    min_cart: float = 0
+    scope: str = "all"          # all | product | category
+    scope_value: str = ""
+    usage_limit: int = 0        # 0 = unlimited
+    per_customer_limit: int = 1
+    stackable: bool = False
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
+class CouponIn(BaseModel):
+    name: str
+    type: str = "percentage"
+    discount_value: float = 0
+    code: Optional[str] = None
+    headline: str = ""
+    description: str = ""
+    terms: str = ""
+    cta: str = ""
+    state: str = "draft"
+    rules: CouponRules = Field(default_factory=CouponRules)
+    image_url: Optional[str] = None
+
+
+class StateIn(BaseModel):
+    state: str
+
+
+class BulkIn(BaseModel):
+    count: int = 10
+
+
+class ValidateIn(BaseModel):
+    code: str
+    cart_value: float = 0
+
+
+class RedeemIn(BaseModel):
+    code: str
+    amount: float = 0
+    customer: Optional[str] = None
+
+
+class AICopyIn(BaseModel):
+    prompt: str
+
+
+class AIImageIn(BaseModel):
+    prompt: str
+
+
+# ---------------- QR ----------------
+def gen_qr(data: str) -> str:
+    qr = qrcode.QRCode(version=1, box_size=8, border=2)
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="#0A0A0A", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def rand_code(prefix="SAVE"):
+    return prefix + "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+
+# ---------------- Auth routes ----------------
+@api.post("/auth/register")
+async def register(body: RegisterIn):
+    email = body.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "Email already registered")
+    ws_id = str(uuid.uuid4())
+    workspace = {
+        "id": ws_id,
+        "name": body.workspace_name or f"{body.name}'s Workspace",
+        "logo_url": "", "primary_color": "#005CEE", "secondary_color": "#CCFF00",
+        "font": "Cabinet Grotesk", "currency": "USD", "created_at": now_iso(),
+    }
+    await db.workspaces.insert_one(workspace)
+    uid = str(uuid.uuid4())
+    user = {"id": uid, "name": body.name, "email": email,
+            "password_hash": hash_password(body.password), "role": "owner",
+            "workspace_id": ws_id, "created_at": now_iso()}
+    await db.users.insert_one(user)
+    token = create_token(uid, email)
+    return {"token": token, "user": {k: user[k] for k in ("id", "name", "email", "role", "workspace_id")}}
+
+
+@api.post("/auth/login")
+async def login(body: LoginIn):
+    email = body.email.lower()
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(401, "Invalid email or password")
+    token = create_token(user["id"], email)
+    return {"token": token, "user": {k: user[k] for k in ("id", "name", "email", "role", "workspace_id")}}
+
+
+@api.get("/auth/me")
+async def me(user: dict = Depends(get_current_user)):
+    return user
+
+
+# ---------------- Workspace ----------------
+@api.get("/workspace")
+async def get_workspace(user: dict = Depends(get_current_user)):
+    ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0})
+    return ws
+
+
+@api.put("/workspace/brand")
+async def update_brand(body: BrandIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    if upd:
+        await db.workspaces.update_one({"id": user["workspace_id"]}, {"$set": upd})
+    return await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0})
+
+
+@api.get("/team")
+async def team(user: dict = Depends(get_current_user)):
+    members = await db.users.find(
+        {"workspace_id": user["workspace_id"]},
+        {"_id": 0, "password_hash": 0}).to_list(100)
+    return members
+
+
+# ---------------- Coupons ----------------
+def coupon_public(c: dict) -> dict:
+    c.pop("_id", None)
+    return c
+
+
+@api.get("/coupons")
+async def list_coupons(user: dict = Depends(get_current_user), state: Optional[str] = None):
+    q = {"workspace_id": user["workspace_id"]}
+    if state and state != "all":
+        q["state"] = state
+    coupons = await db.coupons.find(q, {"_id": 0, "qr_code": 0}).sort("created_at", -1).to_list(500)
+    return coupons
+
+
+@api.post("/coupons")
+async def create_coupon(body: CouponIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    code = (body.code or rand_code()).upper()
+    cid = str(uuid.uuid4())
+    doc = {
+        "id": cid, "workspace_id": user["workspace_id"],
+        "name": body.name, "type": body.type, "discount_value": body.discount_value,
+        "code": code, "codes": [], "headline": body.headline, "description": body.description,
+        "terms": body.terms, "cta": body.cta or "Claim Offer", "state": body.state,
+        "rules": body.rules.model_dump(), "image_url": body.image_url or "",
+        "qr_code": gen_qr(code),
+        "stats": {"impressions": 0, "clicks": 0, "redemptions": 0, "revenue": 0.0},
+        "created_at": now_iso(),
+    }
+    await db.coupons.insert_one(doc)
+    return coupon_public(doc)
+
+
+@api.get("/coupons/{cid}")
+async def get_coupon(cid: str, user: dict = Depends(get_current_user)):
+    c = await db.coupons.find_one({"id": cid, "workspace_id": user["workspace_id"]}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Coupon not found")
+    return c
+
+
+@api.put("/coupons/{cid}")
+async def update_coupon(cid: str, body: CouponIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    c = await db.coupons.find_one({"id": cid, "workspace_id": user["workspace_id"]})
+    if not c:
+        raise HTTPException(404, "Coupon not found")
+    code = (body.code or c["code"]).upper()
+    upd = {"name": body.name, "type": body.type, "discount_value": body.discount_value,
+           "code": code, "headline": body.headline, "description": body.description,
+           "terms": body.terms, "cta": body.cta, "state": body.state,
+           "rules": body.rules.model_dump(), "image_url": body.image_url or c.get("image_url", "")}
+    if code != c["code"]:
+        upd["qr_code"] = gen_qr(code)
+    await db.coupons.update_one({"id": cid}, {"$set": upd})
+    return await db.coupons.find_one({"id": cid}, {"_id": 0})
+
+
+@api.delete("/coupons/{cid}")
+async def delete_coupon(cid: str, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    await db.coupons.delete_one({"id": cid, "workspace_id": user["workspace_id"]})
+    return {"ok": True}
+
+
+@api.post("/coupons/{cid}/state")
+async def set_state(cid: str, body: StateIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    valid = ["draft", "scheduled", "active", "paused", "expired", "archived"]
+    if body.state not in valid:
+        raise HTTPException(400, "Invalid state")
+    r = await db.coupons.update_one(
+        {"id": cid, "workspace_id": user["workspace_id"]}, {"$set": {"state": body.state}})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Coupon not found")
+    return await db.coupons.find_one({"id": cid}, {"_id": 0})
+
+
+@api.post("/coupons/{cid}/bulk-codes")
+async def bulk_codes(cid: str, body: BulkIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    c = await db.coupons.find_one({"id": cid, "workspace_id": user["workspace_id"]})
+    if not c:
+        raise HTTPException(404, "Coupon not found")
+    codes = [rand_code(c["code"][:4] + "-") for _ in range(min(body.count, 500))]
+    await db.coupons.update_one({"id": cid}, {"$push": {"codes": {"$each": codes}}})
+    return {"generated": len(codes), "codes": codes}
+
+
+@api.post("/coupons/validate")
+async def validate(body: ValidateIn, user: dict = Depends(get_current_user)):
+    code = body.code.upper()
+    c = await db.coupons.find_one(
+        {"workspace_id": user["workspace_id"],
+         "$or": [{"code": code}, {"codes": code}]})
+    if not c:
+        return {"valid": False, "reason": "Code not found"}
+    if c["state"] != "active":
+        return {"valid": False, "reason": f"Coupon is {c['state']}, not active"}
+    rules = c.get("rules", {})
+    if body.cart_value < rules.get("min_cart", 0):
+        return {"valid": False, "reason": f"Minimum cart value is {rules.get('min_cart')}"}
+    limit = rules.get("usage_limit", 0)
+    if limit and c["stats"]["redemptions"] >= limit:
+        return {"valid": False, "reason": "Usage limit reached"}
+    return {"valid": True, "coupon": {"name": c["name"], "type": c["type"],
+            "discount_value": c["discount_value"], "headline": c["headline"]}}
+
+
+@api.post("/coupons/redeem")
+async def redeem(body: RedeemIn, user: dict = Depends(get_current_user)):
+    code = body.code.upper()
+    c = await db.coupons.find_one(
+        {"workspace_id": user["workspace_id"],
+         "$or": [{"code": code}, {"codes": code}]})
+    if not c:
+        raise HTTPException(404, "Code not found")
+    if c["state"] != "active":
+        raise HTTPException(400, f"Coupon is {c['state']}")
+    # fraud: duplicate redemption within 5s by same customer
+    recent = await db.redemptions.find_one({
+        "coupon_id": c["id"], "customer": body.customer or "guest",
+        "created_at": {"$gt": (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()}})
+    if recent:
+        raise HTTPException(429, "Duplicate redemption detected")
+    percent_types = {"percentage", "flash_sale", "seasonal", "vip",
+                     "first_time", "birthday", "referral"}
+    if c["type"] in percent_types:
+        discount = body.amount * c["discount_value"] / 100
+    elif c["type"] == "fixed":
+        discount = min(c["discount_value"], body.amount)
+    elif c["type"] == "bogo":
+        discount = body.amount * 0.5
+    else:  # free_shipping and any other: no line-item discount
+        discount = 0
+    discount = round(min(discount, body.amount), 2)
+    rev = round(max(body.amount - discount, 0), 2)
+    await db.redemptions.insert_one({
+        "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"], "coupon_id": c["id"],
+        "code": code, "customer": body.customer or "guest", "amount": body.amount,
+        "discount": discount, "revenue": rev, "created_at": now_iso()})
+    await db.coupons.update_one({"id": c["id"]}, {"$inc": {
+        "stats.redemptions": 1, "stats.revenue": rev}})
+    return {"ok": True, "discount": discount, "revenue": rev}
+
+
+# ---------------- Dashboard / analytics ----------------
+@api.get("/dashboard/stats")
+async def dashboard(user: dict = Depends(get_current_user)):
+    ws = user["workspace_id"]
+    coupons = await db.coupons.find({"workspace_id": ws}, {"_id": 0, "qr_code": 0}).to_list(1000)
+    active = [c for c in coupons if c["state"] == "active"]
+    total_redemptions = sum(c["stats"]["redemptions"] for c in coupons)
+    total_revenue = sum(c["stats"]["revenue"] for c in coupons)
+    top = sorted(coupons, key=lambda c: c["stats"]["revenue"], reverse=True)[:5]
+    by_state = {}
+    for c in coupons:
+        by_state[c["state"]] = by_state.get(c["state"], 0) + 1
+    return {
+        "active_coupons": len(active),
+        "total_coupons": len(coupons),
+        "total_redemptions": total_redemptions,
+        "total_revenue": round(total_revenue, 2),
+        "top_campaigns": [{"name": c["name"], "revenue": round(c["stats"]["revenue"], 2),
+                           "redemptions": c["stats"]["redemptions"], "type": c["type"]} for c in top],
+        "by_state": by_state,
+    }
+
+
+@api.get("/analytics/timeseries")
+async def timeseries(user: dict = Depends(get_current_user)):
+    ws = user["workspace_id"]
+    reds = await db.redemptions.find({"workspace_id": ws}, {"_id": 0}).to_list(5000)
+    buckets: Dict[str, Dict[str, float]] = {}
+    for i in range(13, -1, -1):
+        d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+        buckets[d] = {"date": d, "redemptions": 0, "revenue": 0.0}
+    for r in reds:
+        d = r["created_at"][:10]
+        if d in buckets:
+            buckets[d]["redemptions"] += 1
+            buckets[d]["revenue"] += r.get("revenue", 0)
+    return list(buckets.values())
+
+
+# ---------------- AI ----------------
+def parse_json_block(text: str) -> dict:
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            pass
+    return {}
+
+
+@api.post("/ai/copy")
+async def ai_copy(body: AICopyIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    system = ("You are a world-class promotional marketing copywriter for an e-commerce coupon platform. "
+              "Given a business prompt, produce a single JSON object with keys: "
+              "name (short internal campaign name), type (one of percentage, fixed, bogo, free_shipping, "
+              "first_time, vip, flash_sale, seasonal, referral, birthday), discount_value (number), "
+              "headline (punchy, max 8 words), description (1-2 sentences), terms (concise legal terms), "
+              "cta (short call to action, max 4 words). Respond with ONLY the JSON object, no prose.")
+    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"copy-{uuid.uuid4()}",
+                   system_message=system).with_model("anthropic", "claude-sonnet-5")
+    try:
+        resp = await chat.send_message(UserMessage(text=body.prompt))
+    except Exception as e:
+        logger.exception("AI copy failed")
+        raise HTTPException(502, f"AI copy generation failed: {e}")
+    data = parse_json_block(resp if isinstance(resp, str) else str(resp))
+    if not data:
+        raise HTTPException(502, "AI returned unparseable response")
+    return data
+
+
+@api.post("/ai/image")
+async def ai_image(body: AIImageIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"img-{uuid.uuid4()}",
+                   system_message="You generate professional promotional coupon and marketing visuals.")
+    chat.with_model("gemini", "gemini-3.1-flash-image-preview").with_params(modalities=["image", "text"])
+    prompt = (f"A modern, premium promotional marketing visual for a coupon/offer. {body.prompt}. "
+              "Bold clean design, vibrant, e-commerce banner style, no watermark, high quality.")
+    try:
+        text, images = await chat.send_message_multimodal_response(UserMessage(text=prompt))
+    except Exception as e:
+        logger.exception("AI image failed")
+        raise HTTPException(502, f"AI image generation failed: {e}")
+    if not images:
+        raise HTTPException(502, "No image generated")
+    img = images[0]
+    return {"image_url": f"data:{img['mime_type']};base64,{img['data']}"}
+
+
+app.include_router(api)
+app.add_middleware(
+    CORSMiddleware, allow_credentials=True,
+    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_methods=["*"], allow_headers=["*"],
+)
+
+
+# ---------------- Seed ----------------
+async def seed():
+    await db.users.create_index("email", unique=True)
+    admin_email = os.environ["ADMIN_EMAIL"].lower()
+    existing = await db.users.find_one({"email": admin_email})
+    if existing:
+        return
+    ws_id = str(uuid.uuid4())
+    await db.workspaces.insert_one({
+        "id": ws_id, "name": "Acme Swimwear Co.", "logo_url": "",
+        "primary_color": "#005CEE", "secondary_color": "#CCFF00",
+        "font": "Cabinet Grotesk", "currency": "USD", "created_at": now_iso()})
+    admin_id = str(uuid.uuid4())
+    await db.users.insert_one({
+        "id": admin_id, "name": "Alex Owner", "email": admin_email,
+        "password_hash": hash_password(os.environ["ADMIN_PASSWORD"]), "role": "owner",
+        "workspace_id": ws_id, "created_at": now_iso()})
+    await db.users.insert_one({
+        "id": str(uuid.uuid4()), "name": "Morgan Marketer", "email": "marketer@promoos.com",
+        "password_hash": hash_password("marketer123"), "role": "marketer",
+        "workspace_id": ws_id, "created_at": now_iso()})
+    await db.users.insert_one({
+        "id": str(uuid.uuid4()), "name": "Val Viewer", "email": "viewer@promoos.com",
+        "password_hash": hash_password("viewer123"), "role": "viewer",
+        "workspace_id": ws_id, "created_at": now_iso()})
+
+    samples = [
+        ("Summer Swimwear Sale", "flash_sale", 25, "SUMMER25", "active",
+         "Dive Into 25% Off Swimwear", "Beat the heat with 25% off all swimwear. New customers welcome!",
+         "Valid on swimwear only. Ends Sunday. Cannot be combined.", "Shop Now", 0),
+        ("First Order Freebie", "first_time", 15, "WELCOME15", "active",
+         "15% Off Your First Splash", "New here? Enjoy 15% off your very first order.",
+         "First-time customers only. One use per customer.", "Claim Offer", 0),
+        ("VIP Loyalty Reward", "vip", 30, "VIP30", "active",
+         "VIP Members Save 30%", "An exclusive thank-you for our most loyal customers.",
+         "VIP tier only. Not stackable.", "Redeem", 0),
+        ("Free Shipping Weekend", "free_shipping", 0, "FREESHIP", "active",
+         "Free Shipping All Weekend", "No minimum. Free shipping on every order this weekend.",
+         "Valid Sat-Sun only.", "Get It", 0),
+        ("Holiday Flash 40", "seasonal", 40, "HOLIDAY40", "scheduled",
+         "40% Off Holiday Blowout", "Our biggest seasonal sale of the year is coming.",
+         "Select items. While supplies last.", "Notify Me", 0),
+        ("Birthday Treat", "birthday", 20, "HAPPYBDAY", "draft",
+         "Happy Birthday — 20% Off", "Celebrate with a little gift from us.",
+         "Valid during birthday month.", "Unwrap", 0),
+        ("Spring Clearance", "percentage", 50, "SPRING50", "expired",
+         "50% Off Spring Clearance", "Last chance on spring styles.",
+         "Clearance items only.", "Shop Sale", 0),
+    ]
+    now = datetime.now(timezone.utc)
+    for idx, (name, typ, val, code, state, head, desc, terms, cta, _u) in enumerate(samples):
+        cid = str(uuid.uuid4())
+        redemptions = random.randint(20, 180) if state in ("active", "expired") else 0
+        revenue = round(redemptions * random.uniform(35, 95), 2)
+        await db.coupons.insert_one({
+            "id": cid, "workspace_id": ws_id, "name": name, "type": typ,
+            "discount_value": val, "code": code, "codes": [],
+            "headline": head, "description": desc, "terms": terms, "cta": cta, "state": state,
+            "rules": {"min_cart": 0, "scope": "all", "scope_value": "", "usage_limit": 0,
+                      "per_customer_limit": 1, "stackable": False,
+                      "start_date": None, "end_date": None},
+            "image_url": "", "qr_code": gen_qr(code),
+            "stats": {"impressions": redemptions * random.randint(8, 20),
+                      "clicks": redemptions * random.randint(2, 5),
+                      "redemptions": redemptions, "revenue": revenue},
+            "created_at": (now - timedelta(days=idx * 3)).isoformat()})
+        # redemption events over last 14 days
+        for _ in range(redemptions):
+            day = random.randint(0, 13)
+            amt = round(random.uniform(40, 120), 2)
+            disc = amt * val / 100 if typ in ("percentage", "flash_sale", "seasonal", "vip",
+                                              "first_time", "birthday") else 0
+            await db.redemptions.insert_one({
+                "id": str(uuid.uuid4()), "workspace_id": ws_id, "coupon_id": cid, "code": code,
+                "customer": f"cust{random.randint(1,300)}", "amount": amt, "discount": round(disc, 2),
+                "revenue": round(amt - disc, 2),
+                "created_at": (now - timedelta(days=day, hours=random.randint(0, 23))).isoformat()})
+    logger.info("Seed complete")
+
+
+@app.on_event("startup")
+async def startup():
+    try:
+        await seed()
+    except Exception as e:
+        logger.error(f"Seed error: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    client.close()

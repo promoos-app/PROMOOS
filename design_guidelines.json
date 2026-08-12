@@ -1,0 +1,113 @@
+{
+  "theme": "hybrid_fullstack",
+  "mode": "dark-first",
+  "inspiration": "Linear + Stripe (High Information Density, Restrained Chrome, Progressive Disclosure)",
+  "typography": {
+    "headings": {
+      "font_family": "Cabinet Grotesk",
+      "fallback": "sans-serif",
+      "weights": ["500", "700", "900"],
+      "tracking": "tracking-tight",
+      "usage": "Use for primary numbers, section headers, and main dashboard titles. Max size text-5xl."
+    },
+    "body": {
+      "font_family": "Satoshi",
+      "fallback": "sans-serif",
+      "weights": ["400", "500"],
+      "tracking": "tracking-normal",
+      "usage": "Clean, highly legible body text for data tables, secondary text, and labels."
+    },
+    "monospace": {
+      "font_family": "JetBrains Mono",
+      "fallback": "monospace",
+      "weights": ["400", "500"],
+      "usage": "Use for coupon codes, API keys, precise numerical data, and data-grid cells."
+    }
+  },
+  "colors": {
+    "dark": {
+      "background": "#0A0A0A",
+      "surface": "#141414",
+      "surface_hover": "#1E1E1E",
+      "border": "#27272A",
+      "text_primary": "#FAFAFA",
+      "text_secondary": "#A1A1AA",
+      "accent_primary": "#005CEE",
+      "accent_primary_hover": "#004BCC",
+      "accent_ai": "#CCFF00",
+      "accent_ai_foreground": "#0A0A0A",
+      "success": "#10B981",
+      "warning": "#F59E0B",
+      "danger": "#EF4444"
+    },
+    "light": {
+      "background": "#FFFFFF",
+      "surface": "#FAFAFA",
+      "surface_hover": "#F4F4F5",
+      "border": "#E5E5E5",
+      "text_primary": "#09090B",
+      "text_secondary": "#71717A",
+      "accent_primary": "#005CEE",
+      "accent_primary_hover": "#004BCC",
+      "accent_ai": "#000000",
+      "accent_ai_foreground": "#CCFF00",
+      "success": "#059669",
+      "warning": "#D97706",
+      "danger": "#DC2626"
+    }
+  },
+  "visual_enhancers": {
+    "borders": "1px solid strokes with low opacity. No heavy drop shadows in dark mode.",
+    "shadows": "Extremely subtle ambient shadows. In dark mode, rely on 1px borders and 2px inner-glow highlights (border-t border-zinc-700).",
+    "radii": "Small radii. Use rounded-md (6px) or rounded-lg (8px) for cards and buttons. Avoid full pills unless it's a specific badge.",
+    "ai_elements": "Apply a 'Tracing Beam' effect or a subtle #CCFF00 (Neon Lime) inner stroke to AI Copilot prompts and buttons to differentiate them from standard UI."
+  },
+  "components": {
+    "sidebar": "Fixed 240px left sidebar. Deep Obsidian background. Active links should have a 2px left border highlight (Cobalt Blue) and a slight surface tint. Use text-sm for density.",
+    "cards": "Flat surfaces with 1px borders. Padding should be generous (p-6) to let typography breathe. Place the most important metric prominently in the top-left quadrant of the card.",
+    "ai_prompt_bar": "Inline floating or docked bar. Must feature a glow or 'tracing beam' border to signify AI capability. Input should have no visible background, using the container's surface.",
+    "tables": "Data-dense. No vertical borders, only subtle 1px horizontal borders between rows. Headers must be text-xs, uppercase, with tight tracking. Use JetBrains Mono for metrics.",
+    "buttons": "Primary: Cobalt Blue background, sharp text. Secondary: Transparent background, 1px border. AI Action: Neon Lime (dark mode) or Black (light mode) with high contrast text.",
+    "badges": "Subtle background tints (10% opacity) with opaque text (e.g., bg-green-500/10 text-green-500). Use for Draft/Scheduled/Active states."
+  },
+  "grids": {
+    "dashboard_bento": "12-column grid. gap-4 or gap-6. Primary metric cards span col-span-3 or col-span-4. Main charts span col-span-8. AI recommendations span col-span-4."
+  },
+  "layouts": {
+    "command_center": "h-screen flex overflow-hidden. Left: Sidebar (w-64). Right: Flex-col (Header + Main scrollable content area).",
+    "coupon_designer": "Two-column split view (grid-cols-2). Left: Form/Rule builder and AI Prompt. Right: Sticky live preview across formats (Mobile, Email, Print)."
+  },
+  "motion": {
+    "hover": "Subtle -translate-y-[1px] on cards. Fast transitions (150ms).",
+    "progressive_disclosure": "Animate height/opacity when revealing deeper data or expanding the AI Copilot bar."
+  },
+  "accessibility": {
+    "contrast": "Ensure APCA standards. All secondary text must be at least 4.5:1 against the dark background.",
+    "data_testid": "MANDATORY: All interactive elements, sidebar links, forms, buttons, and metric cards MUST include a data-testid attribute in kebab-case (e.g., 'sidebar-campaigns-link', 'ai-copilot-submit-btn')."
+  },
+  "media": {
+    "images": "Use for avatar placeholders, workspace logos, and dummy coupon preview visuals.",
+    "icons": "Use Phosphor Icons for a clean, technical SaaS look."
+  },
+  "instructions_to_main_agent": [
+    "Prioritize a dark-mode first, linear-inspired aesthetic. Avoid generic purple gradients.",
+    "Install and use @phosphor-icons/react.",
+    "Use Shadcn UI for all complex interactive components (Dropdowns, Dialogs, Selects). Customize their classes heavily to match the Flat/1px border aesthetic.",
+    "Do not use generic generic transition-all. Be specific with CSS transitions.",
+    "Avoid centering main application layout. Keep structural alignment to the left, progressive reading pattern.",
+    "For the Coupon Designer preview, ensure it simulates different viewports (mobile, web) accurately using absolute/relative scaling.",
+    "Inject data-testid on EVERY interactive element.",
+    "CRITICAL: The codebase uses .js files, NOT .tsx. All React components MUST be written in standard .jsx/.js format. Adjust Shadcn and UI elements to omit TypeScript typings."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Avoid 'AI slop' aesthetics. Do NOT use purple-on-white. Stick strictly to the defined Dark Mode #0A0A0A base and Cobalt/Lime accents.",
+    "Do NOT center align the app container. No .App { text-align: center; }.",
+    "Never use native <select> or <input type='date'>. Use Shadcn components.",
+    "Every interaction needs micro-animations (hover states, focus rings).",
+    "Layered design: use z-index for dropdowns and sticky headers correctly. Ensure headers do not have transparent backgrounds.",
+    "Create depth using 1px borders and distinct surface colors rather than heavy shadows.",
+    "Use sonner for toast notifications.",
+    "Add 'data-testid' to all buttons, links, inputs, and major UI containers for robust testing.",
+    "Write all components and files as .js or .jsx, DO NOT use TypeScript (.tsx/.ts) as this is a JS workspace."
+  ]
+}
