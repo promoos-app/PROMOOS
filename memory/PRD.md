@@ -13,61 +13,54 @@ Build a web-based SaaS "Promotional Operating System" to create, design, publish
 ## Personas
 - **Owner** — full access.
 - **Marketer** — create/update coupons, run AI, send emails.
-- **Viewer** — read-only (403 "Viewers have read-only access" on writes).
+- **Viewer** — read-only (403 on writes).
 
-## What's Implemented (Feb 2026)
+## What's Implemented
 
-### Auth & Multi-tenancy
-- Register / login / me (JWT Bearer + httpOnly `access_token` cookie).
-- Bcrypt (`$2b$`) password hashes.
-- Brute-force lockout: 5 failed logins/15 min per email → HTTP 429.
-- CORS reflects incoming Origin with credentials.
-- Multi-tenant workspace isolation on every route.
-- Seeded workspace **Acme Swimwear Co.** with 3 roles + 7 sample coupons + realistic redemptions.
+### Iteration 1 (Feb 2026)
+- Auth: register/login/me, JWT Bearer + httpOnly `access_token` cookie, bcrypt `$2b$`, brute-force lockout (5/15min per email → 429), origin-echo CORS.
+- Multi-tenant workspace isolation. Seed workspace **Acme Swimwear Co.** with 3 roles + 7 sample coupons + realistic redemptions.
+- Coupons: CRUD, state machine, validate/redeem with fraud guard, bulk one-time codes, server-side QR.
+- Redeem discount math for percentage/flash_sale/seasonal/vip/first_time/birthday/referral (%), fixed (capped), bogo (50%), free_shipping (0).
+- AI Copilot: `POST /api/ai/copy` (Claude → structured JSON), `POST /api/ai/image` (Nano Banana → base64 promo visual).
+- Dashboard & analytics: `/api/dashboard/stats`, `/api/analytics/timeseries` (14-day).
+- Email (Resend): `POST /api/coupons/{id}/send-email` with branded HTML template; "Send by Email" panel on coupon detail.
 
-### Coupons
-- CRUD, state machine (`draft → scheduled → active → paused → expired → archived`).
-- Validate & Redeem with duplicate-redemption fraud guard (5s → 429).
-- Redeem discount math covers all types: `percentage/flash_sale/seasonal/vip/first_time/birthday/referral` → %, `fixed` → capped, `bogo` → 50%, `free_shipping` → 0-line-item.
-- Bulk one-time code generation.
-- Server-side QR code with client download.
-
-### AI Copilot
-- `POST /api/ai/copy` — Claude Sonnet 5 → structured JSON.
-- `POST /api/ai/image` — Nano Banana → base64 promo visual.
-
-### Email (Resend) — NEW this iteration
-- `POST /api/coupons/{id}/send-email` — branded HTML template using workspace colors, code, CTA, terms.
-- Non-blocking (`asyncio.to_thread`), logged to `email_events` collection.
-- Frontend "Send by Email" panel on coupon detail.
-
-### Dashboard & Analytics
-- `/api/dashboard/stats`, `/api/analytics/timeseries` (14-day).
+### Iteration 2 (Feb 2026) — Growth features
+- **Public coupon page** at `/c/:code` (standalone, no auth): brand pill, hero, dashed-border code, one-tap copy, redeem CTA, QR, terms. Records impression on view.
+- **Embed widget**: `GET /api/embed/coupon.js` — origin-echoing JS. Any site pastes `<script async src=".../api/embed/coupon.js" data-promoos-code="CODE"></script>` and gets a branded coupon card with copy + CTA. UI in coupon detail to grab the snippet.
+- **Referral loops**: Rules toggle (`referral_enabled` + `referral_credit_pct`, default 10). Public page has "Share & earn N%" panel that generates a personal `?ref=<token>` link. Public redeem accrues `stats.referral_credit` and logs to `referrals`. Coupon detail shows a "Referral Program" panel with visits/redemptions/credit + top-referrers leaderboard.
 
 ## Test Credentials
 See `/app/memory/test_credentials.md`.
 
 ## Test Status
-- Backend pytest: **30/31 pass**.
-- 1 failing: `test_cors_uses_explicit_origin_with_credentials` — Cloudflare edge in the preview URL overrides preflight CORS headers. Passes locally on uvicorn. Doesn't affect app since frontend uses JWT Bearer.
-- Real AI providers verified (Claude + Gemini).
+- Backend pytest — iteration 2:
+  - `/app/backend/tests/test_growth_features.py` — **20/20 pass** (new suite by testing agent).
+  - `/app/backend/tests/backend_test.py` — 30/31 pass (1 known: Cloudflare edge overrides preflight CORS in preview; passes locally; brute-force test can be flaky across runs — flush `db.login_attempts` between runs).
+- Real AI (Claude + Gemini) verified in iteration 1, unchanged.
 
 ## Backlog
 
 ### P0 — awaiting user
-- **Resend API key** — paste `RESEND_API_KEY=re_...` into `backend/.env` (get from resend.com/api-keys). Point `SENDER_EMAIL` to a verified domain for prod.
+- **Resend API key** — paste `RESEND_API_KEY=re_...` into `backend/.env` (get from resend.com/api-keys). Update `SENDER_EMAIL` to a verified domain for production.
 
-### P1 — Phase 4: Distribution & Embed
-- Public coupon landing pages (`/c/:code`).
-- Embeddable JS widget snippet.
+### P1 — Phase 4 continued
 - SMS / WhatsApp via Twilio.
+- Impression dedupe per session/IP (currently every request bumps stats.impressions).
+- Public referral leaderboard aggregation to show `stats.referral_credit` on coupon detail summary card.
 
 ### P2 — Phase 5: Customers, Loyalty & Referrals
 - Customer CRM + AI segmentation.
-- Points / tiers, gift cards, referral trees.
+- Points / tiers, gift cards.
+- Persistent referrer accounts (map ref token → verified email, redeem credit at checkout).
 
 ### P3 — Phase 6: Analytics & Optimization
 - A/B testing for headlines/CTAs, exportable CSV/PDF reports.
 
 ### P4 — Phase 7: Platform & Enterprise
 - Universal webhooks, white-label custom domains, agency console.
+
+### Code-review notes from iteration_2
+- Consider role-gating `/api/coupons/{cid}/referrals` (currently any workspace user).
+- Hash/validate `customer` field on public redeem (currently free-form string, trimmed to 120 chars).

@@ -5,7 +5,7 @@ import { STATE_STYLES, TYPE_LABELS, discountText } from "@/lib/couponUtils";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Loader2, Download, RefreshCw, Zap, Mail } from "lucide-react";
+import { ArrowLeft, Loader2, Download, RefreshCw, Zap, Mail, ExternalLink, Code2, Users } from "lucide-react";
 
 function Stat({ label, value }) {
   return (
@@ -29,9 +29,12 @@ export default function CouponDetail() {
   const [emailTo, setEmailTo] = useState("");
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailResult, setEmailResult] = useState(null);
+  const [refs, setRefs] = useState(null);
+  const [snippetCopied, setSnippetCopied] = useState(false);
 
   const load = useCallback(() => {
     api.get(`/coupons/${id}`).then((r) => setC(r.data)).catch((e) => toast.error(apiError(e)));
+    api.get(`/coupons/${id}/referrals`).then((r) => setRefs(r.data)).catch(() => {});
   }, [id]);
   useEffect(() => { load(); }, [load]);
 
@@ -191,6 +194,108 @@ export default function CouponDetail() {
           </div>
         )}
       </div>
+
+      {/* Public landing + Embed */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+        <div className="surface rounded-lg p-6">
+          <div className="flex items-center gap-2 mb-1">
+            <ExternalLink className="w-4 h-4 text-[#CCFF00]" />
+            <h3 className="font-display font-bold">Public Landing Page</h3>
+          </div>
+          <p className="text-xs text-[#71717A] mb-3">Share this shoppable page anywhere — QR, copy, and redeem all built in.</p>
+          {(() => {
+            const url = `${window.location.origin}/c/${c.code}`;
+            return (
+              <>
+                <div className="flex gap-2">
+                  <Input data-testid="public-url" readOnly value={url} className="bg-[#0A0A0A] border-[#27272A] text-white font-mono text-xs" />
+                  <Button
+                    data-testid="copy-public-url"
+                    onClick={() => { navigator.clipboard.writeText(url); toast.success("Link copied"); }}
+                    className="btn-primary rounded-md shrink-0"
+                  >
+                    Copy
+                  </Button>
+                </div>
+                <a
+                  data-testid="open-public-page"
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3 inline-flex items-center gap-1.5 text-sm text-[#CCFF00] hover:underline"
+                >
+                  Open page <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </>
+            );
+          })()}
+        </div>
+
+        <div className="surface rounded-lg p-6">
+          <div className="flex items-center gap-2 mb-1">
+            <Code2 className="w-4 h-4 text-[#CCFF00]" />
+            <h3 className="font-display font-bold">Embed Widget</h3>
+          </div>
+          <p className="text-xs text-[#71717A] mb-3">Paste this snippet into any Shopify/WordPress/plain HTML page.</p>
+          {(() => {
+            const snippet = `<script async src="${process.env.REACT_APP_BACKEND_URL}/api/embed/coupon.js" data-promoos-code="${c.code}"></script>`;
+            return (
+              <>
+                <pre data-testid="embed-snippet" className="text-xs bg-[#0A0A0A] border border-[#27272A] rounded-md p-3 overflow-x-auto text-[#A1A1AA] whitespace-pre-wrap break-all">{snippet}</pre>
+                <Button
+                  data-testid="copy-embed-btn"
+                  onClick={() => {
+                    navigator.clipboard.writeText(snippet);
+                    setSnippetCopied(true);
+                    toast.success("Snippet copied");
+                    setTimeout(() => setSnippetCopied(false), 1500);
+                  }}
+                  className="mt-3 btn-primary rounded-md"
+                >
+                  {snippetCopied ? "Copied ✓" : "Copy snippet"}
+                </Button>
+              </>
+            );
+          })()}
+        </div>
+      </div>
+
+      {/* Referral leaderboard */}
+      {c.rules?.referral_enabled && (
+        <div className="surface rounded-lg p-6 mt-6" data-testid="referral-panel">
+          <div className="flex items-center gap-2 mb-1">
+            <Users className="w-4 h-4 text-[#CCFF00]" />
+            <h3 className="font-display font-bold">Referral Program</h3>
+            <span className="text-xs text-[#71717A] ml-2">{c.rules.referral_credit_pct}% credit per redemption</span>
+          </div>
+          <p className="text-xs text-[#71717A] mb-4">Customers who share their `/c/{c.code}?ref=…` link earn credit when friends redeem.</p>
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <Stat label="Visits via ref" value={refs?.visits ?? 0} />
+            <Stat label="Referred redemptions" value={refs?.redemptions ?? 0} />
+            <Stat label="Credit owed" value={"$" + Number(refs?.total_credit ?? 0).toFixed(2)} />
+          </div>
+          {refs?.leaders?.length > 0 ? (
+            <div className="border border-[#27272A] rounded-md overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-[#0A0A0A] text-[#71717A] text-xs uppercase tracking-wider">
+                  <tr><th className="text-left px-3 py-2">Referrer</th><th className="text-right px-3 py-2">Redemptions</th><th className="text-right px-3 py-2">Credit</th></tr>
+                </thead>
+                <tbody>
+                  {refs.leaders.map((l) => (
+                    <tr key={l.referrer} className="border-t border-[#27272A]" data-testid={`ref-leader-${l.referrer}`}>
+                      <td className="px-3 py-2 font-mono text-xs">{l.referrer}</td>
+                      <td className="px-3 py-2 text-right">{l.count}</td>
+                      <td className="px-3 py-2 text-right text-[#CCFF00]">${l.credit.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-xs text-[#71717A]">No referrals yet — share the landing page to kick things off.</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

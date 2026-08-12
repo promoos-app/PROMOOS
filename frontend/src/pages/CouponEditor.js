@@ -18,7 +18,7 @@ const empty = {
   name: "", type: "percentage", discount_value: 25, code: "",
   headline: "", description: "", terms: "", cta: "Claim Offer", state: "draft",
   image_url: "",
-  rules: { min_cart: 0, scope: "all", scope_value: "", usage_limit: 0, per_customer_limit: 1, stackable: false, start_date: null, end_date: null },
+  rules: { min_cart: 0, scope: "all", scope_value: "", usage_limit: 0, per_customer_limit: 1, stackable: false, start_date: null, end_date: null, referral_enabled: false, referral_credit_pct: 10 },
 };
 
 export default function CouponEditor() {
@@ -227,6 +227,27 @@ export default function CouponEditor() {
                 <div className="text-xs text-[#71717A]">Allow combining with other coupons</div>
               </div>
               <Switch data-testid="rule-stackable-switch" checked={form.rules.stackable} onCheckedChange={(v) => setRule("stackable", v)} />
+            </div>
+            <div className="p-3 rounded-md bg-[#0A0A0A] border border-[#27272A] space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium">Referral program</div>
+                  <div className="text-xs text-[#71717A]">Reward customers who share this coupon</div>
+                </div>
+                <Switch data-testid="rule-referral-switch" checked={!!form.rules.referral_enabled} onCheckedChange={(v) => setRule("referral_enabled", v)} />
+              </div>
+              {form.rules.referral_enabled && (
+                <div>
+                  <Label className="text-xs text-[#A1A1AA]">Referrer credit %</Label>
+                  <Input
+                    data-testid="rule-referral-pct"
+                    type="number" min={1} max={100}
+                    value={form.rules.referral_credit_pct}
+                    onChange={(e) => setRule("referral_credit_pct", Number(e.target.value))}
+                    className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white"
+                  />
+                </div>
+              )}
             </div>
           </div>
         </div>

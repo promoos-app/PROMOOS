@@ -1,12 +1,115 @@
-<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="31" time="19.503" timestamp="2026-08-12T20:40:09.262525+00:00" hostname="agent-env-8c7dcb04-2626-49a8-bb93-68ef6bd01d37"><testcase classname="tests.backend_test.TestAuth" name="test_login_owner_success" time="0.631" /><testcase classname="tests.backend_test.TestValidateRedeem" name="test_validate_active" time="0.634" /><testcase classname="tests.backend_test.TestAuth" name="test_login_invalid_password" time="0.362" /><testcase classname="tests.backend_test.TestValidateRedeem" name="test_validate_unknown" time="0.352" /><testcase classname="tests.backend_test.TestValidateRedeem" name="test_redeem_success_and_stats_increment" time="0.774" /><testcase classname="tests.backend_test.TestAuth" name="test_me_endpoint" time="0.526" /><testcase classname="tests.backend_test.TestAuth" name="test_me_without_token_fails" time="0.139" /><testcase classname="tests.backend_test.TestAuth" name="test_register_new_workspace" time="0.776" /><testcase classname="tests.backend_test.TestValidateRedeem" name="test_redeem_duplicate_within_5s" time="0.390" /><testcase classname="tests.backend_test.TestValidateRedeem" name="test_redeem_non_active_rejected" time="0.264" /><testcase classname="tests.backend_test.TestCoupons" name="test_list_seeded_coupons" time="0.119" /><testcase classname="tests.backend_test.TestAuth" name="test_register_duplicate_email_rejected" time="0.170" /><testcase classname="tests.backend_test.TestCoupons" name="test_list_filter_state" time="0.123" /><testcase classname="tests.backend_test.TestWorkspace" name="test_get_workspace" time="0.133" /><testcase classname="tests.backend_test.TestCoupons" name="test_create_update_delete_flow" time="2.484" /><testcase classname="tests.backend_test.TestWorkspace" name="test_update_brand_owner" time="0.251" /><testcase classname="tests.backend_test.TestWorkspace" name="test_update_brand_viewer_forbidden" time="0.473" /><testcase classname="tests.backend_test.TestWorkspace" name="test_team_list" time="0.120" /><testcase classname="tests.backend_test.TestAI" name="test_ai_copy_generates_json" time="5.451" /><testcase classname="tests.backend_test.TestCoupons" name="test_viewer_cannot_create_coupon" time="0.518" /><testcase classname="tests.backend_test.TestAuthSecurityPlaybook" name="test_login_sets_httponly_auth_cookie" time="0.355"><failure message="AssertionError: Login did not set an application authentication cookie&#10;assert {}">backend/tests/backend_test.py:413: in test_login_sets_httponly_auth_cookie
-    assert auth_cookies, "Login did not set an application authentication cookie"
-E   AssertionError: Login did not set an application authentication cookie
-E   assert {}</failure></testcase><testcase classname="tests.backend_test.TestAuthSecurityPlaybook" name="test_cors_uses_explicit_origin_with_credentials" time="0.069"><failure message="AssertionError: assert '' == 'true'&#10;  &#10;  - true">backend/tests/backend_test.py:427: in test_cors_uses_explicit_origin_with_credentials
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="3" skipped="0" tests="51" time="121.108" timestamp="2026-08-12T21:16:56.792717+00:00" hostname="agent-env-8c7dcb04-2626-49a8-bb93-68ef6bd01d37"><testcase classname="tests.test_growth_features.TestPublicCoupon" name="test_get_summer25_returns_referral_enabled" time="0.378" /><testcase classname="tests.backend_test.TestAuth" name="test_login_owner_success" time="0.380" /><testcase classname="tests.test_growth_features.TestPublicCoupon" name="test_get_lowercase_code_case_insensitive" time="0.345" /><testcase classname="tests.backend_test.TestAuth" name="test_login_invalid_password" time="0.341" /><testcase classname="tests.backend_test.TestAuth" name="test_me_endpoint" time="0.579" /><testcase classname="tests.test_growth_features.TestPublicCoupon" name="test_get_draft_coupon_returns_404" time="0.753" /><testcase classname="tests.backend_test.TestAuth" name="test_me_without_token_fails" time="0.116" /><testcase classname="tests.backend_test.TestAuth" name="test_register_new_workspace" time="0.714" /><testcase classname="tests.test_growth_features.TestPublicCoupon" name="test_get_archived_coupon_returns_404" time="1.255" /><testcase classname="tests.backend_test.TestAuth" name="test_register_duplicate_email_rejected" time="0.113" /><testcase classname="tests.test_growth_features.TestPublicRedeem" name="test_flash_sale_percentage_discount_applied" time="0.128" /><testcase classname="tests.test_growth_features.TestPublicRedeem" name="test_referral_credit_accrued_when_ref_provided" time="0.737" /><testcase classname="tests.test_growth_features.TestPublicCoupon" name="test_get_unknown_code_returns_404" time="0.134" /><testcase classname="tests.test_growth_features.TestPublicCoupon" name="test_ref_query_records_referral_visit" time="0.516" /><testcase classname="tests.test_growth_features.TestPublicRedeem" name="test_duplicate_public_redeem_within_5s_returns_429" time="0.261" /><testcase classname="tests.test_growth_features.TestPublicRedeem" name="test_public_redeem_non_active_rejected" time="0.127" /><testcase classname="tests.test_growth_features.TestPublicRedeem" name="test_public_redeem_unknown_code_404" time="0.223" /><testcase classname="tests.test_growth_features.TestPublicRedeem" name="test_ref_without_enabled_referral_gives_zero_credit" time="0.132" /><testcase classname="tests.backend_test.TestValidateRedeem" name="test_validate_active" time="0.503" /><testcase classname="tests.backend_test.TestWorkspace" name="test_get_workspace" time="0.123" /><testcase classname="tests.backend_test.TestValidateRedeem" name="test_validate_unknown" time="0.171" /><testcase classname="tests.backend_test.TestWorkspace" name="test_update_brand_owner" time="0.253" /><testcase classname="tests.backend_test.TestValidateRedeem" name="test_redeem_success_and_stats_increment" time="0.768" /><testcase classname="tests.backend_test.TestWorkspace" name="test_update_brand_viewer_forbidden" time="0.640" /><testcase classname="tests.backend_test.TestValidateRedeem" name="test_redeem_duplicate_within_5s" time="0.238" /><testcase classname="tests.backend_test.TestWorkspace" name="test_team_list" time="0.160" /><testcase classname="tests.backend_test.TestCoupons" name="test_list_seeded_coupons" time="0.167" /><testcase classname="tests.backend_test.TestValidateRedeem" name="test_redeem_non_active_rejected" time="0.123" /><testcase classname="tests.backend_test.TestAuthSecurityPlaybook" name="test_login_sets_httponly_auth_cookie" time="0.343" /><testcase classname="tests.backend_test.TestCoupons" name="test_list_filter_state" time="0.335" /><testcase classname="tests.backend_test.TestAuthSecurityPlaybook" name="test_cors_uses_explicit_origin_with_credentials" time="0.326"><failure message="AssertionError: assert '' == 'true'&#10;  &#10;  - true">tests/backend_test.py:427: in test_cors_uses_explicit_origin_with_credentials
     assert response.headers.get("access-control-allow-credentials", "").lower() == "true"
 E   AssertionError: assert '' == 'true'
 E     
-E     - true</failure></testcase><testcase classname="tests.backend_test.TestAuthSecurityPlaybook" name="test_account_locks_after_five_failed_logins" time="2.104"><failure message="AssertionError: Account accepted valid login immediately after five failures&#10;assert 200 == 429&#10; +  where 200 = &lt;Response [200]&gt;.status_code">backend/tests/backend_test.py:439: in test_account_locks_after_five_failed_logins
-    assert locked.status_code == 429, "Account accepted valid login immediately after five failures"
-E   AssertionError: Account accepted valid login immediately after five failures
-E   assert 200 == 429
-E    +  where 200 = &lt;Response [200]&gt;.status_code</failure></testcase><testcase classname="tests.backend_test.TestAuthSecurityPlaybook" name="test_seeded_password_hash_uses_bcrypt_2b" time="0.074" /><testcase classname="tests.backend_test.TestRequestedContract" name="test_validate_scheduled_coupon_is_invalid" time="0.240" /><testcase classname="tests.backend_test.TestRequestedContract" name="test_seed_coupon_bulk_codes_are_five_unique_values" time="0.249" /><testcase classname="tests.backend_test.TestRequestedContract" name="test_exact_summer_redeem_then_duplicate" time="0.300" /><testcase classname="tests.backend_test.TestAI" name="test_ai_copy_viewer_forbidden" time="0.128" /><testcase classname="tests.backend_test.TestDashboardAnalytics" name="test_dashboard_stats" time="0.112" /><testcase classname="tests.backend_test.TestAI" name="test_ai_image_generates_real_image" time="9.942" /><testcase classname="tests.backend_test.TestDashboardAnalytics" name="test_analytics_timeseries" time="0.128" /></testsuite></testsuites>
+E     - true</failure></testcase><testcase classname="tests.backend_test.TestCoupons" name="test_create_update_delete_flow" time="2.215" /><testcase classname="tests.backend_test.TestAuthSecurityPlaybook" name="test_account_locks_after_five_failed_logins" time="0.140"><failure message="assert 429 == 401&#10; +  where 429 = &lt;Response [429]&gt;.status_code">tests/backend_test.py:435: in test_account_locks_after_five_failed_logins
+    assert failed.status_code == 401
+E   assert 429 == 401
+E    +  where 429 = &lt;Response [429]&gt;.status_code</failure></testcase><testcase classname="tests.backend_test.TestAuthSecurityPlaybook" name="test_seeded_password_hash_uses_bcrypt_2b" time="0.064" /><testcase classname="tests.backend_test.TestAI" name="test_ai_copy_generates_json" time="5.381" /><testcase classname="tests.backend_test.TestCoupons" name="test_viewer_cannot_create_coupon" time="0.115" /><testcase classname="tests.test_growth_features.TestReferralsAggregation" name="test_aggregation_structure_and_sum" time="0.600" /><testcase classname="tests.test_growth_features.TestReferralsAggregation" name="test_referrals_requires_auth" time="0.137" /><testcase classname="tests.test_growth_features.TestReferralsAggregation" name="test_referrals_unknown_coupon_404" time="0.123" /><testcase classname="tests.test_growth_features.TestReferralsAggregation" name="test_aggregation_sums_by_referrer" time="0.705" /><testcase classname="tests.backend_test.TestRequestedContract" name="test_validate_scheduled_coupon_is_invalid" time="0.285" /><testcase classname="tests.backend_test.TestRequestedContract" name="test_seed_coupon_bulk_codes_are_five_unique_values" time="0.235" /><testcase classname="tests.backend_test.TestRequestedContract" name="test_exact_summer_redeem_then_duplicate" time="0.311" /><testcase classname="tests.backend_test.TestDashboardAnalytics" name="test_dashboard_stats" time="0.132" /><testcase classname="tests.backend_test.TestDashboardAnalytics" name="test_analytics_timeseries" time="0.119" /><testcase classname="tests.test_growth_features.TestEmbedJS" name="test_embed_js_returns_javascript" time="0.130" /><testcase classname="tests.test_growth_features.TestEmbedJS" name="test_embed_js_origin_matches_request_host" time="0.124" /><testcase classname="tests.test_growth_features.TestCouponReferralRules" name="test_create_with_referral_and_reload" time="30.420"><failure message="requests.exceptions.ConnectTimeout: HTTPSConnectionPool(host='campaign-hub-436.preview.emergentagent.com', port=443): Max retries exceeded with url: /api/coupons (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host='campaign-hub-436.preview.emergentagent.com', port=443) at 0xfa345f411ed0&gt;, 'Connection to campaign-hub-436.preview.emergentagent.com timed out. (connect timeout=15)'))">/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:204: in _new_conn
+    sock = connection.create_connection(
+/root/.venv/lib/python3.11/site-packages/urllib3/util/connection.py:85: in create_connection
+    raise err
+/root/.venv/lib/python3.11/site-packages/urllib3/util/connection.py:73: in create_connection
+    sock.connect(sa)
+E   TimeoutError: timed out
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:788: in urlopen
+    response = self._make_request(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:488: in _make_request
+    raise new_e
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:464: in _make_request
+    self._validate_conn(conn)
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:1106: in _validate_conn
+    conn.connect()
+/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:759: in connect
+    self.sock = sock = self._new_conn()
+                       ^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:213: in _new_conn
+    raise ConnectTimeoutError(
+E   urllib3.exceptions.ConnectTimeoutError: (&lt;HTTPSConnection(host='campaign-hub-436.preview.emergentagent.com', port=443) at 0xfa345f411ed0&gt;, 'Connection to campaign-hub-436.preview.emergentagent.com timed out. (connect timeout=15)')
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:696: in send
+    resp = conn.urlopen(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:842: in urlopen
+    retries = retries.increment(
+/root/.venv/lib/python3.11/site-packages/urllib3/util/retry.py:543: in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='campaign-hub-436.preview.emergentagent.com', port=443): Max retries exceeded with url: /api/coupons (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host='campaign-hub-436.preview.emergentagent.com', port=443) at 0xfa345f411ed0&gt;, 'Connection to campaign-hub-436.preview.emergentagent.com timed out. (connect timeout=15)'))
+
+During handling of the above exception, another exception occurred:
+tests/test_growth_features.py:260: in test_create_with_referral_and_reload
+    r = requests.post(f"{API}/coupons", headers=owner_headers, json=payload, timeout=15)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/api.py:134: in post
+    return request("post", url, data=data, json=json, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/api.py:71: in request
+    return session.request(method=method, url=url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:651: in request
+    resp = self.send(prep, **send_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:784: in send
+    r = adapter.send(request, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:717: in send
+    raise ConnectTimeout(e, request=request)
+E   requests.exceptions.ConnectTimeout: HTTPSConnectionPool(host='campaign-hub-436.preview.emergentagent.com', port=443): Max retries exceeded with url: /api/coupons (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host='campaign-hub-436.preview.emergentagent.com', port=443) at 0xfa345f411ed0&gt;, 'Connection to campaign-hub-436.preview.emergentagent.com timed out. (connect timeout=15)'))</failure></testcase><testcase classname="tests.test_growth_features.TestEmailEndpointRegression" name="test_send_email_returns_400_when_key_missing" time="8.543" /><testcase classname="tests.backend_test.TestAI" name="test_ai_copy_viewer_forbidden" time="30.027"><error message="failed on setup with &quot;requests.exceptions.ConnectTimeout: HTTPSConnectionPool(host='campaign-hub-436.preview.emergentagent.com', port=443): Max retries exceeded with url: /api/auth/login (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host='campaign-hub-436.preview.emergentagent.com', port=443) at 0xfb81d2a90d10&gt;, 'Connection to campaign-hub-436.preview.emergentagent.com timed out. (connect timeout=15)'))&quot;">/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:204: in _new_conn
+    sock = connection.create_connection(
+/root/.venv/lib/python3.11/site-packages/urllib3/util/connection.py:85: in create_connection
+    raise err
+/root/.venv/lib/python3.11/site-packages/urllib3/util/connection.py:73: in create_connection
+    sock.connect(sa)
+E   TimeoutError: timed out
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:788: in urlopen
+    response = self._make_request(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:488: in _make_request
+    raise new_e
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:464: in _make_request
+    self._validate_conn(conn)
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:1106: in _validate_conn
+    conn.connect()
+/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:759: in connect
+    self.sock = sock = self._new_conn()
+                       ^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:213: in _new_conn
+    raise ConnectTimeoutError(
+E   urllib3.exceptions.ConnectTimeoutError: (&lt;HTTPSConnection(host='campaign-hub-436.preview.emergentagent.com', port=443) at 0xfb81d2a90d10&gt;, 'Connection to campaign-hub-436.preview.emergentagent.com timed out. (connect timeout=15)')
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:696: in send
+    resp = conn.urlopen(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:842: in urlopen
+    retries = retries.increment(
+/root/.venv/lib/python3.11/site-packages/urllib3/util/retry.py:543: in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='campaign-hub-436.preview.emergentagent.com', port=443): Max retries exceeded with url: /api/auth/login (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host='campaign-hub-436.preview.emergentagent.com', port=443) at 0xfb81d2a90d10&gt;, 'Connection to campaign-hub-436.preview.emergentagent.com timed out. (connect timeout=15)'))
+
+During handling of the above exception, another exception occurred:
+tests/backend_test.py:56: in viewer_headers
+    tok, _ = _login(VIEWER_EMAIL, VIEWER_PW)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/backend_test.py:42: in _login
+    r = requests.post(f"{API}/auth/login", json={"email": email, "password": password}, timeout=15)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/api.py:134: in post
+    return request("post", url, data=data, json=json, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/api.py:71: in request
+    return session.request(method=method, url=url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:651: in request
+    resp = self.send(prep, **send_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:784: in send
+    r = adapter.send(request, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:717: in send
+    raise ConnectTimeout(e, request=request)
+E   requests.exceptions.ConnectTimeout: HTTPSConnectionPool(host='campaign-hub-436.preview.emergentagent.com', port=443): Max retries exceeded with url: /api/auth/login (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host='campaign-hub-436.preview.emergentagent.com', port=443) at 0xfb81d2a90d10&gt;, 'Connection to campaign-hub-436.preview.emergentagent.com timed out. (connect timeout=15)'))</error></testcase><testcase classname="tests.backend_test.TestAI" name="test_ai_image_generates_real_image" time="79.130" /></testsuite></testsuites>

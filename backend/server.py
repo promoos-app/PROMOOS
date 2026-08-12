@@ -107,6 +107,8 @@ class CouponRules(BaseModel):
     stackable: bool = False
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    referral_enabled: bool = False
+    referral_credit_pct: float = 10
 
 
 class CouponIn(BaseModel):
@@ -550,6 +552,176 @@ async def send_coupon_email(cid: str, body: SendCouponEmailIn, user: dict = Depe
         "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"], "coupon_id": cid,
         "to": body.to, "subject": subject, "resend_id": email_id, "created_at": now_iso()})
     return {"ok": True, "email_id": email_id, "sent_to": body.to}
+
+
+# ---------------- Public (no auth) ----------------
+def _coupon_public_payload(c: dict, ws: dict) -> dict:
+    return {
+        "code": c["code"], "name": c["name"], "type": c["type"],
+        "discount_value": c["discount_value"], "headline": c.get("headline", ""),
+        "description": c.get("description", ""), "terms": c.get("terms", ""),
+        "cta": c.get("cta", "Claim Offer"), "state": c["state"],
+        "image_url": c.get("image_url", ""), "qr_code": c.get("qr_code", ""),
+        "referral": c.get("rules", {}).get("referral_enabled", False),
+        "referral_credit_pct": c.get("rules", {}).get("referral_credit_pct", 10),
+        "brand": {
+            "name": ws.get("name", "PromoOS"),
+            "primary_color": ws.get("primary_color", "#005CEE"),
+            "secondary_color": ws.get("secondary_color", "#CCFF00"),
+            "font": ws.get("font", "Cabinet Grotesk"),
+            "logo_url": ws.get("logo_url", ""),
+        },
+    }
+
+
+@api.get("/public/coupons/{code}")
+async def public_coupon(code: str, ref: Optional[str] = None):
+    code_u = code.upper()
+    c = await db.coupons.find_one({"$or": [{"code": code_u}, {"codes": code_u}]}, {"_id": 0})
+    if not c or c["state"] in ("draft", "archived"):
+        raise HTTPException(404, "Coupon not found")
+    ws = await db.workspaces.find_one({"id": c["workspace_id"]}, {"_id": 0}) or {}
+    # count impression (fire and forget)
+    await db.coupons.update_one({"id": c["id"]}, {"$inc": {"stats.impressions": 1}})
+    if ref:
+        await db.referral_visits.insert_one({
+            "id": str(uuid.uuid4()), "coupon_id": c["id"], "ref": ref,
+            "created_at": now_iso()})
+    return _coupon_public_payload(c, ws)
+
+
+class PublicRedeemIn(BaseModel):
+    code: str
+    amount: float = 0
+    customer: Optional[str] = None
+    ref: Optional[str] = None
+
+
+@api.post("/public/coupons/redeem")
+async def public_redeem(body: PublicRedeemIn):
+    """Public redemption endpoint used by /c landing pages and embed widget.
+    Applies same discount + fraud rules; credits referrer when `ref` is present."""
+    code = body.code.upper()
+    c = await db.coupons.find_one({"$or": [{"code": code}, {"codes": code}]})
+    if not c:
+        raise HTTPException(404, "Code not found")
+    if c["state"] != "active":
+        raise HTTPException(400, f"Coupon is {c['state']}")
+    customer = (body.customer or "guest").strip()[:120]
+    recent = await db.redemptions.find_one({
+        "coupon_id": c["id"], "customer": customer,
+        "created_at": {"$gt": (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()}})
+    if recent:
+        raise HTTPException(429, "Duplicate redemption detected")
+    percent_types = {"percentage", "flash_sale", "seasonal", "vip",
+                     "first_time", "birthday", "referral"}
+    if c["type"] in percent_types:
+        discount = body.amount * c["discount_value"] / 100
+    elif c["type"] == "fixed":
+        discount = min(c["discount_value"], body.amount)
+    elif c["type"] == "bogo":
+        discount = body.amount * 0.5
+    else:
+        discount = 0
+    discount = round(min(discount, body.amount), 2)
+    rev = round(max(body.amount - discount, 0), 2)
+    referral_credit = 0.0
+    if body.ref and c.get("rules", {}).get("referral_enabled"):
+        pct = float(c.get("rules", {}).get("referral_credit_pct", 10))
+        referral_credit = round(rev * pct / 100, 2)
+        await db.referrals.insert_one({
+            "id": str(uuid.uuid4()), "workspace_id": c["workspace_id"],
+            "coupon_id": c["id"], "referrer": body.ref, "referred_customer": customer,
+            "amount": body.amount, "credit": referral_credit,
+            "created_at": now_iso()})
+    await db.redemptions.insert_one({
+        "id": str(uuid.uuid4()), "workspace_id": c["workspace_id"], "coupon_id": c["id"],
+        "code": code, "customer": customer, "amount": body.amount,
+        "discount": discount, "revenue": rev, "ref": body.ref,
+        "source": "public", "created_at": now_iso()})
+    inc = {"stats.redemptions": 1, "stats.revenue": rev}
+    if referral_credit:
+        inc["stats.referral_credit"] = referral_credit
+    await db.coupons.update_one({"id": c["id"]}, {"$inc": inc})
+    return {"ok": True, "discount": discount, "revenue": rev,
+            "referral_credit": referral_credit}
+
+
+# ---------------- Referrals (auth) ----------------
+@api.get("/coupons/{cid}/referrals")
+async def coupon_referrals(cid: str, user: dict = Depends(get_current_user)):
+    c = await db.coupons.find_one({"id": cid, "workspace_id": user["workspace_id"]}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Coupon not found")
+    refs = await db.referrals.find(
+        {"workspace_id": user["workspace_id"], "coupon_id": cid},
+        {"_id": 0}).sort("created_at", -1).to_list(500)
+    visits = await db.referral_visits.count_documents({"coupon_id": cid})
+    by_ref: Dict[str, Dict[str, float]] = {}
+    for r in refs:
+        key = r["referrer"]
+        b = by_ref.setdefault(key, {"referrer": key, "count": 0, "credit": 0.0})
+        b["count"] += 1
+        b["credit"] += float(r.get("credit", 0))
+    leaders = sorted(by_ref.values(), key=lambda x: x["credit"], reverse=True)[:20]
+    total_credit = round(sum(r.get("credit", 0) for r in refs), 2)
+    return {
+        "visits": visits,
+        "redemptions": len(refs),
+        "total_credit": total_credit,
+        "leaders": [{**l, "credit": round(l["credit"], 2)} for l in leaders],
+        "recent": refs[:50],
+    }
+
+
+# ---------------- Embed widget (public JS) ----------------
+@api.get("/embed/coupon.js")
+async def embed_js(request: Request):
+    # Compute the public origin so the widget hits the right backend
+    origin = os.environ.get("PUBLIC_ORIGIN", "").rstrip("/")
+    if not origin:
+        proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+        origin = f"{proto}://{host}"
+    js = f"""
+(function(){{
+  var API="{origin}";
+  var scripts=document.querySelectorAll('script[data-promoos-code]');
+  scripts.forEach(function(s){{
+    var code=(s.getAttribute('data-promoos-code')||'').toUpperCase();
+    var ref=s.getAttribute('data-ref')||'';
+    if(!code) return;
+    var host=document.createElement('div');
+    host.setAttribute('data-promoos-widget',code);
+    s.parentNode.insertBefore(host,s);
+    fetch(API+'/api/public/coupons/'+encodeURIComponent(code)+(ref?('?ref='+encodeURIComponent(ref)):''))
+      .then(function(r){{return r.ok?r.json():Promise.reject(r)}})
+      .then(function(d){{
+        var primary=d.brand.primary_color||'#005CEE';
+        var secondary=d.brand.secondary_color||'#CCFF00';
+        var landing=API.replace(/\\/api$/,'')+'/c/'+encodeURIComponent(d.code);
+        host.innerHTML=''
+          +'<div style="font-family:Helvetica,Arial,sans-serif;max-width:420px;padding:20px;border-radius:14px;background:#0A0A0A;color:#fff;border:1px solid #27272A;box-shadow:0 10px 30px rgba(0,0,0,.35)">'
+          +'<div style="font-size:11px;letter-spacing:.12em;color:'+secondary+';text-transform:uppercase;font-weight:700">'+d.brand.name+'</div>'
+          +'<div style="font-size:22px;font-weight:800;line-height:1.15;margin:8px 0 6px">'+d.headline+'</div>'
+          +'<div style="font-size:13px;color:#A1A1AA;margin-bottom:14px">'+d.description+'</div>'
+          +'<div style="display:flex;align-items:center;gap:10px">'
+          +'<div id="pos-code-'+code+'" style="flex:1;padding:12px 14px;border:2px dashed '+primary+';border-radius:10px;font-family:monospace;font-weight:700;font-size:18px;color:'+primary+';letter-spacing:2px;text-align:center">'+d.code+'</div>'
+          +'<button data-pos-copy style="background:'+secondary+';color:#0A0A0A;border:0;padding:12px 14px;border-radius:10px;font-weight:700;cursor:pointer">Copy</button>'
+          +'</div>'
+          +'<a href="'+landing+(ref?('?ref='+encodeURIComponent(ref)):'')+'" target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:14px;background:'+primary+';color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700">'+d.cta+'</a>'
+          +'</div>';
+        var btn=host.querySelector('[data-pos-copy]');
+        btn.addEventListener('click',function(){{
+          navigator.clipboard.writeText(d.code).then(function(){{btn.textContent='Copied!';setTimeout(function(){{btn.textContent='Copy'}},1500)}});
+        }});
+      }})
+      .catch(function(){{ host.innerHTML='<div style="padding:12px;border:1px solid #27272A;border-radius:10px;color:#A1A1AA;font-family:sans-serif;font-size:12px">Offer unavailable</div>'; }});
+  }});
+}})();
+""".strip()
+    return Response(content=js, media_type="application/javascript",
+                    headers={"Cache-Control": "public, max-age=60"})
 
 
 app.include_router(api)

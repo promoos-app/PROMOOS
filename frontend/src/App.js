@@ -12,6 +12,7 @@ import CouponDetail from "@/pages/CouponDetail";
 import Analytics from "@/pages/Analytics";
 import Settings from "@/pages/Settings";
 import Placeholder from "@/pages/Placeholder";
+import PublicCoupon from "@/pages/PublicCoupon";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -31,6 +32,7 @@ function App() {
         <Toaster theme="dark" position="top-right" />
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/c/:code" element={<PublicCoupon />} />
           <Route path="/" element={<Protected><Layout /></Protected>}>
             <Route index element={<Dashboard />} />
             <Route path="coupons" element={<Coupons />} />
