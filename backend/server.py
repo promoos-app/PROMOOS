@@ -720,9 +720,15 @@ async def public_redeem(body: PublicRedeemIn):
                 "tier": tier, "last_activity": now_iso(),
              }, "$setOnInsert": {"created_at": now_iso(), "id": str(uuid.uuid4())}},
             upsert=True)
+    # Fire "purchase" trigger for any active journeys
+    email = customer if "@" in customer else None
+    await _fire_trigger(c["workspace_id"], "purchase", customer, email=email)
     return {"ok": True, "discount": discount, "revenue": rev,
             "referral_credit": referral_credit,
             "loyalty_points_awarded": loyalty_awarded}
+
+
+
 
 
 # ---------------- Referrals (auth) ----------------
@@ -1450,7 +1456,179 @@ async def update_journey(jid: str, body: JourneyIn, user: dict = Depends(get_cur
 async def delete_journey(jid: str, user: dict = Depends(get_current_user)):
     require_writer(user)
     await db.journeys.delete_one({"id": jid, "workspace_id": user["workspace_id"]})
+    await db.journey_runs.update_many(
+        {"journey_id": jid, "status": {"$in": ["pending", "waiting"]}},
+        {"$set": {"status": "cancelled", "completed_at": now_iso()}})
     return {"ok": True}
+
+
+class JourneyEnrollIn(BaseModel):
+    customer: str
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+
+
+async def _enroll_customer_in_journey(journey: dict, customer: str,
+                                      email: Optional[str] = None,
+                                      phone: Optional[str] = None) -> dict:
+    existing = await db.journey_runs.find_one({
+        "journey_id": journey["id"], "customer": customer,
+        "status": {"$in": ["pending", "waiting"]}})
+    if existing:
+        return {"skipped": True, "reason": "already enrolled"}
+    run = {
+        "id": str(uuid.uuid4()), "workspace_id": journey["workspace_id"],
+        "journey_id": journey["id"], "customer": customer,
+        "email": email, "phone": phone,
+        "current_step": 0, "status": "pending",
+        "next_at": now_iso(), "started_at": now_iso(),
+        "log": [],
+    }
+    await db.journey_runs.insert_one({**run})
+    await db.journeys.update_one({"id": journey["id"]},
+                                 {"$inc": {"stats.entered": 1}})
+    return {"ok": True, "run_id": run["id"]}
+
+
+@api.post("/journeys/{jid}/enroll")
+async def enroll_in_journey(jid: str, body: JourneyEnrollIn,
+                            user: dict = Depends(get_current_user)):
+    require_writer(user)
+    j = await db.journeys.find_one({"id": jid, "workspace_id": user["workspace_id"]}, {"_id": 0})
+    if not j:
+        raise HTTPException(404, "Journey not found")
+    if not j.get("enabled"):
+        raise HTTPException(400, "Journey is disabled")
+    return await _enroll_customer_in_journey(j, body.customer, body.email, body.phone)
+
+
+@api.get("/journeys/{jid}/runs")
+async def journey_runs(jid: str, user: dict = Depends(get_current_user)):
+    runs = await db.journey_runs.find(
+        {"journey_id": jid, "workspace_id": user["workspace_id"]},
+        {"_id": 0}).sort("started_at", -1).to_list(200)
+    return runs
+
+
+async def _fire_trigger(workspace_id: str, trigger: str, customer: str,
+                        email: Optional[str] = None, phone: Optional[str] = None):
+    """Auto-enroll a customer into every enabled journey matching a trigger."""
+    async for j in db.journeys.find({"workspace_id": workspace_id,
+                                      "trigger": trigger, "enabled": True}, {"_id": 0}):
+        try:
+            await _enroll_customer_in_journey(j, customer, email, phone)
+        except Exception as e:
+            logger.warning("Journey enroll failed: %s", e)
+
+
+async def _execute_journey_step(run: dict) -> None:
+    """Perform a single step of a journey run. Advances current_step or schedules next_at."""
+    j = await db.journeys.find_one({"id": run["journey_id"]}, {"_id": 0})
+    if not j:
+        await db.journey_runs.update_one({"id": run["id"]},
+            {"$set": {"status": "cancelled", "completed_at": now_iso(),
+                      "log": run.get("log", []) + ["journey deleted"]}})
+        return
+    steps = j.get("steps", [])
+    idx = run["current_step"]
+    if idx >= len(steps):
+        await db.journey_runs.update_one({"id": run["id"]},
+            {"$set": {"status": "completed", "completed_at": now_iso()}})
+        await db.journeys.update_one({"id": j["id"]},
+            {"$inc": {"stats.completed": 1}})
+        return
+    step = steps[idx]
+    ws = await db.workspaces.find_one({"id": j["workspace_id"]}, {"_id": 0}) or {}
+    log_entry = {"at": now_iso(), "step": idx, "type": step.get("type")}
+    next_at = now_iso()
+    try:
+        if step["type"] == "wait":
+            hours = float(step.get("hours", 1))
+            next_at = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+            log_entry["waited_hours"] = hours
+        elif step["type"] == "send_email":
+            if not RESEND_API_KEY or not run.get("email"):
+                log_entry["skipped"] = "email not configured or missing recipient"
+            else:
+                subject = step.get("subject", f"A message from {ws.get('name','us')}")
+                body = step.get("body", "Thanks for being with us.")
+                html = f"<div style='font-family:Helvetica,Arial,sans-serif;padding:24px;background:#0A0A0A;color:#fff'><h2>{subject}</h2><p style='color:#A1A1AA'>{body}</p></div>"
+                r = await asyncio.to_thread(resend.Emails.send, {
+                    "from": SENDER_EMAIL, "to": [run["email"]],
+                    "subject": subject, "html": html})
+                log_entry["email_id"] = r.get("id") if isinstance(r, dict) else None
+        elif step["type"] == "send_sms":
+            if not twilio_client or not run.get("phone") or not TWILIO_FROM_SMS:
+                log_entry["skipped"] = "sms not configured or missing recipient"
+            else:
+                sid = await _twilio_send_one(run["phone"], step.get("body", "Hi from us!"), "sms")
+                log_entry["sms_sid"] = sid
+        elif step["type"] == "send_coupon":
+            # Auto-create a coupon and record the code
+            disc = float(step.get("discount", 15))
+            code = "JRN-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
+            new_cp = {
+                "id": str(uuid.uuid4()), "workspace_id": j["workspace_id"],
+                "code": code, "codes": [code],
+                "name": f"Journey reward — {j['name']}"[:80],
+                "type": step.get("type_coupon", "percentage"),
+                "discount_value": disc, "headline": step.get("headline", f"{int(disc)}% just for you"),
+                "description": step.get("description", ""),
+                "terms": "One-time use. Journey-generated.",
+                "cta": "Claim", "audience": run.get("customer"),
+                "state": "active",
+                "image_url": "", "qr_code": gen_qr(f"{PUBLIC_APP_URL or ''}/c/{code}"),
+                "rules": {"min_cart": 0, "scope": "all", "scope_value": "",
+                          "usage_limit": 1, "per_customer_limit": 1, "stackable": False,
+                          "start_date": None, "end_date": None,
+                          "referral_enabled": False, "referral_credit_pct": 10},
+                "stats": {"impressions": 0, "redemptions": 0, "revenue": 0.0, "referral_credit": 0.0},
+                "created_at": now_iso(), "updated_at": now_iso(), "source": "journey",
+            }
+            await db.coupons.insert_one({**new_cp})
+            log_entry["coupon_code"] = code
+            # Also try to deliver by email if we can
+            if RESEND_API_KEY and run.get("email"):
+                try:
+                    subject = f"A special reward: {int(disc)}% off"
+                    landing = f"{PUBLIC_APP_URL or ''}/c/{code}"
+                    html = render_coupon_email(new_cp, ws, landing)
+                    await asyncio.to_thread(resend.Emails.send, {
+                        "from": SENDER_EMAIL, "to": [run["email"]],
+                        "subject": subject, "html": html})
+                    log_entry["email_delivered"] = True
+                except Exception as e:
+                    log_entry["email_error"] = str(e)[:120]
+        else:
+            log_entry["skipped"] = f"unknown step type {step['type']}"
+    except Exception as e:
+        log_entry["error"] = str(e)[:200]
+    # Advance
+    new_idx = idx + 1
+    new_status = "waiting" if step["type"] == "wait" else "pending"
+    if new_idx >= len(steps):
+        new_status = "completed"
+        await db.journeys.update_one({"id": j["id"]}, {"$inc": {"stats.completed": 1}})
+    await db.journey_runs.update_one({"id": run["id"]}, {
+        "$set": {"current_step": new_idx, "status": new_status,
+                 "next_at": next_at if new_status != "completed" else None,
+                 "completed_at": now_iso() if new_status == "completed" else None},
+        "$push": {"log": log_entry}})
+
+
+async def journey_worker():
+    """Background loop: process any due runs every 30 seconds."""
+    while True:
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            due = await db.journey_runs.find({
+                "status": {"$in": ["pending", "waiting"]},
+                "next_at": {"$lte": now}}).to_list(50)
+            for run in due:
+                await _execute_journey_step({k: v for k, v in run.items() if k != "_id"})
+        except Exception as e:
+            logger.exception("journey_worker crash: %s", e)
+        await asyncio.sleep(30)
 
 
 # ---------------- Bundle D: Customer CRM + AI Segmentation ----------------
@@ -1645,6 +1823,169 @@ async def revoke_api_key(kid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
+# ---------------- POS Connectors (Shopify + WooCommerce) ----------------
+class PublicValidateIn(BaseModel):
+    code: str
+    amount: float = 0
+    customer: Optional[str] = None
+
+
+@api.post("/public/coupons/validate")
+async def public_validate(body: PublicValidateIn):
+    """Public validation used by POS checkouts to preview a discount before finalizing."""
+    code = body.code.upper()
+    c = await db.coupons.find_one({"$or": [{"code": code}, {"codes": code}]}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Code not found")
+    if c["state"] != "active":
+        raise HTTPException(400, f"Coupon is {c['state']}")
+    rules = c.get("rules") or {}
+    end_date = rules.get("end_date")
+    if end_date and end_date < now_iso():
+        raise HTTPException(400, "Coupon has expired")
+    if rules.get("min_cart", 0) and body.amount < rules["min_cart"]:
+        raise HTTPException(400, f"Minimum cart of ${rules['min_cart']} required")
+    percent_types = {"percentage", "flash_sale", "seasonal", "vip",
+                     "first_time", "birthday", "referral"}
+    if c["type"] in percent_types:
+        discount = body.amount * c["discount_value"] / 100
+    elif c["type"] == "fixed":
+        discount = min(c["discount_value"], body.amount)
+    elif c["type"] == "bogo":
+        discount = body.amount * 0.5
+    else:
+        discount = 0
+    discount = round(min(discount, body.amount), 2)
+    return {"ok": True, "code": code, "discount": discount,
+            "type": c["type"], "value": c["discount_value"],
+            "headline": c.get("headline"), "terms": c.get("terms")}
+
+
+async def _apply_from_pos(source: str, workspace_id: str, code: str, amount: float,
+                          customer: Optional[str], order_id: Optional[str],
+                          currency: Optional[str] = None) -> dict:
+    c = await db.coupons.find_one({"$or": [{"code": code.upper()}, {"codes": code.upper()}],
+                                   "workspace_id": workspace_id})
+    if not c or c["state"] != "active":
+        return {"applied": False, "reason": "coupon inactive or missing"}
+    percent_types = {"percentage", "flash_sale", "seasonal", "vip",
+                     "first_time", "birthday", "referral"}
+    if c["type"] in percent_types:
+        discount = amount * c["discount_value"] / 100
+    elif c["type"] == "fixed":
+        discount = min(c["discount_value"], amount)
+    elif c["type"] == "bogo":
+        discount = amount * 0.5
+    else:
+        discount = 0
+    discount = round(min(discount, amount), 2)
+    rev = round(max(amount - discount, 0), 2)
+    await db.redemptions.insert_one({
+        "id": str(uuid.uuid4()), "workspace_id": workspace_id, "coupon_id": c["id"],
+        "code": code.upper(), "customer": customer or "pos", "amount": amount,
+        "discount": discount, "revenue": rev, "source": source,
+        "external_order_id": order_id, "currency": currency or "USD",
+        "created_at": now_iso()})
+    await db.coupons.update_one({"id": c["id"]},
+        {"$inc": {"stats.redemptions": 1, "stats.revenue": rev}})
+    if customer:
+        await _fire_trigger(workspace_id, "purchase", customer,
+                            email=customer if "@" in customer else None)
+    return {"applied": True, "discount": discount, "revenue": rev, "order_id": order_id}
+
+
+@api.post("/pos/{workspace_id}/shopify")
+async def shopify_webhook(workspace_id: str, request: Request):
+    """Receives Shopify orders/create webhooks. Merchant configures the webhook to hit this URL
+    and adds a `X-PromoOS-Code: <CODE>` header (or note attribute with `promoos:<CODE>`).
+    Shopify HMAC signature check is optional and left to the merchant's account setup."""
+    ws = await db.workspaces.find_one({"id": workspace_id}, {"_id": 0})
+    if not ws:
+        raise HTTPException(404, "Workspace not found")
+    payload = await request.json()
+    total = float(payload.get("total_price") or payload.get("subtotal_price") or 0)
+    order_id = str(payload.get("id") or payload.get("order_id") or "")
+    customer_email = ((payload.get("customer") or {}).get("email") or
+                      payload.get("email") or "shopify-guest")
+    code = request.headers.get("X-PromoOS-Code")
+    if not code:
+        # Fall back to Shopify note_attributes: [{"name": "promoos", "value": "SUMMER25"}]
+        for na in payload.get("note_attributes") or []:
+            if str(na.get("name", "")).lower() == "promoos":
+                code = na.get("value"); break
+    if not code:
+        return {"applied": False, "reason": "no PromoOS code on order"}
+    return await _apply_from_pos("shopify", workspace_id, code, total,
+                                 customer_email, order_id,
+                                 payload.get("currency"))
+
+
+@api.post("/pos/{workspace_id}/woocommerce")
+async def woocommerce_webhook(workspace_id: str, request: Request):
+    """Receives WooCommerce `order.created` webhook (JSON body from wp-json/wc/v3/webhooks).
+    Merchant uses a snippet that adds meta_data { key:'promoos', value:'CODE' } on the order."""
+    ws = await db.workspaces.find_one({"id": workspace_id}, {"_id": 0})
+    if not ws:
+        raise HTTPException(404, "Workspace not found")
+    payload = await request.json()
+    total = float(payload.get("total") or 0)
+    order_id = str(payload.get("id") or "")
+    billing = payload.get("billing") or {}
+    customer_email = billing.get("email") or "woo-guest"
+    code = None
+    for meta in payload.get("meta_data") or []:
+        if str(meta.get("key", "")).lower() == "promoos":
+            code = meta.get("value"); break
+    if not code:
+        for cline in payload.get("coupon_lines") or []:
+            code = cline.get("code"); break
+    if not code:
+        return {"applied": False, "reason": "no PromoOS code on order"}
+    return await _apply_from_pos("woocommerce", workspace_id, code, total,
+                                 customer_email, order_id,
+                                 payload.get("currency"))
+
+
+@api.get("/pos/snippets")
+async def pos_snippets(request: Request, user: dict = Depends(get_current_user)):
+    """Returns copy-paste installation instructions for supported POS platforms."""
+    origin = (PUBLIC_APP_URL or "").rstrip("/")
+    if not origin:
+        proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+        origin = f"{proto}://{host}"
+    wid = user["workspace_id"]
+    shopify_url = f"{origin}/api/pos/{wid}/shopify"
+    woo_url = f"{origin}/api/pos/{wid}/woocommerce"
+    return {
+        "shopify": {
+            "webhook_url": shopify_url,
+            "topic": "orders/create",
+            "instructions": [
+                "In your Shopify admin: Settings → Notifications → Webhooks → Create webhook.",
+                f"Event: 'Order creation', Format: JSON, URL: {shopify_url}",
+                "Add a Note attribute at checkout: name='promoos', value='CODE' (or send X-PromoOS-Code header from a custom app).",
+                "Every order will be posted to PromoOS. If the coupon is active, the redemption + revenue are logged automatically."
+            ],
+        },
+        "woocommerce": {
+            "webhook_url": woo_url,
+            "topic": "order.created",
+            "instructions": [
+                "In WordPress admin: WooCommerce → Settings → Advanced → Webhooks → Add webhook.",
+                f"Topic: 'Order created', Delivery URL: {woo_url}, API version: v3.",
+                "In your theme or a snippet, set order meta_data { key:'promoos', value:'CODE' } before checkout — or use the built-in WooCommerce coupon field and PromoOS will match on coupon_lines[].code.",
+                "Every completed order fires the webhook, PromoOS records the redemption and attributes revenue."
+            ],
+        },
+        "generic_curl": (
+            f"curl -X POST '{origin}/api/public/coupons/redeem' "
+            "-H 'Content-Type: application/json' "
+            "-d '{\"code\":\"CODE\",\"amount\":100,\"customer\":\"buyer@example.com\"}'"
+        ),
+    }
+
+
 app.include_router(api)
 
 # CORS: reflect incoming Origin with credentials. Wildcard "*" is browser-rejected
@@ -1749,7 +2090,9 @@ async def seed():
 async def startup():
     try:
         await db.login_attempts.create_index("identifier")
+        await db.journey_runs.create_index([("status", 1), ("next_at", 1)])
         await seed()
+        asyncio.create_task(journey_worker())
     except Exception as e:
         logger.error(f"Seed error: {e}")
 

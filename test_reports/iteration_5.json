@@ -1,0 +1,62 @@
+{
+  "summary": "Iter-5 (Journey Runtime + POS Connectors) end-to-end validated. Backend: 24/24 pytest cases PASS in 58.6s including a real 60-95s poll that watches the background journey_worker execute a 2-step run (wait 0h → send_coupon 15%) and confirms it transitions pending→completed AND materialises a coupon in db.coupons with source='journey', code prefix 'JRN-', rules.usage_limit=1. Public /coupons/validate (no auth), Shopify (header + note_attributes), WooCommerce (meta_data + coupon_lines fallback), /pos/snippets (fully-qualified https URLs, correct topics, ≥3 instructions each), and purchase-trigger auto-enroll on /public/coupons/redeem all green. Frontend: /integrations renders pos-shopify + pos-woocommerce cards with correct https://…/api/pos/{ws}/shopify + …/woocommerce URLs, pos-curl visible with the generic curl command; /campaigns Enroll panel accepts an email, creates a run, and the recent-runs feed lists the new customer with status=PENDING and step 0/3 within ~2s.",
+  "ai_features_tested": [
+    "AI Today's Promo / Weekly Calendar / One-Click / Segment Promo - not-in-scope-this-iteration (iter-5 does not touch AI code; per iter-4 handoff the EMERGENT_LLM_KEY is still budget-exhausted, we did not re-drive AI to preserve credits)"
+  ],
+  "skills_loaded": ["ai-testing-core"],
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/pos/snippets", "issue": "Response is not cached — request-level headers x-forwarded-proto/host are read every call; low-frequency admin route so fine, but consider a 60s cache."},
+      {"endpoint": "POST /api/pos/{ws}/shopify", "issue": "No HMAC signature verification (documented as 'left to the merchant's account setup'). Any actor who knows the workspace UUID and a valid coupon code can forge a redemption + inflate stats.revenue. Recommend optional X-Shopify-Hmac-SHA256 verification using a per-workspace secret when the merchant configures it."},
+      {"endpoint": "POST /api/pos/{ws}/woocommerce", "issue": "Same lack of signature check as Shopify — no X-WC-Webhook-Signature validation. Also, `coupon_lines` fallback takes the FIRST code without checking active state before _apply_from_pos handles it (safe, but redemption row is written with source='woocommerce' even for invalid codes → look at code path: `_apply_from_pos` returns applied=false without inserting a row, so this is actually OK — kept for reviewer awareness)."},
+      {"endpoint": "POST /api/journeys/{jid}/enroll", "issue": "`email` field is EmailStr — passing a non-email customer id + email=null works (email=null falls back to None), but if caller sets email='' (empty string) pydantic will 422. Frontend currently sends `email: enrollFor.email || null` which is safe; document the requirement."},
+      {"endpoint": "journey_worker", "issue": "Fixed 30s sleep between polls means worst-case latency for a run with next_at=now is ~30s. For MVP fine, but a due-time signal (or `min(30, seconds_to_next_due)`) would reduce cold-start latency."},
+      {"endpoint": "_execute_journey_step (send_coupon)", "issue": "The generated coupon has `state='active'` and `audience: run.customer` (a single customer id/email), but there is no per-customer scope enforcement in `/public/coupons/redeem` — any actor who intercepts the JRN- code can redeem it as any customer. Combined with usage_limit=1 the blast radius is small, still worth logging."},
+      {"endpoint": "POST /api/journeys", "issue": "No server-side validation of `steps[].type` — an unknown step type is silently logged as skipped ('unknown step type X') in the run log. Consider Pydantic Literal[...] validation to fail fast at create time."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard Recharts (regression, still present)", "issues": ["Console warning: 'The width(-1) and height(-1) of chart should be greater than 0' — chart parent lacks explicit minHeight so initial render logs 2x warnings before ResizeObserver settles. Same as iter-4."]},
+      {"screen": "Campaigns", "issues": ["Recent-runs feed shows step counter as 'step 0/3' after enrolling into a 3-step journey — expected while worker hasn't ticked yet, but there is no auto-refresh: user must close+reopen the enroll panel to see 'step 1/3', 'step 2/3', 'completed'. A polling refresh (every ~10s while the panel is open) or a manual 'refresh' button would improve UX."]},
+      {"screen": "Integrations · Commerce connectors", "issues": ["Copy button on the webhook URLs is hidden behind a lucide icon with no tooltip/text — add title='Copy webhook URL' for accessibility."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter5_features.py",
+    "/app/test_reports/pytest/iter5_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: HMAC signature verification for Shopify + WooCommerce webhooks (per-workspace shared secret) — currently anyone with workspace_id + a valid code can forge redemptions.",
+    "OPTIONAL: Auto-refresh the Recent runs feed on Campaigns page (poll every 10-15s while panel is open) so the user sees the run advance without clicking away and back.",
+    "OPTIONAL: Add Pydantic Literal validation for journey step types to fail fast at /journeys create.",
+    "OPTIONAL: Split /app/backend/server.py (now 2100 lines) into routers/ subpackage — same recommendation as iter-4."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew from 1752 → 2100 lines; still no router split. Every iteration compounds this — recommend routers/{auth,coupons,public,pos,journeys,ai,growth,loyalty,gift_cards,customers,api_keys,templates}.py before adding more surface.",
+    "journey_worker() runs forever with no supervised health/liveness signal. If it dies (exception outside the try — e.g. Motor client GC), nothing restarts it until a supervisor bounce. Consider exposing a /internal/journey_worker_health endpoint that checks `last_tick_at` written by the worker.",
+    "_execute_journey_step catches ALL Exception and stashes str(e)[:200] into log_entry['error'] but still advances current_step. A failing send_email will therefore silently skip that customer's email step forever. Consider a retry counter and 'failed' terminal status after N attempts.",
+    "gen_qr(...) is invoked on every journey-generated coupon; QR is a base64 PNG blob inline in the coupon doc — inflates Mongo docs and network payload of GET /coupons. Same concern as iter-4.",
+    "_apply_from_pos always uses currency ONLY from payload — but the coupon's discount_value is a raw number with no currency dimension. If a merchant sends EUR orders to a workspace that thinks in USD, stats.revenue is currency-mixed. Document or normalize.",
+    "public_validate only checks state=='active' + min_cart but ignores end_date / start_date. Expired coupons in state=active (state was set active but end_date is past) would still validate. Recommend comparing rules.end_date against now.",
+    "The Shopify/Woo webhook handlers accept any Content-Type as JSON via request.json() — a form-urlencoded body would 400 with a Pydantic-less bare 400. Test coverage exists for JSON path only; consider explicit Content-Type check + friendly 400.",
+    "PublicRedeem still stores customer plaintext (email/UUID) in redemptions + fires _fire_trigger which enrolls plaintext customer in journey_runs. PII concern persists from iter-3."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter5_features.py (new, 24 tests, all pass in 58.6s)",
+    "/app/test_reports/pytest/iter5_results.xml (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (24/24 iter-5 pytest passed — 12 iter-5 specific + 12 regression smokes covering journeys/enroll/runs, worker, public validate/redeem, Shopify + Woo webhooks, /pos/snippets, dashboard, coupons, customers, gift-cards, store-credits, loyalty)",
+    "frontend": "100% (Integrations pos-shopify + pos-woocommerce cards render with correct https://…preview URLs, topics, instructions, generic_curl; Campaigns enroll flow — journey-enroll-btn→panel→customer→submit→recent-runs — works end-to-end and shows PENDING status within 2s)"
+  },
+  "test_credentials": "admin@promoos.com/admin123 (owner), marketer@promoos.com/marketer123, viewer@promoos.com/viewer123 — from /app/memory/test_credentials.md",
+  "seed_data_creation": "Test artifacts created this run (all TEST_-prefixed for cleanup): (a) ~10 TEST_iter5_* journeys with mixed wait/send_coupon steps. (b) 1 completed journey_run + 1 JRN- coupon in db.coupons (from the worker test). (c) 2 TEST_ui_iter5_* journeys created via the UI New-Journey dialog + 1 pending run for TEST_ui_enroll_XXXXX@example.com. (d) ~7 TEST_iter5_purchase/shopify/woo/val_* coupons created + activated + redeemed via public/pos endpoints; each has 1 redemption row in db.redemptions with source in {shopify, woocommerce, public}. (e) 1 TEST_purchase_* journey (purchase trigger) enrolled with a redeem customer, resulting in a journey_run row.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter-5 backend is fully green — journey_worker runs as an asyncio task from server startup (line 2092 of server.py) and ticks every 30s. Test suite `/app/backend/tests/test_iter5_features.py` covers all 8 iter-5 review items and can be re-run any time with `REACT_APP_BACKEND_URL=https://campaign-hub-436.preview.emergentagent.com pytest tests/test_iter5_features.py`. Two long-running tests (test_worker_executes_wait_and_send_coupon at ~60-95s poll, test_redeem_enrolls_in_purchase_journey at ~15s poll) are network+time-dependent; if flaky, increase the poll windows. AI budget from iter-4 is still exhausted — do NOT re-drive AI UI flows. Frontend data-testids added this iter: journey-enroll-btn-{jid}, journey-enroll-panel-{jid}, journey-enroll-customer-{jid}, journey-enroll-submit-{jid}, pos-shopify, pos-woocommerce, pos-shopify-url, pos-woocommerce-url, pos-curl — all verified present and functional. Recent-runs feed does not auto-refresh; user must close+reopen the enroll panel to see the worker advance the run.",
+  "rca of the issue": "N/A — no defects found in iter-5 surface. The five initial regression assertion failures during a first-cut of the pytest file were AUTHOR ERROR (I asserted the endpoints returned bare lists when they in fact return richer summary objects — `/customers` returns {total,by_segment,customers[…]}, `/gift-cards` returns {total_issued, total_balance, outstanding, redeemed, gift_cards[…]}, `/store-credits` returns {total_outstanding, by_customer, credits[…]}, `/loyalty` returns {config, total_members, total_points, by_tier, members[…]}, and there is no `/experiments` top-level list route — experiments are per-coupon at /coupons/{cid}/experiments). Test assertions were corrected; the endpoint contracts themselves are consistent with iter-4 and were never broken."
+}

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Plus, Megaphone, Trash2, Mail, Timer, Ticket, MessageSquare } from "lucide-react";
+import { Loader2, Plus, Megaphone, Trash2, Mail, Timer, Ticket, MessageSquare, UserPlus, Activity } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
@@ -110,8 +110,25 @@ function NewJourneyDialog({ onCreated }) {
 
 export default function Campaigns() {
   const [rows, setRows] = useState([]);
+  const [runs, setRuns] = useState({});
+  const [enrolling, setEnrolling] = useState(null);
+  const [enrollFor, setEnrollFor] = useState({ customer: "", email: "" });
+
   const load = () => api.get("/journeys").then((r) => setRows(r.data)).catch((e) => toast.error(apiError(e)));
   useEffect(() => { load(); }, []);
+
+  // Auto-refresh runs feed every 8s while an enroll panel is open
+  useEffect(() => {
+    if (!enrolling) return;
+    const id = setInterval(() => loadRuns(enrolling), 8000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line
+  }, [enrolling]);
+
+  const loadRuns = async (jid) => {
+    const { data } = await api.get(`/journeys/${jid}/runs`);
+    setRuns((s) => ({ ...s, [jid]: data }));
+  };
 
   const del = async (id) => {
     if (!window.confirm("Delete this journey?")) return;
@@ -122,6 +139,20 @@ export default function Campaigns() {
   const toggle = async (j, v) => {
     await api.put(`/journeys/${j.id}`, { ...j, enabled: v });
     load();
+  };
+
+  const enroll = async (jid) => {
+    if (!enrollFor.customer.trim()) { toast.error("Customer id/email required"); return; }
+    try {
+      const { data } = await api.post(`/journeys/${jid}/enroll`, {
+        customer: enrollFor.customer.trim(),
+        email: enrollFor.email || (enrollFor.customer.includes("@") ? enrollFor.customer : null),
+      });
+      if (data.skipped) toast.info(`Skipped: ${data.reason}`);
+      else toast.success("Customer enrolled");
+      setEnrolling(null); setEnrollFor({ customer: "", email: "" });
+      loadRuns(jid);
+    } catch (e) { toast.error(apiError(e)); }
   };
 
   return (
@@ -158,11 +189,40 @@ export default function Campaigns() {
                 <div><div className="text-[10px] text-[#71717A]">Completed</div><div className="text-sm font-bold">{j.stats?.completed || 0}</div></div>
                 <div><div className="text-[10px] text-[#71717A]">Conversions</div><div className="text-sm font-bold text-[#CCFF00]">{j.stats?.conversions || 0}</div></div>
               </div>
-              <div className="mt-3 flex justify-end">
+              <div className="mt-3 flex justify-between items-center">
+                <button data-testid={`journey-enroll-btn-${j.id}`} onClick={() => { setEnrolling(j.id); loadRuns(j.id); }} className="text-xs text-[#CCFF00] hover:underline flex items-center gap-1">
+                  <UserPlus className="w-3 h-3" /> Enroll · view runs
+                </button>
                 <button onClick={() => del(j.id)} className="text-xs text-[#71717A] hover:text-red-400 flex items-center gap-1">
                   <Trash2 className="w-3 h-3" /> Delete
                 </button>
               </div>
+              {enrolling === j.id && (
+                <div className="mt-3 p-3 rounded-md bg-[#0A0A0A] border border-[#27272A]" data-testid={`journey-enroll-panel-${j.id}`}>
+                  <div className="text-xs font-bold mb-2 flex items-center gap-1"><UserPlus className="w-3 h-3 text-[#CCFF00]" /> Enroll a customer</div>
+                  <div className="flex gap-2">
+                    <Input data-testid={`journey-enroll-customer-${j.id}`} placeholder="customer@example.com" value={enrollFor.customer} onChange={(e) => setEnrollFor({ ...enrollFor, customer: e.target.value })} className="bg-[#141416] border-[#27272A] text-white h-8 text-xs" />
+                    <Button data-testid={`journey-enroll-submit-${j.id}`} onClick={() => enroll(j.id)} className="btn-primary rounded-md text-xs h-8">Enroll</Button>
+                  </div>
+                  {runs[j.id]?.length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-1 flex items-center gap-1"><Activity className="w-3 h-3" /> Recent runs</div>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {runs[j.id].slice(0, 6).map((r) => (
+                          <div key={r.id} className="text-[11px] flex items-center justify-between font-mono">
+                            <span className="text-[#A1A1AA]">{r.customer}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold ${
+                              r.status === "completed" ? "bg-emerald-500/15 text-emerald-400" :
+                              r.status === "cancelled" ? "bg-red-500/15 text-red-400" :
+                              "bg-[#005CEE]/15 text-[#005CEE]"}`}>{r.status}</span>
+                            <span className="text-[#71717A]">step {r.current_step}/{(j.steps || []).length}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>

@@ -27,9 +27,13 @@ export default function Integrations() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [freshKey, setFreshKey] = useState(null);
+  const [pos, setPos] = useState(null);
 
   const load = () => api.get("/api-keys").then((r) => setKeys(r.data)).catch(() => {});
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    api.get("/pos/snippets").then((r) => setPos(r.data)).catch(() => {});
+  }, []);
 
   const create = async () => {
     if (!name.trim()) { toast.error("Give the key a name"); return; }
@@ -67,11 +71,45 @@ export default function Integrations() {
       </div>
 
       <h2 className="font-display font-bold text-lg mb-3">Commerce connectors</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8">
-        <ConnectorCard name="Shopify" icon="🛍" connected={false} hint="Apply PromoOS coupons at Shopify checkout." envHint="Coming soon" />
-        <ConnectorCard name="WooCommerce" icon="🧡" connected={false} hint="Validate + redeem via Woo hooks." envHint="Coming soon" />
-        <ConnectorCard name="Square" icon="🟦" connected={false} hint="In-store redemption via Square POS." envHint="Coming soon" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8">
+        {pos && ["shopify", "woocommerce"].map((k) => {
+          const p = pos[k];
+          return (
+            <div key={k} className="surface rounded-lg p-5" data-testid={`pos-${k}`}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-lg">{k === "shopify" ? "🛍" : "🧡"}</span>
+                <div className="font-display font-bold capitalize">{k}</div>
+                <span className="ml-auto text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400">Ready</span>
+              </div>
+              <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-1">Webhook URL</div>
+              <div className="flex gap-1 mb-3">
+                <code data-testid={`pos-${k}-url`} className="flex-1 text-[11px] font-mono break-all bg-[#0A0A0A] border border-[#27272A] rounded px-2 py-1.5 text-[#E4E4E7]">{p.webhook_url}</code>
+                <button onClick={() => { navigator.clipboard.writeText(p.webhook_url).catch(() => {}); toast.success("Copied"); }} className="p-1.5 rounded hover:bg-white/5 shrink-0"><Copy className="w-3.5 h-3.5" /></button>
+              </div>
+              <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-1">Topic</div>
+              <div className="text-xs font-mono mb-3">{p.topic}</div>
+              <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-1">Steps</div>
+              <ol className="text-xs text-[#A1A1AA] space-y-1.5 list-decimal pl-4">
+                {p.instructions.map((s, i) => <li key={i}>{s}</li>)}
+              </ol>
+            </div>
+          );
+        })}
+        {!pos && ["shopify", "woocommerce"].map((k) => (
+          <div key={k} className="surface rounded-lg p-5 opacity-50">Loading…</div>
+        ))}
       </div>
+
+      {pos && (
+        <div className="surface rounded-lg p-5 mb-8" data-testid="pos-curl">
+          <div className="flex items-center gap-2 mb-2">
+            <Webhook className="w-4 h-4 text-[#CCFF00]" />
+            <div className="font-display font-bold">Any other system</div>
+          </div>
+          <p className="text-xs text-[#A1A1AA] mb-2">Send any order to the public redeem endpoint from a webhook, a Zap, or a custom app:</p>
+          <pre className="text-[11px] font-mono text-[#E4E4E7] bg-[#0A0A0A] border border-[#27272A] rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">{pos.generic_curl}</pre>
+        </div>
+      )}
 
       <h2 className="font-display font-bold text-lg mb-3 flex items-center gap-2"><Code2 className="w-4 h-4 text-[#CCFF00]" /> Public REST API</h2>
       <div className="surface rounded-lg p-5 mb-4">
