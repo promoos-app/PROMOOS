@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Sparkles, ShieldCheck } from "lucide-react";
 
 const FONTS = ["Cabinet Grotesk", "Satoshi", "Inter", "Poppins", "Playfair Display"];
 const CURRENCIES = ["USD", "EUR", "GBP", "INR", "AUD"];
@@ -17,6 +19,19 @@ export default function Settings() {
 
   const { data: ws } = useQuery({ queryKey: ["workspace"], queryFn: async () => (await api.get("/workspace")).data });
   const { data: team = [] } = useQuery({ queryKey: ["team"], queryFn: async () => (await api.get("/team")).data });
+  const { data: apCfg } = useQuery({ queryKey: ["autopilot-config"], queryFn: async () => (await api.get("/autopilot/config")).data });
+
+  const [ap, setAp] = useState(null);
+  const [apSaving, setApSaving] = useState(false);
+  useEffect(() => { if (apCfg) setAp(apCfg); }, [apCfg]);
+  const setApField = (k, v) => setAp((s) => ({ ...s, [k]: v }));
+  const saveAp = async () => {
+    setApSaving(true);
+    try {
+      await api.put("/autopilot/config", ap);
+      toast.success("Autopilot saved");
+    } catch (e) { toast.error(apiError(e)); } finally { setApSaving(false); }
+  };
 
   useEffect(() => { if (ws) setBrand(ws); }, [ws]);
   if (!brand) return <div className="text-[#71717A]">Loading…</div>;
@@ -101,6 +116,74 @@ export default function Settings() {
           ))}
         </div>
       </div>
+
+      {/* Autopilot */}
+      {ap && (
+        <div className="surface rounded-lg p-6 mt-6" data-testid="autopilot-section">
+          <div className="flex items-center gap-2 mb-1">
+            <Sparkles className="w-4 h-4 text-[#CCFF00]" />
+            <h3 className="font-display font-bold text-lg">Promotion Autopilot™</h3>
+          </div>
+          <p className="text-xs text-[#71717A] mb-4">Let the AI plan, design and schedule your next promotion. Guardrails below keep every draft on-brand and inside your discount ceiling.</p>
+
+          <div className="flex items-center justify-between p-3 rounded-md bg-[#0A0A0A] border border-[#27272A] mb-4">
+            <div>
+              <div className="font-medium text-sm">Autopilot</div>
+              <div className="text-xs text-[#71717A]">Master switch — when off, AI still assists but never publishes automatically.</div>
+            </div>
+            <Switch data-testid="autopilot-enabled" checked={ap.enabled} onCheckedChange={(v) => setApField("enabled", v)} />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+            <div>
+              <Label className="text-xs text-[#A1A1AA]">Business goal</Label>
+              <select data-testid="autopilot-goal" value={ap.goal} onChange={(e) => setApField("goal", e.target.value)} className="mt-1 w-full h-10 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white px-3 text-sm">
+                <option value="grow_sales">Grow sales</option>
+                <option value="acquire">Acquire new customers</option>
+                <option value="reactivate">Reactivate at-risk customers</option>
+                <option value="clear_inventory">Clear slow-moving inventory</option>
+              </select>
+            </div>
+            <div>
+              <Label className="text-xs text-[#A1A1AA]">Frequency</Label>
+              <select data-testid="autopilot-frequency" value={ap.frequency} onChange={(e) => setApField("frequency", e.target.value)} className="mt-1 w-full h-10 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white px-3 text-sm">
+                <option value="daily">Daily</option>
+                <option value="weekdays">Weekdays only</option>
+                <option value="weekly">Weekly</option>
+              </select>
+            </div>
+            <div>
+              <Label className="text-xs text-[#A1A1AA] flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> Max discount (%)</Label>
+              <Input data-testid="autopilot-max-discount" type="number" min={1} max={90} value={ap.max_discount} onChange={(e) => setApField("max_discount", Number(e.target.value))} className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" />
+            </div>
+            <div>
+              <Label className="text-xs text-[#A1A1AA]">Default audience</Label>
+              <select data-testid="autopilot-audience" value={ap.audience} onChange={(e) => setApField("audience", e.target.value)} className="mt-1 w-full h-10 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white px-3 text-sm">
+                <option value="all">Everyone</option>
+                <option value="new">New customers</option>
+                <option value="returning">Returning customers</option>
+                <option value="vip">VIP</option>
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <Label className="text-xs text-[#A1A1AA]">Brand voice</Label>
+              <Input data-testid="autopilot-voice" value={ap.brand_voice} onChange={(e) => setApField("brand_voice", e.target.value)} className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" placeholder="e.g. bold, confident, benefit-led" />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between p-3 rounded-md bg-[#0A0A0A] border border-[#27272A] mb-4">
+            <div>
+              <div className="font-medium text-sm">Require approval</div>
+              <div className="text-xs text-[#71717A]">If off, the AI publishes generated drafts without waiting for you.</div>
+            </div>
+            <Switch data-testid="autopilot-approval" checked={ap.require_approval} onCheckedChange={(v) => setApField("require_approval", v)} />
+          </div>
+
+          <Button data-testid="autopilot-save" onClick={saveAp} disabled={apSaving} className="btn-primary rounded-md">
+            {apSaving ? "Saving…" : "Save Autopilot"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import api from "@/lib/api";
 import {
   LayoutDashboard, Ticket, Megaphone, Users, Gift, Palette,
-  BarChart3, Plug, Settings as SettingsIcon, Sparkles, LogOut, ChevronDown,
+  BarChart3, Plug, Settings as SettingsIcon, Sparkles, LogOut, ChevronDown, CalendarDays, CreditCard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,9 +14,11 @@ import {
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/coupons", label: "Coupons", icon: Ticket },
+  { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone },
   { to: "/customers", label: "Customers", icon: Users },
   { to: "/rewards", label: "Rewards", icon: Gift },
+  { to: "/gift-cards", label: "Gift Cards", icon: CreditCard },
   { to: "/design", label: "Design", icon: Palette },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/integrations", label: "Integrations", icon: Plug },

@@ -1037,6 +1037,614 @@ async def loyalty_members(user: dict = Depends(get_current_user)):
     }
 
 
+# ---------------- Bundle A: Autopilot + One-Click + Calendar + Brand Guardrails ----------------
+class AutopilotConfigIn(BaseModel):
+    enabled: bool = False
+    goal: str = "grow_sales"          # grow_sales | acquire | reactivate | clear_inventory
+    max_discount: int = 25
+    frequency: str = "daily"          # daily | weekdays | weekly
+    require_approval: bool = True
+    brand_voice: str = "confident, playful, benefit-led"
+    audience: str = "all"             # all | new | returning | vip
+
+
+class OneClickIn(BaseModel):
+    prompt: str
+    schedule_at: Optional[str] = None
+
+
+class TodaysPromoIn(BaseModel):
+    hint: Optional[str] = None
+
+
+async def _ai_json(system: str, prompt: str, session_id: str) -> dict:
+    """Call Claude and parse a JSON object out of the response."""
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session_id,
+                   system_message=system).with_model("anthropic", "claude-sonnet-5")
+    try:
+        resp = await chat.send_message(UserMessage(text=prompt))
+    except Exception as e:
+        msg = str(e)
+        if "Budget" in msg or "budget" in msg:
+            raise HTTPException(
+                429, "AI budget exhausted. Top up your Universal Key: Profile → Manage plan → Universal Key → Add Balance.")
+        raise HTTPException(502, f"AI request failed: {msg}")
+    text = resp if isinstance(resp, str) else str(resp)
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        raise HTTPException(502, "AI returned no JSON")
+    try:
+        return json.loads(m.group(0))
+    except Exception as e:
+        raise HTTPException(502, f"AI JSON parse failed: {e}")
+
+
+def _guardrail_discount(v: float, autopilot: dict) -> float:
+    cap = float(autopilot.get("max_discount", 25))
+    return max(1, min(float(v), cap))
+
+
+async def _workspace_context(workspace_id: str) -> str:
+    """Compact JSON summary of past performance for the AI planner."""
+    ws = await db.workspaces.find_one({"id": workspace_id}, {"_id": 0}) or {}
+    top = await db.coupons.find({"workspace_id": workspace_id}, {"_id": 0})\
+        .sort("stats.redemptions", -1).limit(5).to_list(5)
+    thirty = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    reds = await db.redemptions.aggregate([
+        {"$match": {"workspace_id": workspace_id, "created_at": {"$gt": thirty}}},
+        {"$group": {"_id": {"$hour": {"$dateFromString": {"dateString": "$created_at"}}},
+                    "n": {"$sum": 1}, "rev": {"$sum": "$revenue"}}},
+        {"$sort": {"n": -1}}, {"$limit": 3}]).to_list(3)
+    top_summary = [{"name": c.get("name"), "type": c.get("type"),
+                    "discount": c.get("discount_value"),
+                    "redemptions": c.get("stats", {}).get("redemptions", 0)} for c in top]
+    return json.dumps({
+        "brand": ws.get("name"), "voice": ws.get("brand_voice"),
+        "top_coupons": top_summary,
+        "top_hours_utc": [{"hour": r["_id"], "redemptions": r["n"]} for r in reds],
+    })
+
+
+@api.get("/autopilot/config")
+async def get_autopilot(user: dict = Depends(get_current_user)):
+    ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0}) or {}
+    ap = ws.get("autopilot") or {}
+    return {
+        "enabled": bool(ap.get("enabled", False)),
+        "goal": ap.get("goal", "grow_sales"),
+        "max_discount": int(ap.get("max_discount", 25)),
+        "frequency": ap.get("frequency", "daily"),
+        "require_approval": bool(ap.get("require_approval", True)),
+        "brand_voice": ap.get("brand_voice", "confident, playful, benefit-led"),
+        "audience": ap.get("audience", "all"),
+    }
+
+
+@api.put("/autopilot/config")
+async def update_autopilot(body: AutopilotConfigIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    await db.workspaces.update_one(
+        {"id": user["workspace_id"]},
+        {"$set": {"autopilot": body.model_dump(), "updated_at": now_iso()}})
+    return {"ok": True, **body.model_dump()}
+
+
+@api.post("/ai/todays-promo")
+async def ai_todays_promo(body: TodaysPromoIn, user: dict = Depends(get_current_user)):
+    ap = (await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0}) or {}).get("autopilot") or {}
+    ctx = await _workspace_context(user["workspace_id"])
+    system = ("You are a promotional strategist. Look at recent performance and design ONE optimal promotion for today. "
+              "Return ONLY a JSON object with keys: type (percentage|flash_sale|bogo|free_shipping|first_time|vip), "
+              "discount_value (integer), name (short), headline (max 8 words), description, terms, cta (max 4 words), "
+              "audience (all|new|returning|vip), reasoning (1 sentence why).")
+    prompt = f"Workspace context: {ctx}. Goal: {ap.get('goal','grow_sales')}. Max discount cap: {ap.get('max_discount',25)}%. Voice: {ap.get('brand_voice','confident')}. Hint: {body.hint or 'none'}."
+    d = await _ai_json(system, prompt, f"todays-{uuid.uuid4()}")
+    d["discount_value"] = _guardrail_discount(d.get("discount_value", 15), ap)
+    return d
+
+
+@api.post("/ai/weekly-calendar")
+async def ai_weekly_calendar(user: dict = Depends(get_current_user)):
+    ap = (await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0}) or {}).get("autopilot") or {}
+    ctx = await _workspace_context(user["workspace_id"])
+    system = ("You are a promotional planner. Return ONLY a JSON object with key 'days' whose value is an array of "
+              "exactly 7 objects, one per weekday starting Monday. Each object: day (Mon..Sun), type, discount_value (int), "
+              "name (short), headline (max 8 words), audience, cta. Vary theme across the week: new-customer, flash, VIP, "
+              "free shipping, bundle, weekend, loyalty. Respect the cap and the brand voice.")
+    prompt = f"Context: {ctx}. Goal: {ap.get('goal','grow_sales')}. Cap: {ap.get('max_discount',25)}%. Voice: {ap.get('brand_voice','confident')}."
+    d = await _ai_json(system, prompt, f"weekly-{uuid.uuid4()}")
+    days = d.get("days") if isinstance(d, dict) else []
+    if not isinstance(days, list) or len(days) < 7:
+        raise HTTPException(502, "AI did not return 7 days")
+    for x in days[:7]:
+        x["discount_value"] = _guardrail_discount(x.get("discount_value", 15), ap)
+    return {"days": days[:7]}
+
+
+@api.post("/ai/one-click-campaign")
+async def ai_one_click(body: OneClickIn, user: dict = Depends(get_current_user)):
+    ap = (await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0}) or {}).get("autopilot") or {}
+    ctx = await _workspace_context(user["workspace_id"])
+    system = ("You are a marketing director. Given a business goal, produce ONE complete campaign package as a JSON object "
+              "with keys: coupon {type, discount_value, name, headline, description, terms, cta, audience}, "
+              "email {subject, body_short (under 400 chars)}, sms (under 320 chars), whatsapp (under 1550 chars), "
+              "push {title, body}, social_caption, landing_headline, ad_copy. Respect the discount cap.")
+    prompt = f"User request: {body.prompt}. Context: {ctx}. Cap: {ap.get('max_discount',25)}%. Voice: {ap.get('brand_voice','confident')}."
+    d = await _ai_json(system, prompt, f"oneclick-{uuid.uuid4()}")
+    if isinstance(d.get("coupon"), dict):
+        d["coupon"]["discount_value"] = _guardrail_discount(d["coupon"].get("discount_value", 15), ap)
+    return d
+
+
+class ApproveCampaignIn(BaseModel):
+    package: dict
+    schedule_at: Optional[str] = None
+    activate: bool = True
+
+
+@api.post("/ai/one-click-campaign/approve")
+async def approve_one_click(body: ApproveCampaignIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    pkg = body.package or {}
+    cp = pkg.get("coupon") or {}
+    if not cp.get("name") or not cp.get("type"):
+        raise HTTPException(400, "package.coupon.name and type required")
+    prefix = re.sub(r"[^A-Z]", "", (cp.get("name") or "PROMO").upper())[:6] or "PROMO"
+    code = rand_code(prefix)
+    now = now_iso()
+    state = "scheduled" if body.schedule_at else ("active" if body.activate else "draft")
+    coupon = {
+        "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"],
+        "code": code, "codes": [code],
+        "name": cp.get("name")[:80], "type": cp.get("type", "percentage"),
+        "discount_value": float(cp.get("discount_value", 15)),
+        "headline": cp.get("headline", "")[:120],
+        "description": cp.get("description", "")[:400],
+        "terms": cp.get("terms", "")[:400],
+        "cta": cp.get("cta", "Claim Offer")[:40],
+        "audience": cp.get("audience", "all"),
+        "state": state, "image_url": "",
+        "rules": {"min_cart": 0, "scope": "all", "scope_value": "", "usage_limit": 0,
+                  "per_customer_limit": 1, "stackable": False, "start_date": body.schedule_at,
+                  "end_date": None, "referral_enabled": False, "referral_credit_pct": 10},
+        "stats": {"impressions": 0, "redemptions": 0, "revenue": 0.0, "referral_credit": 0.0},
+        "created_at": now, "updated_at": now, "source": "one_click",
+        "campaign_assets": {k: pkg.get(k) for k in
+                            ("email", "sms", "whatsapp", "push", "social_caption",
+                             "landing_headline", "ad_copy") if pkg.get(k)},
+    }
+    coupon["qr_code"] = gen_qr(f"{PUBLIC_APP_URL or ''}/c/{code}")
+    await db.coupons.insert_one({**coupon})
+    return {"ok": True, "coupon_id": coupon["id"], "code": code,
+            "assets_saved": list(coupon["campaign_assets"].keys())}
+
+
+# ---------------- Bundle B: Gift Cards + Store Credits + Coupon Wallet ----------------
+class GiftCardIssueIn(BaseModel):
+    amount: float
+    recipient_email: EmailStr
+    recipient_name: Optional[str] = None
+    sender_name: Optional[str] = None
+    message: Optional[str] = None
+    send_email: bool = False
+
+
+class GiftCardRedeemIn(BaseModel):
+    code: str
+    amount: float
+
+
+class StoreCreditIssueIn(BaseModel):
+    customer: str
+    amount: float
+    reason: str = "customer_appreciation"   # promotional | refund | referral | loyalty | customer_appreciation
+    note: Optional[str] = None
+
+
+def _gift_code() -> str:
+    return "GC-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=12))
+
+
+@api.post("/gift-cards")
+async def issue_gift_card(body: GiftCardIssueIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    if body.amount <= 0:
+        raise HTTPException(400, "amount must be > 0")
+    if body.amount > 10000:
+        raise HTTPException(400, "amount exceeds $10,000 limit")
+    amount = round(float(body.amount), 2)
+    code = _gift_code()
+    doc = {
+        "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"],
+        "code": code, "amount": amount, "balance": amount,
+        "recipient_email": body.recipient_email, "recipient_name": body.recipient_name,
+        "sender_name": body.sender_name or user.get("name"),
+        "message": body.message, "state": "active",
+        "issued_by": user["id"], "created_at": now_iso(), "redeemed_at": None,
+    }
+    await db.gift_cards.insert_one({**doc})
+    email_id = None
+    if body.send_email and RESEND_API_KEY:
+        ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0}) or {}
+        primary = ws.get("primary_color", "#005CEE")
+        html = f"""
+<div style="font-family:Helvetica,Arial,sans-serif;max-width:560px;margin:auto;background:#0A0A0A;color:#fff;padding:32px;border-radius:16px">
+  <div style="text-align:center;padding:20px;background:linear-gradient(135deg,{primary},#000);border-radius:12px;margin-bottom:20px">
+    <div style="font-size:12px;letter-spacing:.2em;color:#fff9;text-transform:uppercase">{ws.get('name','A Gift For You')}</div>
+    <div style="font-size:56px;font-weight:900;margin:12px 0">${amount:.0f}</div>
+    <div style="font-size:14px;color:#fff9">Gift Card</div>
+  </div>
+  <p style="font-size:14px;line-height:1.5">Hi {body.recipient_name or 'there'}, {body.sender_name or 'A friend'} sent you a gift.</p>
+  {(f'<p style="font-size:14px;font-style:italic;color:#A1A1AA">&ldquo;{body.message}&rdquo;</p>' if body.message else '')}
+  <div style="background:#141414;border:2px dashed {primary};border-radius:10px;padding:16px;text-align:center;font-family:monospace;font-size:20px;font-weight:700;color:{primary};letter-spacing:2px;margin-top:20px">{code}</div>
+  <p style="font-size:11px;color:#71717A;margin-top:20px;text-align:center">Redeem at checkout · balance visible at {PUBLIC_APP_URL or 'our store'}</p>
+</div>"""
+        try:
+            r = await asyncio.to_thread(resend.Emails.send, {
+                "from": SENDER_EMAIL, "to": [body.recipient_email],
+                "subject": f"You've received a ${amount:.0f} gift card",
+                "html": html})
+            email_id = r.get("id") if isinstance(r, dict) else None
+        except Exception as e:
+            logger.warning("Gift email send failed: %s", e)
+    return {"ok": True, "gift_card_id": doc["id"], "code": code, "email_id": email_id}
+
+
+@api.get("/gift-cards")
+async def list_gift_cards(user: dict = Depends(get_current_user)):
+    docs = await db.gift_cards.find(
+        {"workspace_id": user["workspace_id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+    total_issued = sum(d.get("amount", 0) for d in docs)
+    total_balance = sum(d.get("balance", 0) for d in docs)
+    return {"total_issued": round(total_issued, 2),
+            "total_balance": round(total_balance, 2),
+            "outstanding": round(total_balance, 2),
+            "redeemed": round(total_issued - total_balance, 2),
+            "cards": docs}
+
+
+@api.post("/gift-cards/redeem")
+async def redeem_gift_card(body: GiftCardRedeemIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    gc = await db.gift_cards.find_one({"code": body.code.upper(), "workspace_id": user["workspace_id"]})
+    if not gc:
+        raise HTTPException(404, "Gift card not found")
+    if gc["state"] != "active":
+        raise HTTPException(400, f"Gift card is {gc['state']}")
+    if body.amount <= 0:
+        raise HTTPException(400, "amount must be > 0")
+    applied = round(min(body.amount, gc["balance"]), 2)
+    new_bal = round(gc["balance"] - applied, 2)
+    upd = {"balance": new_bal, "last_used_at": now_iso()}
+    if new_bal <= 0:
+        upd["state"] = "redeemed"
+        upd["redeemed_at"] = now_iso()
+    await db.gift_cards.update_one({"id": gc["id"]}, {"$set": upd})
+    await db.gift_card_events.insert_one({
+        "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"],
+        "gift_card_id": gc["id"], "applied": applied, "balance_after": new_bal,
+        "created_at": now_iso()})
+    return {"ok": True, "applied": applied, "balance": new_bal,
+            "state": upd.get("state", gc["state"])}
+
+
+@api.get("/public/gift-cards/{code}")
+async def public_gift_card_balance(code: str):
+    gc = await db.gift_cards.find_one({"code": code.upper()}, {"_id": 0})
+    if not gc:
+        raise HTTPException(404, "Gift card not found")
+    return {"code": gc["code"], "balance": gc["balance"], "amount": gc["amount"],
+            "state": gc["state"]}
+
+
+# ----- Store Credits -----
+@api.post("/store-credits")
+async def issue_store_credit(body: StoreCreditIssueIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    if body.amount == 0:
+        raise HTTPException(400, "amount cannot be zero")
+    doc = {
+        "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"],
+        "customer": body.customer, "amount": float(body.amount),
+        "balance": float(body.amount), "reason": body.reason, "note": body.note,
+        "issued_by": user["id"], "created_at": now_iso(),
+    }
+    await db.store_credits.insert_one({**doc})
+    return {"ok": True, "credit_id": doc["id"], "customer": body.customer, "balance": doc["balance"]}
+
+
+@api.get("/store-credits")
+async def list_store_credits(customer: Optional[str] = None, user: dict = Depends(get_current_user)):
+    q = {"workspace_id": user["workspace_id"]}
+    if customer:
+        q["customer"] = customer
+    docs = await db.store_credits.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    total = sum(d.get("balance", 0) for d in docs)
+    by_customer: Dict[str, float] = {}
+    for d in docs:
+        by_customer[d["customer"]] = by_customer.get(d["customer"], 0) + d.get("balance", 0)
+    return {"total_outstanding": round(total, 2),
+            "by_customer": {k: round(v, 2) for k, v in by_customer.items()},
+            "credits": docs}
+
+
+# ----- Public Wallet -----
+@api.get("/public/wallet/{customer_token}")
+async def public_wallet(customer_token: str, workspace_id: Optional[str] = None):
+    """Show everything a customer has: coupons redeemed, credits, gift cards on their email, loyalty."""
+    # customer_token = email or opaque identifier used at redemption time
+    customer = customer_token
+    q_ws = {"workspace_id": workspace_id} if workspace_id else {}
+    # Gift cards issued to this email
+    gcs = await db.gift_cards.find(
+        {**q_ws, "recipient_email": customer, "state": {"$ne": "cancelled"}}, {"_id": 0}
+    ).to_list(50)
+    # Store credits
+    credits = await db.store_credits.find({**q_ws, "customer": customer}, {"_id": 0}).to_list(50)
+    # Loyalty
+    ml = await db.loyalty_members.find_one({**q_ws, "customer": customer}, {"_id": 0})
+    # Recent redemptions
+    reds = await db.redemptions.find(
+        {**q_ws, "customer": customer}, {"_id": 0}
+    ).sort("created_at", -1).to_list(20)
+    ws_name = ""
+    if reds or gcs or credits or ml:
+        wid = (reds[0]["workspace_id"] if reds else
+               gcs[0]["workspace_id"] if gcs else
+               credits[0]["workspace_id"] if credits else
+               ml["workspace_id"] if ml else None)
+        if wid:
+            ws = await db.workspaces.find_one({"id": wid}, {"_id": 0}) or {}
+            ws_name = ws.get("name", "")
+    return {
+        "customer": customer, "workspace_name": ws_name,
+        "gift_cards": [{"code": g["code"], "amount": g["amount"], "balance": g["balance"],
+                        "state": g["state"]} for g in gcs],
+        "store_credits_total": round(sum(c.get("balance", 0) for c in credits), 2),
+        "store_credits": credits,
+        "loyalty": ml or None,
+        "recent_redemptions": [{"code": r.get("code"), "discount": r.get("discount", 0),
+                                "created_at": r.get("created_at")} for r in reds[:10]],
+    }
+
+
+# ---------------- Bundle C: Campaign Journeys ----------------
+class JourneyIn(BaseModel):
+    name: str
+    trigger: str = "signup"      # signup | purchase | inactive_30d | birthday
+    steps: List[dict] = []       # [{type: "wait"|"send_email"|"send_sms"|"send_coupon", ...}]
+    enabled: bool = False
+
+
+@api.post("/journeys")
+async def create_journey(body: JourneyIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    doc = {"id": str(uuid.uuid4()), "workspace_id": user["workspace_id"],
+           "name": body.name, "trigger": body.trigger, "steps": body.steps,
+           "enabled": body.enabled, "stats": {"entered": 0, "completed": 0, "conversions": 0},
+           "created_at": now_iso()}
+    await db.journeys.insert_one({**doc})
+    return doc
+
+
+@api.get("/journeys")
+async def list_journeys(user: dict = Depends(get_current_user)):
+    docs = await db.journeys.find({"workspace_id": user["workspace_id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@api.put("/journeys/{jid}")
+async def update_journey(jid: str, body: JourneyIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    res = await db.journeys.update_one(
+        {"id": jid, "workspace_id": user["workspace_id"]},
+        {"$set": {**body.model_dump(), "updated_at": now_iso()}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Journey not found")
+    return {"ok": True}
+
+
+@api.delete("/journeys/{jid}")
+async def delete_journey(jid: str, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    await db.journeys.delete_one({"id": jid, "workspace_id": user["workspace_id"]})
+    return {"ok": True}
+
+
+# ---------------- Bundle D: Customer CRM + AI Segmentation ----------------
+async def _aggregate_customers(workspace_id: str) -> List[dict]:
+    """Compute a per-customer summary from redemptions + loyalty + gift_cards + credits."""
+    pipeline = [
+        {"$match": {"workspace_id": workspace_id, "customer": {"$ne": None}}},
+        {"$group": {
+            "_id": "$customer",
+            "orders": {"$sum": 1},
+            "spend": {"$sum": "$revenue"},
+            "discount": {"$sum": "$discount"},
+            "last_at": {"$max": "$created_at"},
+            "first_at": {"$min": "$created_at"},
+        }},
+        {"$sort": {"spend": -1}}, {"$limit": 500},
+    ]
+    reds = await db.redemptions.aggregate(pipeline).to_list(500)
+    result = []
+    for r in reds:
+        member = await db.loyalty_members.find_one(
+            {"workspace_id": workspace_id, "customer": r["_id"]}, {"_id": 0})
+        credit_sum = 0.0
+        async for c in db.store_credits.find(
+                {"workspace_id": workspace_id, "customer": r["_id"]}, {"balance": 1}):
+            credit_sum += c.get("balance", 0)
+        result.append({
+            "customer": r["_id"], "orders": r["orders"],
+            "spend": round(r["spend"], 2), "discount": round(r["discount"], 2),
+            "last_at": r["last_at"], "first_at": r["first_at"],
+            "loyalty_points": (member or {}).get("points", 0),
+            "loyalty_tier": (member or {}).get("tier", "—"),
+            "store_credit": round(credit_sum, 2),
+        })
+    return result
+
+
+def _segment_customer(c: dict, now: datetime) -> str:
+    try:
+        last = datetime.fromisoformat(c.get("last_at", "").replace("Z", "+00:00"))
+    except Exception:
+        last = now
+    days_since = max(0, (now - last).days)
+    orders = c.get("orders", 0)
+    spend = c.get("spend", 0)
+    if spend >= 500 and orders >= 5:
+        return "vip"
+    if orders == 1 and days_since <= 14:
+        return "new"
+    if days_since >= 30:
+        return "at_risk"
+    if orders >= 3:
+        return "frequent"
+    return "regular"
+
+
+@api.get("/customers")
+async def customers(user: dict = Depends(get_current_user)):
+    rows = await _aggregate_customers(user["workspace_id"])
+    now = datetime.now(timezone.utc)
+    counts: Dict[str, int] = {}
+    for r in rows:
+        seg = _segment_customer(r, now)
+        r["segment"] = seg
+        counts[seg] = counts.get(seg, 0) + 1
+    return {"total": len(rows), "by_segment": counts, "customers": rows}
+
+
+@api.post("/customers/{customer}/message")
+async def message_customer(customer: str, body: dict, user: dict = Depends(get_current_user)):
+    """Convenience wrapper — sends the branded coupon email to the given customer using a coupon id."""
+    require_writer(user)
+    cid = body.get("coupon_id")
+    if not cid:
+        raise HTTPException(400, "coupon_id required")
+    return await send_coupon_email(
+        cid, SendCouponEmailIn(to=[customer], landing_url=body.get("landing_url")), user)
+
+
+class SegmentPromoIn(BaseModel):
+    segment: str          # vip | at_risk | new | frequent | regular
+
+
+@api.post("/ai/segment-promo")
+async def ai_segment_promo(body: SegmentPromoIn, user: dict = Depends(get_current_user)):
+    """AI-generated promo copy tailored to a customer segment."""
+    ap = (await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0}) or {}).get("autopilot") or {}
+    system = ("You write hyper-personalized promotional copy for a specific customer segment. "
+              "Return ONLY a JSON object with keys: headline (max 10 words), description (1-2 sentences), "
+              "cta (max 4 words), discount_value (int under the cap), type (percentage|flash_sale|first_time|vip).")
+    prompt = f"Segment: {body.segment}. Cap: {ap.get('max_discount',25)}%. Voice: {ap.get('brand_voice','confident')}."
+    return await _ai_json(system, prompt, f"seg-{uuid.uuid4()}")
+
+
+# ---------------- Bundle E: Template Marketplace ----------------
+DEFAULT_TEMPLATES = [
+    {"id": "luxe-black", "name": "Luxe Black", "category": "Luxury",
+     "primary": "#0A0A0A", "secondary": "#D4AF37",
+     "headline_style": "aspirational", "example_headline": "An Invitation, Just For You",
+     "cover": "linear-gradient(135deg,#0A0A0A,#3A2E12)"},
+    {"id": "flash-neon", "name": "Neon Flash", "category": "Flash Sale",
+     "primary": "#00E0A4", "secondary": "#FFEA00",
+     "headline_style": "urgent", "example_headline": "24 HOURS ONLY — Move Fast",
+     "cover": "linear-gradient(135deg,#00E0A4,#FFEA00)"},
+    {"id": "playful-candy", "name": "Playful Candy", "category": "Retail",
+     "primary": "#FF4EC7", "secondary": "#FFD9EC",
+     "headline_style": "playful", "example_headline": "Treat Yourself, Silly Prices",
+     "cover": "linear-gradient(135deg,#FF4EC7,#FFD9EC)"},
+    {"id": "minimal-mono", "name": "Minimal Mono", "category": "Modern",
+     "primary": "#FFFFFF", "secondary": "#0A0A0A",
+     "headline_style": "clean", "example_headline": "Less is More.",
+     "cover": "linear-gradient(135deg,#F5F5F5,#0A0A0A)"},
+    {"id": "holiday-warm", "name": "Holiday Warm", "category": "Holiday",
+     "primary": "#B8171A", "secondary": "#F4B942",
+     "headline_style": "warm", "example_headline": "Home For The Holidays — Save Together",
+     "cover": "linear-gradient(135deg,#B8171A,#F4B942)"},
+    {"id": "vip-onyx", "name": "VIP Onyx", "category": "VIP",
+     "primary": "#141414", "secondary": "#CCFF00",
+     "headline_style": "exclusive", "example_headline": "Members Only — Reserved For You",
+     "cover": "linear-gradient(135deg,#141414,#CCFF00)"},
+]
+
+
+@api.get("/templates")
+async def list_templates():
+    return DEFAULT_TEMPLATES
+
+
+class RestyleIn(BaseModel):
+    template_id: str
+    coupon_id: Optional[str] = None
+
+
+@api.post("/templates/apply")
+async def apply_template(body: RestyleIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    tpl = next((t for t in DEFAULT_TEMPLATES if t["id"] == body.template_id), None)
+    if not tpl:
+        raise HTTPException(404, "Template not found")
+    # Update workspace brand kit to match template
+    await db.workspaces.update_one(
+        {"id": user["workspace_id"]},
+        {"$set": {"primary_color": tpl["primary"], "secondary_color": tpl["secondary"],
+                  "updated_at": now_iso()}})
+    return {"ok": True, "applied": tpl["id"]}
+
+
+# ---------------- Bundle F: API Keys ----------------
+class ApiKeyIn(BaseModel):
+    name: str
+    scopes: List[str] = ["read", "write"]
+
+
+def _api_key_str() -> str:
+    return "pk_live_" + "".join(random.choices(string.ascii_letters + string.digits, k=32))
+
+
+@api.post("/api-keys")
+async def create_api_key(body: ApiKeyIn, user: dict = Depends(get_current_user)):
+    if user.get("role") != "owner":
+        raise HTTPException(403, "Only owners can create API keys")
+    key = _api_key_str()
+    doc = {"id": str(uuid.uuid4()), "workspace_id": user["workspace_id"],
+           "name": body.name, "scopes": body.scopes, "key_preview": key[:14] + "…",
+           "key_hash": bcrypt.hashpw(key.encode(), bcrypt.gensalt(rounds=10)).decode(),
+           "created_by": user["id"], "created_at": now_iso(), "last_used_at": None,
+           "revoked": False}
+    await db.api_keys.insert_one({**doc})
+    doc_out = {k: v for k, v in doc.items() if k != "key_hash"}
+    doc_out["key"] = key   # only shown once
+    return doc_out
+
+
+@api.get("/api-keys")
+async def list_api_keys(user: dict = Depends(get_current_user)):
+    docs = await db.api_keys.find(
+        {"workspace_id": user["workspace_id"]},
+        {"_id": 0, "key_hash": 0}
+    ).sort("created_at", -1).to_list(50)
+    return docs
+
+
+@api.post("/api-keys/{kid}/revoke")
+async def revoke_api_key(kid: str, user: dict = Depends(get_current_user)):
+    if user.get("role") != "owner":
+        raise HTTPException(403, "Only owners can revoke API keys")
+    res = await db.api_keys.update_one(
+        {"id": kid, "workspace_id": user["workspace_id"]},
+        {"$set": {"revoked": True, "revoked_at": now_iso()}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "API key not found")
+    return {"ok": True}
+
+
 app.include_router(api)
 
 # CORS: reflect incoming Origin with credentials. Wildcard "*" is browser-rejected

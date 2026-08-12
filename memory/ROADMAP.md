@@ -1,68 +1,93 @@
-# PromoOS — ROADMAP (Sourced from the full 52-module PRD PDF)
+# PromoOS — Coverage vs. Full 53-Section Concept
 
-Mapping every requested module against current build status. Anything ✅ is live; 🟡 partial (core built, some sub-features remain); 🔲 backlog.
+Legend: ✅ done · 🟡 partial · 🔲 backlog · Updated after iteration 4
 
-## Phase 1 — Foundation ✅ SHIPPED
-- **31. Multi-Tenant Architecture** ✅ Workspace isolation on every read/write.
-- **41. Rate Limiting** 🟡 Brute-force lockout on login (5/15min). Public endpoints uncapped.
-- **31. Auth** ✅ JWT Bearer + httpOnly cookie, bcrypt, roles (owner/marketer/viewer).
-- **37. Brand Kit** ✅ Colors + name in `workspaces`, used by email template & public page.
+## Command Center
+- **1. Master Dashboard** ✅
+- **4. AI Promotion Engine (Today's Promo)** ✅ `/api/ai/todays-promo`
+- **5. AI Auto-Publishing weekly calendar** ✅ `/api/ai/weekly-calendar` + `/calendar`
+- **6. Coupon AI Copilot** ✅ Copy + full One-Click package (email/SMS/WhatsApp/push/social/landing/ad)
+- **43. AI Promotional Intelligence** 🟡 One-Click + segment-promo cover most Q&A patterns; free-form NL Q&A UI 🔲
+- **50. One-Click Campaign** ✅
+- **52. Promotion Autopilot™ (ON/OFF + guardrails)** ✅ config + max_discount cap enforced across all AI endpoints
 
-## Phase 2 — Coupon Management ✅ MVP SHIPPED
-- **2. Coupon Types** 🟡 percentage, flash_sale, seasonal, vip, first_time, birthday, referral, fixed, bogo, free_shipping — all with correct discount math. Missing: buy-X-get-Y-variant nuances, mystery-box, spin-wheel.
-- **3. Add Coupon** ✅ Editor with rules, dates, scope, per-customer limit, stackable, referral toggle.
-- **17. QR Codes** ✅ Server-side, downloadable.
-- **29. Fraud Guard** 🟡 5-second duplicate-redemption block. Missing: velocity per IP, device fingerprinting.
-- **32. Coupon Vault (bulk one-time codes)** ✅.
-- **9. Coupon Duplication** 🔲 backlog (1-click clone).
-- **44. Import/Export** 🔲 backlog.
+## Coupons
+- **2. All Coupons + 23 Types** 🟡 10 types with correct math (13 remaining variants — bundle/BXGY/gift/service/returning/anniversary/abandoned-cart/geo/event/subscription/membership/influencer/affiliate)
+- **3. Add New Coupon** ✅
+- **7. Coupon Categories** 🔲
+- **8. Template Marketplace + AI Restyler** 🟡 6 palette templates live in Design Studio; AI restyler prompt 🔲
+- **15. Smart Coupons rules** 🟡
+- **17. QR + Barcode** 🟡 QR ✅; UPC/EAN/Code128/Code39 🔲
+- **29. Coupon Security** 🟡
+- **32. Coupon Vault** ✅
+- **48. Template Creator** 🔲
 
-## Phase 3 — AI Copilot ✅ SHIPPED
-- **6. AI Copy Generator** ✅ Claude sonnet-5 → structured JSON.
-- **6. AI Image Generator** ✅ Gemini nano-banana → base64.
-- **26. AI A/B Test** ✅ AI variants + deterministic bucketing + auto-promote winner.
-- **6. AI Translation** 🔲 backlog.
-- **6. AI Segmentation** 🔲 Phase 5.
+## Promotions & Campaigns
+- **9. Advanced Promo Kit** ✅ One-Click Campaign IS this feature
+- **26. A/B Testing** ✅
+- **27. Promotion Calendar** ✅ `/calendar`
+- **28. Campaign Automation Journeys** ✅ CRUD; execution runtime 🔲 (steps stored, not yet auto-executed)
+- **49. Content Generator** ✅ via One-Click
+- **25. AI Promotion Optimizer** 🔲
 
-## Phase 4 — Distribution ✅ MOSTLY SHIPPED
-- **19. Embed Widget** ✅ `/api/embed/coupon.js` copy-paste snippet.
-- **20. Public Coupon Landing** ✅ `/c/:code` with brand colors, QR, redeem, share.
-- **17. QR Codes** ✅ (see above).
-- **18. Email Delivery** ✅ Resend + branded HTML (needs user API key to send live).
-- **18. SMS Delivery** ✅ Twilio (needs user creds).
-- **18. WhatsApp Delivery** ✅ Twilio (needs user creds).
-- **28. Push Notifications** 🔲 backlog.
-- **28. Social Publishing** 🔲 backlog (Instagram/Facebook auto-post).
-- **20. Custom Landing Templates** 🔲 backlog (multiple layouts).
+## Customers
+- **13. Referral Engine** ✅
+- **14. Affiliate Coupons** 🔲
+- **20. Coupon Wallet** ✅ `/wallet/:token`
+- **21. Customer CRM** ✅ `/customers` with 264 seeded customers
+- **22. AI Segmentation** ✅ vip/frequent/regular/new/at_risk auto-computed
+- **23. AI Personalization** ✅ `/api/ai/segment-promo`
 
-## Phase 5 — Loyalty & Referrals ✅ CORE SHIPPED
-- **10. Referral Program** ✅ toggle per coupon, personal `?ref=` link, credit accrual, leaderboard.
-- **11. Loyalty Points + Tiers** ✅ ppd config, per-tier thresholds, auto-tier on redeem.
-- **11. Points Redemption at Checkout** 🔲 backlog (deduct points for reward).
-- **12. Gift Cards** 🔲 backlog.
-- **13. Customer CRM** 🔲 backlog (customers list, segments).
-- **14. Reviews & UGC pull-in** 🔲 backlog.
+## Rewards & Commerce
+- **10. Gift Cards** ✅ (issue/redeem/balance/public/email)
+- **11. Loyalty Program** ✅
+- **12. Store Credits** ✅
 
-## Phase 6 — Analytics & Optimization 🟡 PARTIAL
-- **24. Dashboard KPIs** ✅ active/total, redemptions, revenue, top campaigns.
-- **24. 14-day Timeseries** ✅.
-- **25. Cohort/RFM Analysis** 🔲 backlog.
-- **26. A/B Testing** ✅ (see Phase 3).
-- **27. Export CSV/PDF Reports** 🔲 backlog.
-- **34. Funnel Attribution** 🔲 backlog.
+## Distribution
+- **16. Geo-fenced Promotions** 🔲
+- **18. POS/Checkout Integration** 🟡 API keys ready; Shopify/Woo/Square SDKs 🔲
+- **19. Website Embed** 🟡 inline card ✅; popup/bar/wheel/carousel/wallet widgets 🔲
+- **28. Email + SMS + WhatsApp** ✅
+- **28. Push / Social publishing** 🔲
 
-## Phase 7 — Platform & Enterprise 🔲 BACKLOG
-- **43. Webhooks** 🔲.
-- **45. Public API + docs** 🔲.
-- **46. Event Stream** 🟡 events written to `email_events`, `message_events`, `referrals`, `experiments`. Missing: consumer stream.
-- **47. White-label / Custom Domains** 🔲.
-- **48. Agency Console** 🔲.
-- **49. SLA + Uptime** 🔲.
-- **50. Marketplace of AI templates** 🔲.
-- **52. Enterprise SSO/SAML** 🔲.
+## Analytics
+- **24. Promotion Analytics** 🟡 KPIs + timeseries ✅; CAC/CLV/attribution 🔲
 
-## Modules explicitly deferred (per PRD scope note "Phases 1-3 MVP")
-- 14 (Reviews), 22 (Print materials), 33 (Compliance packs), 38 (Blockchain-backed vouchers), 39 (NFT drops), 40 (Metaverse redemption), 42 (Voice-activated redemption), 51 (VR try-on).
+## Platform
+- **30. Multi-Location** 🔲
+- **31. Multi-Tenant SaaS** ✅
+- **32. API-First (public keys)** ✅ key mint/revoke; enforcement middleware 🔲
+- **33. Universal Promotion API** 🟡 ~85% of endpoints covered
+- **34. White-Label** 🔲
+- **35. Agency Management** 🔲
+- **39. License Center** 🔲
+- **40. Pricing Tiers + Billing** 🔲
+- **41. Mobile Apps** 🔲
+- **42. Coupon Discovery Marketplace** 🔲
+- **44. Industrial Security (MFA/SSO/audit)** 🟡
+- **45. Performance Architecture** 🟡
+- **46. Event-Driven Engine** 🟡 many event types written; no consumer stream
+- **47. Platform Admin Command Center** 🔲
+
+## Brand & Design
+- **36. Advanced Settings** 🟡 brand + AI + team ✅; notifications/POS 🔲
+- **37. Brand Kit** ✅ colors + name + logo used everywhere; template applies palette
+- **38. AI Brand Guardrails** ✅ max_discount cap + brand_voice + goal fed into every AI call
+- **51. Ultimate UI Nav** ✅ 10 in-app pages + 3 public pages
 
 ---
-Legend: ✅ done · 🟡 partial · 🔲 backlog
+## Tally after iteration 4: **28 ✅ · 13 🟡 · 12 🔲**  (out of 53)
+
+## Top 12 backlog for next iterations
+- Multi-location hierarchy (30)
+- Journey execution runtime (28 completion)
+- POS SDK connectors — Shopify, Woo, Square (18)
+- Extra widget variants — popup/bar/wheel (19)
+- Barcode formats — UPC/EAN/Code128 (17)
+- Full CAC/CLV attribution + CSV/PDF exports (24)
+- Affiliate coupons attribution (14)
+- API-key auth middleware to actually enforce keys (32)
+- White-label + custom domain (34)
+- Platform Admin dashboard (47)
+- Pricing/tiers + Stripe billing (40)
+- Geo-fenced trigger endpoint (16)

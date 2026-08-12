@@ -14,6 +14,13 @@ import Settings from "@/pages/Settings";
 import Placeholder from "@/pages/Placeholder";
 import PublicCoupon from "@/pages/PublicCoupon";
 import Rewards from "@/pages/Rewards";
+import Calendar from "@/pages/Calendar";
+import GiftCards from "@/pages/GiftCards";
+import Wallet from "@/pages/Wallet";
+import Campaigns from "@/pages/Campaigns";
+import Customers from "@/pages/Customers";
+import DesignStudio from "@/pages/DesignStudio";
+import Integrations from "@/pages/Integrations";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -34,19 +41,22 @@ function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/c/:code" element={<PublicCoupon />} />
+          <Route path="/wallet/:token" element={<Wallet />} />
           <Route path="/" element={<Protected><Layout /></Protected>}>
             <Route index element={<Dashboard />} />
             <Route path="coupons" element={<Coupons />} />
             <Route path="coupons/new" element={<CouponEditor />} />
             <Route path="coupons/:id/edit" element={<CouponEditor />} />
+            <Route path="calendar" element={<Calendar />} />
+            <Route path="gift-cards" element={<GiftCards />} />
             <Route path="coupons/:id" element={<CouponDetail />} />
             <Route path="analytics" element={<Analytics />} />
             <Route path="settings" element={<Settings />} />
-            <Route path="campaigns" element={<Placeholder title="Campaigns" />} />
-            <Route path="customers" element={<Placeholder title="Customers" />} />
+            <Route path="campaigns" element={<Campaigns />} />
+            <Route path="customers" element={<Customers />} />
             <Route path="rewards" element={<Rewards />} />
-            <Route path="design" element={<Placeholder title="Design Studio" />} />
-            <Route path="integrations" element={<Placeholder title="Integrations" />} />
+            <Route path="design" element={<DesignStudio />} />
+            <Route path="integrations" element={<Integrations />} />
           </Route>
         </Routes>
       </BrowserRouter>
