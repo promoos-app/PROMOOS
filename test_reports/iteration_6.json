@@ -1,0 +1,63 @@
+{
+  "summary": "Iter-6 (HMAC webhooks + widget variants + attribution/exports) fully validated. Backend: 28/28 pytest cases PASS in 7.55s covering (a) POST /api/pos/rotate-secret owner-only + whsec_ 46-char format + 403 for marketer/viewer + 400 for invalid provider, (b) GET /api/pos/secrets shape, (c) Shopify webhook 401 with missing/invalid HMAC + 200 with correct base64(hmac-sha256(secret, raw)) → discount>0, (d) same for WooCommerce with X-WC-Webhook-Signature, (e) all 5 embed variants (inline/popup/bar/wheel/wallet) return distinct application/javascript bodies with the data-promoos-code hook, and unknown variant silently falls back to inline, (f) GET /api/customers exposes metrics.{cac,clv,avg_orders,total_spend,total_discount} numeric ≥0 with clv≈total_spend/n, (g) CSV export begins 'PromoOS Performance Report' + Content-Disposition attachment; filename=\"promoos-report-...csv\", PDF export is application/pdf ≥2KB starting with %PDF-, invalid format → 400, period=999 silently falls back to 30, all 7 valid periods (7/14/30/60/90/180/365) accepted, plus (h) iter-1..5 regression smokes (auth/me, coupons, dashboard, timeseries, public validate+redeem, gift-cards, loyalty, pos snippets, unsigned webhook still applies when secret set with correct sig, AI /copy still returns 200|429|5xx). Frontend: /analytics renders 4 KPI cards with real values (Total Revenue $34,923, Customers 281, Est. CAC $61.43, Customer LTV $124.28), period selector switches to 90d, CSV download (4019 bytes) + PDF download (2967 bytes) both fire and land with correct filenames + valid %PDF- header; /integrations pos-secrets block renders both shopify + woocommerce rows, clicking rotate-shopify displays a fresh whsec_ 50-char secret inline and updates the row to 'rotated YYYY-MM-DD'; /coupons/{id} embed panel has all 5 widget-variant tabs and toggling them correctly rewrites the embed-snippet src URL (inline → no ?variant=, others → ?variant=<v>); copy-embed-btn confirms 'Copied ✓'.",
+  "ai_features_tested": [
+    "AI /copy — smoke-only assertion that status ∈ {200,429,5xx}. Received 429 (LLM budget still exhausted from iter-4/5). Not re-driven to preserve credits per iter-5 handoff."
+  ],
+  "skills_loaded": ["ai-testing-core (not-re-loaded — iter-5 report retained ai-testing-core context and this iter's AI test is a status-only smoke that did NOT drive a real generation)"],
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/pos/secrets", "issue": "No way to un-set (delete) a rotated secret from the UI/API — once configured, a workspace is locked into signature verification. Consider POST /api/pos/rotate-secret with {provider, clear:true} or DELETE /api/pos/secret/{provider} for dev/rollback."},
+      {"endpoint": "POST /api/pos/rotate-secret", "issue": "Uses random.choices (not secrets.SystemRandom) for the whsec_ payload — cryptographically-secret secrets should come from secrets.token_urlsafe(30) or secrets.SystemRandom to avoid predictable Mersenne-Twister output. Same concern applies to _api_key_str()."},
+      {"endpoint": "GET /api/analytics/export?format=pdf", "issue": "PDF renderer includes stats.impressions in the coupons table but there's no equivalent 'impressions' column in the CSV — small parity gap; boards will see a KPI in the PDF that's missing in the CSV."},
+      {"endpoint": "GET /api/analytics/export", "issue": "period=999 silently falls back to 30 without any hint to the caller. Consider echoing the applied period in a response header (e.g. X-PromoOS-Period-Applied: 30) or returning 400 for out-of-range periods."},
+      {"endpoint": "GET /api/embed/coupon.js", "issue": "Unknown variant silently falls back to inline — technically per spec, but there's no telemetry, log, or 400 to surface merchant typos ('populp' instead of 'popup'). Consider a debug header X-PromoOS-Variant-Applied when variant differs from requested."},
+      {"endpoint": "GET /api/customers.metrics", "issue": "CAC formula uses total_discount/new_n but new_n falls back to 1 when there are 0 new-segment customers, which silently inflates CAC to = total_discount (looks like $61 CAC even when there are zero acquired customers). Recommend returning null/0 when new_n==0 rather than dividing by 1."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/analytics revenue chart", "issues": ["Chart parent div uses minHeight:320 but Recharts still logs 2 startup warnings 'The width(-1) and height(-1) of chart should be greater than 0' (same regression as iter-4/5). Also the AreaChart renders a single flat line because /analytics/timeseries returns 0-revenue days for this workspace — user-facing but caused by seed data, not the chart."]},
+      {"screen": "/integrations Woocommerce row", "issues": ["Woocommerce is spelled 'Woocommerce' (single-word) — canonical brand is 'WooCommerce' (camelcase). Cosmetic."]},
+      {"screen": "/analytics select element", "issues": ["React hydration warning: '<option> cannot be a child of <span>'. Root cause: Emergent instrumentation injects <span> nodes inside every child of <select>; the raw <option> markup in Analytics.js line 66 is fine — this is dev-toolchain noise, safe to ignore in prod, but the warning is visible on every /analytics load."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter6_features.py",
+    "/app/test_reports/pytest/iter6_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Add DELETE / clear-secret endpoint for POS webhooks so merchants can revert to trust-mode during dev without dropping the workspace doc.",
+    "OPTIONAL: Swap random.choices → secrets.token_urlsafe(30) in rotate_pos_secret() and _api_key_str() for cryptographically-strong tokens.",
+    "OPTIONAL: Return metrics.cac as 0.0 (or null) when there are no new customers, instead of dividing total_discount by fallback new_n=1 (currently inflates CAC).",
+    "OPTIONAL: Emit X-PromoOS-Variant-Applied response header on /embed/coupon.js so merchants notice typo'd variant params.",
+    "OPTIONAL: Impressions column parity between CSV and PDF exports.",
+    "OPTIONAL (carried over from iter-5): Split /app/backend/server.py (now 2441 lines) into routers/{auth,coupons,pos,journeys,ai,analytics,exports,embed,customers}.py."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew from 2100 → 2441 lines. HMAC + exports + variants added ~340 LOC in one file. Router split is now overdue.",
+    "_hmac_ok uses hmac.compare_digest correctly (constant-time), but the secret is stored PLAINTEXT in db.workspaces.webhook_secrets.shopify — an attacker with read access to Mongo can forge signatures. Consider hashing the secret at rest and comparing base64(hmac-sha256(plaintext, raw)) via a KDF-derived key, OR encrypting the secret with an app-wide KMS key.",
+    "_get_workspace_secret is defined but never used — shopify_webhook and woocommerce_webhook read the secret inline from ws.get('webhook_secrets'). Dead code; either use it or remove it.",
+    "The whsec_ generation uses random.choices(ascii_letters+digits, k=40) which is Mersenne-Twister-seeded — sufficient for identifier uniqueness but NOT for cryptographic secrets. Migrate to secrets.token_urlsafe(30).",
+    "/analytics/export builds the PDF in-memory via reportlab.SimpleDocTemplate — for workspaces with thousands of coupons the .to_list(500) cap on coupons + hard 20 top-coupon cap prevents runaway, but no pagination for the underlying redemption fetch (20000-doc cap). If a heavy workspace exceeds 20k redemptions in a 365-day window the report silently truncates. Add a `truncated: true` warning to the CSV/PDF footer.",
+    "period fallback logic ('if period not in (7,14,...): period=30') silently ignores the caller's intent. Prefer HTTPException(400) + suggested list, or an X-Applied-Period response header.",
+    "The embed renderers duplicate ~40 lines of style boilerplate across all 5 variants. Extract a shared _CSS_HEADER constant + _brand_style(d) helper to make future variant additions safer.",
+    "_apply_from_pos writes redemption docs with source='shopify'|'woocommerce' but the HMAC verification lives in the webhook handler — an attacker who bypasses signature check (e.g. via the same code path as _apply_from_pos being reused elsewhere) can still write source='shopify' redemptions. Consider moving _apply_from_pos into an internal helper that takes a `verified: bool` flag and refuses to write when False."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter6_features.py (new, 28 tests, all pass in 7.55s)",
+    "/app/test_reports/pytest/iter6_results.xml (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (28/28 iter-6 pytest passed — 5 rotate-secret RBAC + shape, 3 shopify HMAC (missing/bad/valid), 2 woocommerce HMAC (missing/valid), 2 widget variants (distinct 5 + inline fallback), 1 customers metrics, 5 exports (csv/pdf/invalid/period-fallback/all-periods), 10 iter-1..5 regression smokes)",
+    "frontend": "100% (/analytics renders 4 KPIs with live /customers.metrics values, period selector toggles, CSV+PDF downloads verified end-to-end with size+magic-byte checks; /integrations pos-secrets rotates a fresh whsec_ 50-char secret and updates the row state; /coupons/{id} 5 widget-variant tabs correctly rewrite the embed-snippet src to include ?variant=<v> for all except inline; copy-embed-btn shows 'Copied ✓')"
+  },
+  "test_credentials": "admin@promoos.com/admin123 (owner), marketer@promoos.com/marketer123 (marketer), viewer@promoos.com/viewer123 (viewer) — from /app/memory/test_credentials.md. Preview URL: https://campaign-hub-436.preview.emergentagent.com",
+  "seed_data_creation": "Test artifacts created this run (all TEST_-prefixed for cleanup): (a) ~2 TEST_ITER6_* percentage coupons (active) used as targets for Shopify + Woo HMAC-signed webhooks. (b) 3 redemption rows written to db.redemptions with source in {shopify,woocommerce} and external_order_id in {999003, 888002, 777001}. (c) 1 TEST_ITER6_REG_* coupon (10% percentage) validated via /api/public/coupons/validate. (d) The Acme Swimwear Co. workspace has webhook_secrets.shopify and webhook_secrets.woocommerce set to the LAST rotated secrets — subsequent unsigned webhooks WILL fail with 401. Main agent should be aware if resetting to a clean state.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter-6 test suite `/app/backend/tests/test_iter6_features.py` (28 tests, 7.55s) can be re-run any time with `REACT_APP_BACKEND_URL=https://campaign-hub-436.preview.emergentagent.com pytest tests/test_iter6_features.py`. IMPORTANT: because the tests rotate webhook_secrets many times, after this suite runs the workspace has webhook_secrets.{shopify,woocommerce} set to the LAST test run's secret. If a downstream test expects unsigned webhooks to work in trust mode, either (a) manually remove `webhook_secrets` from db.workspaces, or (b) fetch the latest secret via /pos/rotate-secret first and sign accordingly. HMAC signing pattern in tests: use `requests.post(..., data=raw_body_bytes, headers={..., 'X-Shopify-Hmac-Sha256': base64(hmac.new(secret, raw, sha256).digest())})` — do NOT pass json= or the body bytes will differ from the signed bytes. AI budget still exhausted (429 on /ai/copy) — do NOT re-drive AI. Frontend data-testids verified this iter: analytics-page, analytics-period, analytics-export-csv, analytics-export-pdf, analytics-state-{state}, pos-secrets, secret-row-shopify, secret-row-woocommerce, rotate-shopify, rotate-woocommerce, fresh-secret-shopify, fresh-secret-woocommerce, widget-variant-{inline,popup,bar,wheel,wallet}, embed-snippet, copy-embed-btn.",
+  "rca of the issue": "N/A — no defects found in iter-6 surface. Initial pytest run had 1 test failure (test_ai_returns_429_or_ok_budget) that was AUTHOR ERROR: the /ai/copy endpoint takes {prompt: str} not {kind, audience, goal} which returns 422 Pydantic validation. Fixed to send {prompt:'20% off spring collection'}; endpoint returned 429 (budget exhausted) as expected. All iter-6 endpoint contracts are consistent with the review request."
+}

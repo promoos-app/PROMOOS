@@ -32,6 +32,7 @@ export default function CouponDetail() {
   const [channel, setChannel] = useState("email");   // email | sms | whatsapp
   const [refs, setRefs] = useState(null);
   const [snippetCopied, setSnippetCopied] = useState(false);
+  const [widgetVariant, setWidgetVariant] = useState("inline");
   const [experiments, setExperiments] = useState([]);
   const [expBusy, setExpBusy] = useState(false);
   const [nVariants, setNVariants] = useState(3);
@@ -278,14 +279,25 @@ export default function CouponDetail() {
           </div>
           <p className="text-xs text-[#71717A] mb-3">Paste this snippet into any Shopify/WordPress/plain HTML page.</p>
           {(() => {
-            const snippet = `<script async src="${process.env.REACT_APP_BACKEND_URL}/api/embed/coupon.js" data-promoos-code="${c.code}"></script>`;
+            const src = `${process.env.REACT_APP_BACKEND_URL}/api/embed/coupon.js${widgetVariant !== "inline" ? `?variant=${widgetVariant}` : ""}`;
+            const snippet = `<script async src="${src}" data-promoos-code="${c.code}"></script>`;
             return (
               <>
+                <div className="flex flex-wrap gap-1 mb-3 bg-[#0A0A0A] border border-[#27272A] rounded-md p-1 w-fit">
+                  {["inline", "popup", "bar", "wheel", "wallet"].map((v) => (
+                    <button
+                      key={v}
+                      data-testid={`widget-variant-${v}`}
+                      onClick={() => setWidgetVariant(v)}
+                      className={`px-3 py-1.5 rounded-md text-xs font-medium transition capitalize ${widgetVariant === v ? "bg-[#005CEE] text-white" : "text-[#A1A1AA] hover:text-white"}`}
+                    >{v}</button>
+                  ))}
+                </div>
                 <pre data-testid="embed-snippet" className="text-xs bg-[#0A0A0A] border border-[#27272A] rounded-md p-3 overflow-x-auto text-[#A1A1AA] whitespace-pre-wrap break-all">{snippet}</pre>
                 <Button
                   data-testid="copy-embed-btn"
                   onClick={() => {
-                    navigator.clipboard.writeText(snippet);
+                    navigator.clipboard.writeText(snippet).catch(() => {});
                     setSnippetCopied(true);
                     toast.success("Snippet copied");
                     setTimeout(() => setSnippetCopied(false), 1500);

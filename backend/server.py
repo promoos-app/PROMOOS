@@ -10,10 +10,12 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
-import uuid, logging, jwt, bcrypt, io, base64, json, random, string, re, asyncio
+import uuid, logging, jwt, bcrypt, io, base64, json, random, string, re, asyncio, secrets as _pysecrets
 from datetime import datetime, timezone, timedelta
 import qrcode
 import resend
+import hmac
+import hashlib
 from twilio.rest import Client as TwilioClient
 
 mongo_url = os.environ['MONGO_URL']
@@ -760,52 +762,163 @@ async def coupon_referrals(cid: str, user: dict = Depends(get_current_user)):
 
 # ---------------- Embed widget (public JS) ----------------
 @api.get("/embed/coupon.js")
-async def embed_js(request: Request):
-    # Compute the public origin so the widget hits the right backend
+async def embed_js(request: Request, variant: str = "inline"):
+    """Embed script. Supports variants: inline (default card), popup, bar, wheel, wallet."""
     origin = os.environ.get("PUBLIC_ORIGIN", "").rstrip("/")
     if not origin:
         proto = request.headers.get("x-forwarded-proto", request.url.scheme)
         host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
         origin = f"{proto}://{host}"
-    js = f"""
-(function(){{
-  var API="{origin}";
-  var scripts=document.querySelectorAll('script[data-promoos-code]');
-  scripts.forEach(function(s){{
-    var code=(s.getAttribute('data-promoos-code')||'').toUpperCase();
-    var ref=s.getAttribute('data-ref')||'';
-    if(!code) return;
-    var host=document.createElement('div');
-    host.setAttribute('data-promoos-widget',code);
-    s.parentNode.insertBefore(host,s);
-    fetch(API+'/api/public/coupons/'+encodeURIComponent(code)+(ref?('?ref='+encodeURIComponent(ref)):''))
-      .then(function(r){{return r.ok?r.json():Promise.reject(r)}})
-      .then(function(d){{
-        var primary=d.brand.primary_color||'#005CEE';
-        var secondary=d.brand.secondary_color||'#CCFF00';
-        var landing=API.replace(/\\/api$/,'')+'/c/'+encodeURIComponent(d.code);
-        host.innerHTML=''
-          +'<div style="font-family:Helvetica,Arial,sans-serif;max-width:420px;padding:20px;border-radius:14px;background:#0A0A0A;color:#fff;border:1px solid #27272A;box-shadow:0 10px 30px rgba(0,0,0,.35)">'
-          +'<div style="font-size:11px;letter-spacing:.12em;color:'+secondary+';text-transform:uppercase;font-weight:700">'+d.brand.name+'</div>'
-          +'<div style="font-size:22px;font-weight:800;line-height:1.15;margin:8px 0 6px">'+d.headline+'</div>'
-          +'<div style="font-size:13px;color:#A1A1AA;margin-bottom:14px">'+d.description+'</div>'
-          +'<div style="display:flex;align-items:center;gap:10px">'
-          +'<div id="pos-code-'+code+'" style="flex:1;padding:12px 14px;border:2px dashed '+primary+';border-radius:10px;font-family:monospace;font-weight:700;font-size:18px;color:'+primary+';letter-spacing:2px;text-align:center">'+d.code+'</div>'
-          +'<button data-pos-copy style="background:'+secondary+';color:#0A0A0A;border:0;padding:12px 14px;border-radius:10px;font-weight:700;cursor:pointer">Copy</button>'
-          +'</div>'
-          +'<a href="'+landing+(ref?('?ref='+encodeURIComponent(ref)):'')+'" target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:14px;background:'+primary+';color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700">'+d.cta+'</a>'
-          +'</div>';
-        var btn=host.querySelector('[data-pos-copy]');
-        btn.addEventListener('click',function(){{
-          navigator.clipboard.writeText(d.code).then(function(){{btn.textContent='Copied!';setTimeout(function(){{btn.textContent='Copy'}},1500)}});
-        }});
-      }})
-      .catch(function(){{ host.innerHTML='<div style="padding:12px;border:1px solid #27272A;border-radius:10px;color:#A1A1AA;font-family:sans-serif;font-size:12px">Offer unavailable</div>'; }});
-  }});
-}})();
-""".strip()
+    v = (variant or "inline").lower()
+    if v not in ("inline", "popup", "bar", "wheel", "wallet"):
+        v = "inline"
+    js = _RENDERERS[v].replace("__API__", origin)
     return Response(content=js, media_type="application/javascript",
                     headers={"Cache-Control": "public, max-age=60"})
+
+
+# Common bootstrap that hydrates coupon data + brand colors
+_EMBED_BOOTSTRAP = """
+var API="__API__";
+function poFetch(code, ref, cb){
+  fetch(API+'/api/public/coupons/'+encodeURIComponent(code)+(ref?('?ref='+encodeURIComponent(ref)):''))
+    .then(function(r){return r.ok?r.json():Promise.reject(r)})
+    .then(cb).catch(function(){});
+}
+function poCopy(text, btn){
+  navigator.clipboard.writeText(text).then(function(){
+    var t=btn.textContent; btn.textContent='Copied!'; setTimeout(function(){btn.textContent=t;},1500);
+  }).catch(function(){});
+}
+"""
+
+_RENDERERS = {
+    # Inline card (original)
+    "inline": _EMBED_BOOTSTRAP + """
+document.querySelectorAll('script[data-promoos-code]').forEach(function(s){
+  var code=(s.getAttribute('data-promoos-code')||'').toUpperCase();
+  var ref=s.getAttribute('data-ref')||'';
+  if(!code) return;
+  var host=document.createElement('div'); s.parentNode.insertBefore(host,s);
+  poFetch(code, ref, function(d){
+    var primary=d.brand.primary_color||'#005CEE', accent=d.brand.secondary_color||'#CCFF00';
+    var landing=API+'/c/'+encodeURIComponent(d.code)+(ref?('?ref='+encodeURIComponent(ref)):'');
+    host.innerHTML='<div style="font-family:Helvetica,Arial,sans-serif;max-width:420px;padding:20px;border-radius:14px;background:#0A0A0A;color:#fff;border:1px solid #27272A;box-shadow:0 10px 30px rgba(0,0,0,.35)">'
+      +'<div style="font-size:11px;letter-spacing:.12em;color:'+accent+';text-transform:uppercase;font-weight:700">'+d.brand.name+'</div>'
+      +'<div style="font-size:22px;font-weight:800;line-height:1.15;margin:8px 0 6px">'+d.headline+'</div>'
+      +'<div style="font-size:13px;color:#A1A1AA;margin-bottom:14px">'+d.description+'</div>'
+      +'<div style="display:flex;gap:10px"><div style="flex:1;padding:12px 14px;border:2px dashed '+primary+';border-radius:10px;font-family:monospace;font-weight:700;font-size:18px;color:'+primary+';letter-spacing:2px;text-align:center">'+d.code+'</div>'
+      +'<button data-c style="background:'+accent+';color:#0A0A0A;border:0;padding:12px 14px;border-radius:10px;font-weight:700;cursor:pointer">Copy</button></div>'
+      +'<a href="'+landing+'" target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:14px;background:'+primary+';color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700">'+d.cta+'</a></div>';
+    host.querySelector('[data-c]').addEventListener('click',function(e){poCopy(d.code,e.target)});
+  });
+});
+""",
+
+    # Full-screen popup
+    "popup": _EMBED_BOOTSTRAP + """
+document.querySelectorAll('script[data-promoos-code]').forEach(function(s){
+  var code=(s.getAttribute('data-promoos-code')||'').toUpperCase(); if(!code) return;
+  var delay=parseInt(s.getAttribute('data-delay')||'2500',10);
+  if(sessionStorage.getItem('promoos_seen_'+code)) return;
+  poFetch(code, s.getAttribute('data-ref')||'', function(d){
+    setTimeout(function(){
+      sessionStorage.setItem('promoos_seen_'+code,'1');
+      var primary=d.brand.primary_color||'#005CEE', accent=d.brand.secondary_color||'#CCFF00';
+      var wrap=document.createElement('div');
+      wrap.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:Helvetica,Arial,sans-serif;padding:20px;animation:pop-fade .3s ease';
+      wrap.innerHTML='<style>@keyframes pop-fade{from{opacity:0}to{opacity:1}}@keyframes pop-in{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}</style>'
+        +'<div style="background:#0A0A0A;color:#fff;max-width:460px;width:100%;padding:32px;border-radius:20px;position:relative;text-align:center;border:1px solid #27272A;animation:pop-in .3s ease">'
+        +'<button data-x style="position:absolute;top:12px;right:14px;background:transparent;border:0;color:#71717A;font-size:22px;cursor:pointer;line-height:1">×</button>'
+        +'<div style="font-size:11px;letter-spacing:.12em;color:'+accent+';text-transform:uppercase;font-weight:700;margin-bottom:8px">'+d.brand.name+'</div>'
+        +'<div style="font-size:28px;font-weight:900;line-height:1.1;margin-bottom:8px">'+d.headline+'</div>'
+        +'<div style="font-size:14px;color:#A1A1AA;margin-bottom:20px">'+d.description+'</div>'
+        +'<div style="padding:14px 16px;border:2px dashed '+primary+';border-radius:12px;font-family:monospace;font-weight:700;font-size:22px;color:'+primary+';letter-spacing:3px;margin-bottom:16px">'+d.code+'</div>'
+        +'<button data-c style="background:'+primary+';color:#fff;border:0;padding:14px 24px;border-radius:12px;font-weight:700;cursor:pointer;font-size:15px;width:100%">'+d.cta+' — Copy code</button></div>';
+      document.body.appendChild(wrap);
+      wrap.querySelector('[data-x]').addEventListener('click',function(){wrap.remove()});
+      wrap.querySelector('[data-c]').addEventListener('click',function(e){poCopy(d.code,e.target)});
+      wrap.addEventListener('click',function(e){if(e.target===wrap)wrap.remove()});
+    }, delay);
+  });
+});
+""",
+
+    # Top-bar
+    "bar": _EMBED_BOOTSTRAP + """
+document.querySelectorAll('script[data-promoos-code]').forEach(function(s){
+  var code=(s.getAttribute('data-promoos-code')||'').toUpperCase(); if(!code) return;
+  poFetch(code, s.getAttribute('data-ref')||'', function(d){
+    var primary=d.brand.primary_color||'#005CEE', accent=d.brand.secondary_color||'#CCFF00';
+    var landing=API+'/c/'+encodeURIComponent(d.code);
+    var bar=document.createElement('div');
+    bar.style.cssText='position:fixed;top:0;left:0;right:0;background:linear-gradient(90deg,'+primary+','+accent+');color:#0A0A0A;padding:10px 18px;font-family:Helvetica,Arial,sans-serif;font-weight:700;font-size:14px;z-index:2147483646;display:flex;align-items:center;gap:12px;justify-content:center;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,.15)';
+    bar.innerHTML='<span>'+d.headline+' — Code <span style="font-family:monospace;background:rgba(0,0,0,.15);padding:2px 8px;border-radius:4px">'+d.code+'</span></span>'
+      +'<a href="'+landing+'" target="_blank" style="background:#0A0A0A;color:#fff;text-decoration:none;padding:6px 14px;border-radius:6px;font-size:12px">'+d.cta+'</a>'
+      +'<button data-x style="background:transparent;border:0;color:#0A0A0A;font-size:18px;cursor:pointer;padding:0 4px;line-height:1;opacity:.5">×</button>';
+    document.body.appendChild(bar);
+    bar.querySelector('[data-x]').addEventListener('click',function(){bar.remove()});
+  });
+});
+""",
+
+    # Spin-to-win wheel
+    "wheel": _EMBED_BOOTSTRAP + """
+document.querySelectorAll('script[data-promoos-code]').forEach(function(s){
+  var code=(s.getAttribute('data-promoos-code')||'').toUpperCase(); if(!code) return;
+  poFetch(code, s.getAttribute('data-ref')||'', function(d){
+    var primary=d.brand.primary_color||'#005CEE', accent=d.brand.secondary_color||'#CCFF00';
+    var slices=[d.discount_value+'%',Math.round(d.discount_value/2)+'%','Try again','5%',d.discount_value+'%','Free ship'];
+    var wrap=document.createElement('div');
+    wrap.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:Helvetica,Arial,sans-serif;padding:20px';
+    var W='<style>@keyframes spin{to{transform:rotate(var(--r))}}</style><div style="background:#0A0A0A;color:#fff;padding:32px;border-radius:20px;max-width:420px;width:100%;text-align:center;border:1px solid #27272A">';
+    W+='<button data-x style="position:absolute;top:20px;right:20px;background:transparent;border:0;color:#fff;font-size:22px;cursor:pointer">×</button>';
+    W+='<div style="font-size:22px;font-weight:900;margin-bottom:16px">Spin to Win</div>';
+    W+='<div style="position:relative;width:260px;height:260px;margin:0 auto 20px"><div id="pw-wheel" style="width:100%;height:100%;border-radius:50%;background:conic-gradient('+primary+' 0 60deg,'+accent+' 60deg 120deg,'+primary+' 120deg 180deg,'+accent+' 180deg 240deg,'+primary+' 240deg 300deg,'+accent+' 300deg 360deg);transition:transform 4s cubic-bezier(.22,.9,.28,1);border:4px solid #fff;box-shadow:0 0 40px '+primary+'44"></div><div style="position:absolute;top:-6px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:12px solid transparent;border-right:12px solid transparent;border-top:20px solid #fff"></div></div>';
+    W+='<button data-spin style="background:'+primary+';color:#fff;border:0;padding:14px 32px;border-radius:12px;font-weight:700;font-size:16px;cursor:pointer">SPIN</button>';
+    W+='<div id="pw-out" style="margin-top:20px;min-height:80px"></div></div>';
+    wrap.innerHTML=W; document.body.appendChild(wrap);
+    var out=wrap.querySelector('#pw-out'), whl=wrap.querySelector('#pw-wheel'), btn=wrap.querySelector('[data-spin]');
+    wrap.querySelector('[data-x]').addEventListener('click',function(){wrap.remove()});
+    btn.addEventListener('click',function(){
+      btn.disabled=true; btn.style.opacity='.5';
+      var winSlice=0; var deg=1800+winSlice*60+30;
+      whl.style.setProperty('--r',deg+'deg'); whl.style.animation='spin 4s cubic-bezier(.22,.9,.28,1) forwards';
+      setTimeout(function(){
+        out.innerHTML='<div style="font-size:18px;font-weight:800;color:'+accent+'">You won '+slices[winSlice]+' off!</div>'
+          +'<div style="margin-top:8px;padding:10px;border:2px dashed '+primary+';border-radius:8px;font-family:monospace;font-weight:700;font-size:18px;color:'+primary+';letter-spacing:2px">'+d.code+'</div>'
+          +'<button data-c style="margin-top:10px;background:'+accent+';color:#0A0A0A;border:0;padding:10px 20px;border-radius:8px;font-weight:700;cursor:pointer">Copy code</button>';
+        out.querySelector('[data-c]').addEventListener('click',function(e){poCopy(d.code,e.target)});
+      },4200);
+    });
+  });
+});
+""",
+
+    # Floating wallet pill (bottom right)
+    "wallet": _EMBED_BOOTSTRAP + """
+document.querySelectorAll('script[data-promoos-code]').forEach(function(s){
+  var code=(s.getAttribute('data-promoos-code')||'').toUpperCase(); if(!code) return;
+  poFetch(code, s.getAttribute('data-ref')||'', function(d){
+    var primary=d.brand.primary_color||'#005CEE', accent=d.brand.secondary_color||'#CCFF00';
+    var landing=API+'/c/'+encodeURIComponent(d.code);
+    var pill=document.createElement('div');
+    pill.style.cssText='position:fixed;bottom:20px;right:20px;z-index:2147483645;font-family:Helvetica,Arial,sans-serif;display:flex;flex-direction:column;align-items:flex-end;gap:8px';
+    pill.innerHTML='<div id="pw-panel" style="display:none;background:#0A0A0A;color:#fff;padding:20px;border-radius:16px;border:1px solid #27272A;box-shadow:0 20px 40px rgba(0,0,0,.4);max-width:320px">'
+      +'<div style="font-size:11px;letter-spacing:.1em;color:'+accent+';text-transform:uppercase;font-weight:700;margin-bottom:6px">'+d.brand.name+'</div>'
+      +'<div style="font-size:16px;font-weight:800;line-height:1.15;margin-bottom:4px">'+d.headline+'</div>'
+      +'<div style="font-size:12px;color:#A1A1AA;margin-bottom:12px">'+d.description+'</div>'
+      +'<div style="padding:10px;border:2px dashed '+primary+';border-radius:8px;font-family:monospace;font-weight:700;color:'+primary+';text-align:center;letter-spacing:2px;margin-bottom:10px">'+d.code+'</div>'
+      +'<div style="display:flex;gap:6px"><button data-c style="flex:1;background:'+accent+';color:#0A0A0A;border:0;padding:8px;border-radius:8px;font-weight:700;cursor:pointer;font-size:12px">Copy</button><a href="'+landing+'" target="_blank" style="flex:1;background:'+primary+';color:#fff;text-decoration:none;padding:8px;border-radius:8px;font-weight:700;text-align:center;font-size:12px">'+d.cta+'</a></div></div>'
+      +'<button id="pw-toggle" style="background:'+primary+';color:#fff;border:0;padding:12px 18px;border-radius:99px;font-weight:700;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.3);display:flex;align-items:center;gap:8px;font-size:13px">🎁 '+d.discount_value+'% off available</button>';
+    document.body.appendChild(pill);
+    var panel=pill.querySelector('#pw-panel'), toggle=pill.querySelector('#pw-toggle');
+    toggle.addEventListener('click',function(){panel.style.display=panel.style.display==='none'?'block':'none'});
+    panel.querySelector('[data-c]').addEventListener('click',function(e){poCopy(d.code,e.target)});
+  });
+});
+""",
+}
 
 
 # ---------------- SMS / WhatsApp (Twilio) ----------------
@@ -1694,7 +1807,24 @@ async def customers(user: dict = Depends(get_current_user)):
         seg = _segment_customer(r, now)
         r["segment"] = seg
         counts[seg] = counts.get(seg, 0) + 1
-    return {"total": len(rows), "by_segment": counts, "customers": rows}
+    total_spend = sum(r.get("spend", 0) for r in rows)
+    total_orders = sum(r.get("orders", 0) for r in rows)
+    n = len(rows)
+    # Aggregate CAC estimate — the workspace's own spend on discounts is a proxy cost per new customer
+    total_discount = sum(r.get("discount", 0) for r in rows)
+    new_n = counts.get("new", 0)
+    cac = round(total_discount / new_n, 2) if new_n else 0.0
+    clv = round((total_spend / n), 2) if n else 0.0
+    avg_orders = round((total_orders / n), 2) if n else 0.0
+    return {
+        "total": n, "by_segment": counts,
+        "metrics": {
+            "cac": cac, "clv": clv, "avg_orders": avg_orders,
+            "total_spend": round(total_spend, 2),
+            "total_discount": round(total_discount, 2),
+        },
+        "customers": rows,
+    }
 
 
 @api.post("/customers/{customer}/message")
@@ -1783,7 +1913,7 @@ class ApiKeyIn(BaseModel):
 
 
 def _api_key_str() -> str:
-    return "pk_live_" + "".join(random.choices(string.ascii_letters + string.digits, k=32))
+    return "pk_live_" + _pysecrets.token_urlsafe(24)
 
 
 @api.post("/api-keys")
@@ -1823,7 +1953,166 @@ async def revoke_api_key(kid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
+# ---------------- Exports (CSV / PDF) ----------------
+import csv as _csv
+
+
+async def _period_start(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+async def _export_report_rows(workspace_id: str, days: int) -> dict:
+    since = await _period_start(days)
+    reds = await db.redemptions.find(
+        {"workspace_id": workspace_id, "created_at": {"$gt": since}},
+        {"_id": 0}).to_list(20000)
+    coupons = await db.coupons.find(
+        {"workspace_id": workspace_id}, {"_id": 0, "qr_code": 0}).to_list(500)
+    ws = await db.workspaces.find_one({"id": workspace_id}, {"_id": 0}) or {}
+    per_coupon: Dict[str, Dict[str, float]] = {}
+    for r in reds:
+        cid = r.get("coupon_id"); c = per_coupon.setdefault(cid, {
+            "code": r.get("code"), "redemptions": 0, "revenue": 0.0, "discount": 0.0})
+        c["redemptions"] += 1
+        c["revenue"] += r.get("revenue", 0)
+        c["discount"] += r.get("discount", 0)
+    total_reds = len(reds)
+    total_rev = sum(r.get("revenue", 0) for r in reds)
+    total_disc = sum(r.get("discount", 0) for r in reds)
+    return {
+        "workspace_name": ws.get("name", ""),
+        "period_days": days, "since": since,
+        "total_redemptions": total_reds,
+        "total_revenue": round(total_rev, 2),
+        "total_discount": round(total_disc, 2),
+        "avg_order_value": round(total_rev / total_reds, 2) if total_reds else 0.0,
+        "top_coupons": sorted(per_coupon.values(),
+                              key=lambda x: x["revenue"], reverse=True)[:20],
+        "coupons": coupons,
+        "generated_at": now_iso(),
+    }
+
+
+@api.get("/analytics/export")
+async def export_report(format: str = "csv", period: int = 30,
+                        user: dict = Depends(get_current_user)):
+    if format not in ("csv", "pdf"):
+        raise HTTPException(400, "format must be csv or pdf")
+    if period not in (7, 14, 30, 60, 90, 180, 365):
+        period = 30
+    rpt = await _export_report_rows(user["workspace_id"], period)
+    fname = f"promoos-report-{rpt['workspace_name'].lower().replace(' ','-') or 'workspace'}-{period}d"
+    if format == "csv":
+        buf = io.StringIO()
+        w = _csv.writer(buf)
+        w.writerow(["PromoOS Performance Report"])
+        w.writerow(["Workspace", rpt["workspace_name"]])
+        w.writerow(["Period", f"Last {period} days"])
+        w.writerow(["Generated", rpt["generated_at"]])
+        w.writerow([])
+        w.writerow(["Total redemptions", rpt["total_redemptions"]])
+        w.writerow(["Total revenue", rpt["total_revenue"]])
+        w.writerow(["Total discount given", rpt["total_discount"]])
+        w.writerow(["Avg order value", rpt["avg_order_value"]])
+        w.writerow([])
+        w.writerow(["--- Top coupons ---"])
+        w.writerow(["Code", "Redemptions", "Revenue", "Discount"])
+        for c in rpt["top_coupons"]:
+            w.writerow([c["code"], c["redemptions"], round(c["revenue"], 2), round(c["discount"], 2)])
+        w.writerow([])
+        w.writerow(["--- All coupons ---"])
+        w.writerow(["Code", "Name", "Type", "Discount", "State",
+                    "Impressions", "Redemptions", "Revenue"])
+        for c in rpt["coupons"]:
+            stats = c.get("stats") or {}
+            w.writerow([c.get("code"), c.get("name"), c.get("type"),
+                        c.get("discount_value"), c.get("state"),
+                        stats.get("impressions", 0),
+                        stats.get("redemptions", 0),
+                        round(stats.get("revenue", 0), 2)])
+        return Response(content=buf.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{fname}.csv"'})
+    # PDF branch
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=LETTER,
+                            leftMargin=48, rightMargin=48, topMargin=48, bottomMargin=48)
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("t", parent=styles["Title"], fontSize=22, textColor=colors.HexColor("#0A0A0A"), spaceAfter=6)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontSize=13, textColor=colors.HexColor("#005CEE"), spaceBefore=12, spaceAfter=6)
+    small = ParagraphStyle("s", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#71717A"))
+    body = []
+    body.append(Paragraph("PromoOS Performance Report", title))
+    body.append(Paragraph(f"{rpt['workspace_name']} · Last {period} days", small))
+    body.append(Paragraph(rpt["generated_at"][:19].replace("T", " ") + " UTC", small))
+    body.append(Spacer(1, 12))
+    kpi_data = [
+        ["Total Redemptions", "Total Revenue", "Total Discount", "AOV"],
+        [str(rpt["total_redemptions"]),
+         f"${rpt['total_revenue']:,.2f}",
+         f"${rpt['total_discount']:,.2f}",
+         f"${rpt['avg_order_value']:,.2f}"],
+    ]
+    kt = Table(kpi_data, colWidths=[120, 120, 120, 120])
+    kt.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0A0A0A")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("FONTSIZE", (0, 1), (-1, 1), 14),
+        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#E4E4E7")),
+    ]))
+    body.append(kt)
+    body.append(Paragraph("Top coupons by revenue", h2))
+    tbl = [["Code", "Redemptions", "Revenue", "Discount"]] + [
+        [c["code"], str(c["redemptions"]),
+         f"${round(c['revenue'], 2):,.2f}",
+         f"${round(c['discount'], 2):,.2f}"] for c in rpt["top_coupons"][:15]]
+    t = Table(tbl, colWidths=[120, 100, 140, 120])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#005CEE")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#E4E4E7")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#FAFAFA")]),
+    ]))
+    body.append(t)
+    body.append(Spacer(1, 12))
+    body.append(Paragraph("Generated by PromoOS · promoos.com", small))
+    doc.build(body)
+    pdf = buf.getvalue()
+    buf.close()
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})
+
+
 # ---------------- POS Connectors (Shopify + WooCommerce) ----------------
+def _hmac_ok(secret: str, raw: bytes, signature_header: Optional[str]) -> bool:
+    """Compare base64(hmac-sha256(secret, raw)) with the provided signature header."""
+    if not signature_header:
+        return False
+    digest = hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).digest()
+    expected = base64.b64encode(digest).decode()
+    return hmac.compare_digest(expected, signature_header.strip())
+
+
+async def _get_workspace_secret(workspace_id: str, provider: str) -> Optional[str]:
+    ws = await db.workspaces.find_one({"id": workspace_id}, {"_id": 0})
+    if not ws:
+        return None
+    return (ws.get("webhook_secrets") or {}).get(provider)
+
+
 class PublicValidateIn(BaseModel):
     code: str
     amount: float = 0
@@ -1896,20 +2185,27 @@ async def _apply_from_pos(source: str, workspace_id: str, code: str, amount: flo
 
 @api.post("/pos/{workspace_id}/shopify")
 async def shopify_webhook(workspace_id: str, request: Request):
-    """Receives Shopify orders/create webhooks. Merchant configures the webhook to hit this URL
-    and adds a `X-PromoOS-Code: <CODE>` header (or note attribute with `promoos:<CODE>`).
-    Shopify HMAC signature check is optional and left to the merchant's account setup."""
+    """Receives Shopify orders/create webhooks. If a webhook_secrets.shopify is set on the
+    workspace, the request must include a matching X-Shopify-Hmac-Sha256 header
+    (base64(hmac-sha256(secret, raw_body))). Trust-based when secret is empty (dev mode)."""
     ws = await db.workspaces.find_one({"id": workspace_id}, {"_id": 0})
     if not ws:
         raise HTTPException(404, "Workspace not found")
-    payload = await request.json()
+    raw = await request.body()
+    secret = (ws.get("webhook_secrets") or {}).get("shopify")
+    if secret:
+        if not _hmac_ok(secret, raw, request.headers.get("X-Shopify-Hmac-Sha256")):
+            raise HTTPException(401, "Invalid HMAC signature")
+    try:
+        payload = json.loads(raw or b"{}")
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
     total = float(payload.get("total_price") or payload.get("subtotal_price") or 0)
     order_id = str(payload.get("id") or payload.get("order_id") or "")
     customer_email = ((payload.get("customer") or {}).get("email") or
                       payload.get("email") or "shopify-guest")
     code = request.headers.get("X-PromoOS-Code")
     if not code:
-        # Fall back to Shopify note_attributes: [{"name": "promoos", "value": "SUMMER25"}]
         for na in payload.get("note_attributes") or []:
             if str(na.get("name", "")).lower() == "promoos":
                 code = na.get("value"); break
@@ -1922,12 +2218,20 @@ async def shopify_webhook(workspace_id: str, request: Request):
 
 @api.post("/pos/{workspace_id}/woocommerce")
 async def woocommerce_webhook(workspace_id: str, request: Request):
-    """Receives WooCommerce `order.created` webhook (JSON body from wp-json/wc/v3/webhooks).
-    Merchant uses a snippet that adds meta_data { key:'promoos', value:'CODE' } on the order."""
+    """Receives WooCommerce order.created. If webhook_secrets.woocommerce is set, verifies
+    X-WC-Webhook-Signature (base64(hmac-sha256(secret, raw_body))). Trust-based otherwise."""
     ws = await db.workspaces.find_one({"id": workspace_id}, {"_id": 0})
     if not ws:
         raise HTTPException(404, "Workspace not found")
-    payload = await request.json()
+    raw = await request.body()
+    secret = (ws.get("webhook_secrets") or {}).get("woocommerce")
+    if secret:
+        if not _hmac_ok(secret, raw, request.headers.get("X-WC-Webhook-Signature")):
+            raise HTTPException(401, "Invalid HMAC signature")
+    try:
+        payload = json.loads(raw or b"{}")
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
     total = float(payload.get("total") or 0)
     order_id = str(payload.get("id") or "")
     billing = payload.get("billing") or {}
@@ -1944,6 +2248,40 @@ async def woocommerce_webhook(workspace_id: str, request: Request):
     return await _apply_from_pos("woocommerce", workspace_id, code, total,
                                  customer_email, order_id,
                                  payload.get("currency"))
+
+
+class RotateSecretIn(BaseModel):
+    provider: str   # 'shopify' or 'woocommerce'
+
+
+@api.post("/pos/rotate-secret")
+async def rotate_pos_secret(body: RotateSecretIn, user: dict = Depends(get_current_user)):
+    if user.get("role") != "owner":
+        raise HTTPException(403, "Only owners can rotate webhook secrets")
+    if body.provider not in ("shopify", "woocommerce"):
+        raise HTTPException(400, "provider must be shopify or woocommerce")
+    secret = "whsec_" + _pysecrets.token_urlsafe(30)
+    await db.workspaces.update_one(
+        {"id": user["workspace_id"]},
+        {"$set": {f"webhook_secrets.{body.provider}": secret,
+                  f"webhook_secrets.{body.provider}_rotated_at": now_iso()}})
+    return {"ok": True, "provider": body.provider, "secret": secret}
+
+
+@api.get("/pos/secrets")
+async def get_pos_secrets(user: dict = Depends(get_current_user)):
+    """Returns preview + timestamp for each provider's secret. Full secret is only returned on rotate."""
+    ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0}) or {}
+    ws_secrets = ws.get("webhook_secrets") or {}
+    out = {}
+    for p in ("shopify", "woocommerce"):
+        s = ws_secrets.get(p)
+        out[p] = {
+            "configured": bool(s),
+            "preview": (s[:14] + "…") if s else None,
+            "rotated_at": ws_secrets.get(f"{p}_rotated_at"),
+        }
+    return out
 
 
 @api.get("/pos/snippets")

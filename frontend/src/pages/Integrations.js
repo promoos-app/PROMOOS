@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plug, Key, Copy, Trash2, ShieldOff, Webhook, Code2 } from "lucide-react";
+import { Loader2, Plug, Key, Copy, Trash2, ShieldOff, Webhook, Code2, ShieldCheck, RefreshCw } from "lucide-react";
 
 function ConnectorCard({ name, icon, connected, hint, envHint }) {
   return (
@@ -18,6 +18,52 @@ function ConnectorCard({ name, icon, connected, hint, envHint }) {
       </div>
       <p className="text-xs text-[#A1A1AA] leading-relaxed mb-2">{hint}</p>
       {envHint && <div className="text-[10px] font-mono text-[#71717A] bg-[#0A0A0A] border border-[#27272A] rounded px-2 py-1">{envHint}</div>}
+    </div>
+  );
+}
+
+function PosSecrets() {
+  const [state, setState] = useState(null);
+  const [rotating, setRotating] = useState(null);
+  const [fresh, setFresh] = useState({});
+  const load = () => api.get("/pos/secrets").then((r) => setState(r.data)).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const rotate = async (provider) => {
+    setRotating(provider);
+    try {
+      const { data } = await api.post("/pos/rotate-secret", { provider });
+      setFresh((s) => ({ ...s, [provider]: data.secret }));
+      toast.success("Secret rotated — copy it now, it won't be shown again");
+      load();
+    } catch (e) { toast.error(apiError(e)); } finally { setRotating(null); }
+  };
+  if (!state) return null;
+  return (
+    <div className="surface rounded-lg p-5 mb-3" data-testid="pos-secrets">
+      <div className="flex items-center gap-2 mb-1">
+        <ShieldCheck className="w-4 h-4 text-[#CCFF00]" />
+        <div className="font-display font-bold">Webhook HMAC secrets</div>
+      </div>
+      <p className="text-xs text-[#A1A1AA] mb-3">Rotate per-provider secrets. When set, all incoming webhooks MUST include a valid X-Shopify-Hmac-Sha256 / X-WC-Webhook-Signature header.</p>
+        {["shopify", "woocommerce"].map((p) => (
+        <div key={p} className="flex items-center justify-between p-3 rounded-md bg-[#0A0A0A] border border-[#27272A] mb-2" data-testid={`secret-row-${p}`}>
+          <div>
+            <div className="text-sm font-medium">{p === "woocommerce" ? "WooCommerce" : "Shopify"}</div>
+            <div className="text-xs text-[#71717A] font-mono mt-0.5">
+              {state[p]?.configured ? `${state[p].preview} · rotated ${(state[p].rotated_at || '').slice(0, 10)}` : "Not configured — unsigned webhooks allowed"}
+            </div>
+            {fresh[p] && (
+              <div className="mt-2 text-[11px] font-mono bg-[#CCFF00]/5 border border-[#CCFF00]/30 rounded p-2 break-all" data-testid={`fresh-secret-${p}`}>
+                {fresh[p]}
+                <button className="ml-2 text-[#CCFF00] hover:underline" onClick={() => { navigator.clipboard.writeText(fresh[p]).catch(() => {}); toast.success("Copied"); }}>copy</button>
+              </div>
+            )}
+          </div>
+          <Button data-testid={`rotate-${p}`} onClick={() => rotate(p)} disabled={rotating === p} className="btn-ghost rounded-md gap-1 text-xs">
+            {rotating === p ? <Loader2 className="w-3.5 h-3.5 spin" /> : <RefreshCw className="w-3.5 h-3.5" />} {state[p]?.configured ? "Rotate" : "Generate"}
+          </Button>
+        </div>
+      ))}
     </div>
   );
 }
@@ -71,6 +117,7 @@ export default function Integrations() {
       </div>
 
       <h2 className="font-display font-bold text-lg mb-3">Commerce connectors</h2>
+      <PosSecrets />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8">
         {pos && ["shopify", "woocommerce"].map((k) => {
           const p = pos[k];
