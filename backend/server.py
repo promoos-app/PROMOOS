@@ -14,6 +14,7 @@ import uuid, logging, jwt, bcrypt, io, base64, json, random, string, re, asyncio
 from datetime import datetime, timezone, timedelta
 import qrcode
 import resend
+from twilio.rest import Client as TwilioClient
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -26,6 +27,13 @@ RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
+
+TWILIO_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
+TWILIO_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
+TWILIO_FROM_SMS = os.environ.get('TWILIO_FROM_SMS', '')
+TWILIO_FROM_WHATSAPP = os.environ.get('TWILIO_FROM_WHATSAPP', '')
+twilio_client = TwilioClient(TWILIO_SID, TWILIO_TOKEN) if (TWILIO_SID and TWILIO_TOKEN) else None
+PUBLIC_APP_URL = os.environ.get('PUBLIC_APP_URL', '').rstrip('/')
 
 app = FastAPI()
 api = APIRouter(prefix="/api")
@@ -156,6 +164,28 @@ class SendCouponEmailIn(BaseModel):
     to: List[EmailStr]
     subject: Optional[str] = None
     landing_url: Optional[str] = None
+
+
+class SendCouponMessageIn(BaseModel):
+    to: List[str]                # E.164 phone numbers
+    channel: str = "sms"         # "sms" or "whatsapp"
+    landing_url: Optional[str] = None
+
+
+class ExperimentCreateIn(BaseModel):
+    n: int = 3
+    prompt: Optional[str] = None
+    use_ai: bool = True
+
+
+class ExperimentPromoteIn(BaseModel):
+    variant_id: Optional[str] = None   # if None, auto-pick highest redemption rate
+
+
+class LoyaltyConfigIn(BaseModel):
+    enabled: bool = True
+    points_per_dollar: float = 1.0
+    tiers: List[dict] = []              # [{"name":"Bronze","threshold":0}, ...]
 
 
 # ---------------- QR ----------------
@@ -575,7 +605,8 @@ def _coupon_public_payload(c: dict, ws: dict) -> dict:
 
 
 @api.get("/public/coupons/{code}")
-async def public_coupon(code: str, ref: Optional[str] = None):
+async def public_coupon(code: str, ref: Optional[str] = None, v: Optional[str] = None,
+                        request: Request = None):
     code_u = code.upper()
     c = await db.coupons.find_one({"$or": [{"code": code_u}, {"codes": code_u}]}, {"_id": 0})
     if not c or c["state"] in ("draft", "archived"):
@@ -587,7 +618,27 @@ async def public_coupon(code: str, ref: Optional[str] = None):
         await db.referral_visits.insert_one({
             "id": str(uuid.uuid4()), "coupon_id": c["id"], "ref": ref,
             "created_at": now_iso()})
-    return _coupon_public_payload(c, ws)
+    payload = _coupon_public_payload(c, ws)
+    # A/B experiment: pick a variant and overlay copy
+    exp = await db.experiments.find_one(
+        {"coupon_id": c["id"], "status": "running"}, {"_id": 0})
+    if exp and exp.get("variants"):
+        variant = None
+        if v:
+            variant = next((x for x in exp["variants"] if x["id"] == v), None)
+        if not variant:
+            seed = (ref or (request.client.host if request and request.client else "anon") + "_" + code_u)
+            variant = _pick_variant(exp, seed)
+        if variant:
+            payload["headline"] = variant.get("headline") or payload["headline"]
+            payload["description"] = variant.get("description") or payload["description"]
+            payload["cta"] = variant.get("cta") or payload["cta"]
+            payload["variant_id"] = variant["id"]
+            payload["experiment_id"] = exp["id"]
+            await db.experiments.update_one(
+                {"id": exp["id"], "variants.id": variant["id"]},
+                {"$inc": {"variants.$.impressions": 1}})
+    return payload
 
 
 class PublicRedeemIn(BaseModel):
@@ -595,6 +646,7 @@ class PublicRedeemIn(BaseModel):
     amount: float = 0
     customer: Optional[str] = None
     ref: Optional[str] = None
+    variant_id: Optional[str] = None
 
 
 @api.post("/public/coupons/redeem")
@@ -638,13 +690,39 @@ async def public_redeem(body: PublicRedeemIn):
         "id": str(uuid.uuid4()), "workspace_id": c["workspace_id"], "coupon_id": c["id"],
         "code": code, "customer": customer, "amount": body.amount,
         "discount": discount, "revenue": rev, "ref": body.ref,
-        "source": "public", "created_at": now_iso()})
+        "variant_id": body.variant_id, "source": "public", "created_at": now_iso()})
     inc = {"stats.redemptions": 1, "stats.revenue": rev}
     if referral_credit:
         inc["stats.referral_credit"] = referral_credit
     await db.coupons.update_one({"id": c["id"]}, {"$inc": inc})
+    # A/B: increment variant redemption + revenue
+    if body.variant_id:
+        await db.experiments.update_one(
+            {"coupon_id": c["id"], "status": "running", "variants.id": body.variant_id},
+            {"$inc": {"variants.$.redemptions": 1, "variants.$.revenue": rev}})
+    # Loyalty: credit points to customer
+    ws = await db.workspaces.find_one({"id": c["workspace_id"]}, {"_id": 0}) or {}
+    loyalty_awarded = 0.0
+    loyalty = ws.get("loyalty") or {}
+    if loyalty.get("enabled") and customer and customer != "guest":
+        ppd = float(loyalty.get("points_per_dollar", 1.0))
+        loyalty_awarded = round(rev * ppd, 2)
+        member = await db.loyalty_members.find_one(
+            {"workspace_id": c["workspace_id"], "customer": customer})
+        new_points = round((member["points"] if member else 0) + loyalty_awarded, 2)
+        new_lifetime = round((member["lifetime_points"] if member else 0) + loyalty_awarded, 2)
+        tier = _tier_for(new_lifetime, loyalty.get("tiers") or DEFAULT_TIERS)
+        await db.loyalty_members.update_one(
+            {"workspace_id": c["workspace_id"], "customer": customer},
+            {"$set": {
+                "workspace_id": c["workspace_id"], "customer": customer,
+                "points": new_points, "lifetime_points": new_lifetime,
+                "tier": tier, "last_activity": now_iso(),
+             }, "$setOnInsert": {"created_at": now_iso(), "id": str(uuid.uuid4())}},
+            upsert=True)
     return {"ok": True, "discount": discount, "revenue": rev,
-            "referral_credit": referral_credit}
+            "referral_credit": referral_credit,
+            "loyalty_points_awarded": loyalty_awarded}
 
 
 # ---------------- Referrals (auth) ----------------
@@ -722,6 +800,241 @@ async def embed_js(request: Request):
 """.strip()
     return Response(content=js, media_type="application/javascript",
                     headers={"Cache-Control": "public, max-age=60"})
+
+
+# ---------------- SMS / WhatsApp (Twilio) ----------------
+def _short_msg(coupon: dict, brand_name: str, landing_url: str, channel: str) -> str:
+    hl = coupon.get("headline") or coupon.get("name") or "A gift for you"
+    code = coupon.get("code", "")
+    dv = coupon.get("discount_value", 0)
+    prefix = f"{brand_name}: " if brand_name else ""
+    body = f"{prefix}{hl} — {dv}% off. Code: {code}. "
+    if landing_url:
+        body += f"Redeem: {landing_url}"
+    return body[:1550] if channel == "whatsapp" else body[:320]
+
+
+async def _twilio_send_one(to: str, body: str, channel: str) -> str:
+    if channel == "whatsapp":
+        return await asyncio.to_thread(
+            lambda: twilio_client.messages.create(
+                from_=f"whatsapp:{TWILIO_FROM_WHATSAPP}",
+                to=f"whatsapp:{to}", body=body).sid)
+    return await asyncio.to_thread(
+        lambda: twilio_client.messages.create(
+            from_=TWILIO_FROM_SMS, to=to, body=body).sid)
+
+
+@api.post("/coupons/{cid}/send-message")
+async def send_coupon_message(cid: str, body: SendCouponMessageIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    channel = body.channel.lower()
+    if channel not in ("sms", "whatsapp"):
+        raise HTTPException(400, "channel must be 'sms' or 'whatsapp'")
+    if not twilio_client:
+        raise HTTPException(400, "SMS/WhatsApp not configured. Add TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN to backend/.env")
+    if channel == "sms" and not TWILIO_FROM_SMS:
+        raise HTTPException(400, "TWILIO_FROM_SMS not set")
+    if channel == "whatsapp" and not TWILIO_FROM_WHATSAPP:
+        raise HTTPException(400, "TWILIO_FROM_WHATSAPP not set")
+    c = await db.coupons.find_one({"id": cid, "workspace_id": user["workspace_id"]}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Coupon not found")
+    ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0}) or {}
+    landing = body.landing_url or (f"{PUBLIC_APP_URL}/c/{c['code']}" if PUBLIC_APP_URL else "")
+    text = _short_msg(c, ws.get("name", ""), landing, channel)
+    sids: List[str] = []
+    failures: List[str] = []
+    for to in body.to:
+        try:
+            sid = await _twilio_send_one(to, text, channel)
+            sids.append(sid)
+        except Exception as e:
+            failures.append(f"{to}: {e}")
+    if not sids:
+        raise HTTPException(502, "; ".join(failures) or "All messages failed")
+    await db.message_events.insert_one({
+        "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"], "coupon_id": cid,
+        "channel": channel, "to": body.to, "body": text, "sids": sids,
+        "failures": failures, "created_at": now_iso()})
+    return {"ok": True, "channel": channel, "sent": sids, "failures": failures}
+
+
+# ---------------- A/B Testing ----------------
+def _pick_variant(experiment: dict, seed: str) -> dict:
+    variants = experiment.get("variants", [])
+    if not variants:
+        return {}
+    # deterministic bucket by hashing seed → variant index
+    idx = sum(ord(ch) for ch in seed) % len(variants)
+    return variants[idx]
+
+
+@api.post("/coupons/{cid}/experiments")
+async def create_experiment(cid: str, body: ExperimentCreateIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    c = await db.coupons.find_one({"id": cid, "workspace_id": user["workspace_id"]}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Coupon not found")
+    n = max(2, min(int(body.n or 3), 5))
+    variants: List[dict] = []
+    if body.use_ai:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        system = (
+            "You are a promotional copy A/B test generator. Produce a JSON array of exactly "
+            f"{n} variants for a coupon campaign. Each variant is an object with keys: "
+            "headline (max 8 words, distinct angle), description (1-2 sentences), cta (max 4 words). "
+            "Vary the emotional angle across variants (urgency, curiosity, value, social proof, "
+            "aspirational). Respond with ONLY the JSON array.")
+        prompt = body.prompt or (
+            f"Base coupon: name='{c.get('name')}' headline='{c.get('headline')}' "
+            f"description='{c.get('description')}' discount={c.get('discount_value')}% "
+            f"type={c.get('type')}. Generate {n} bold headline/description/CTA variants.")
+        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"ab-{uuid.uuid4()}",
+                       system_message=system).with_model("anthropic", "claude-sonnet-5")
+        try:
+            resp = await chat.send_message(UserMessage(text=prompt))
+        except Exception as e:
+            logger.exception("AI variants failed")
+            raise HTTPException(502, f"AI variant generation failed: {e}")
+        text = resp if isinstance(resp, str) else str(resp)
+        m = re.search(r"\[.*\]", text, re.DOTALL)
+        try:
+            arr = json.loads(m.group(0)) if m else []
+        except Exception:
+            arr = []
+        for v in arr[:n]:
+            if not isinstance(v, dict):
+                continue
+            variants.append({
+                "id": str(uuid.uuid4())[:8],
+                "headline": str(v.get("headline", ""))[:120],
+                "description": str(v.get("description", ""))[:400],
+                "cta": str(v.get("cta", "Claim Offer"))[:40],
+                "impressions": 0, "redemptions": 0, "revenue": 0.0,
+            })
+    if not variants:
+        # Fallback / manual placeholders
+        for i in range(n):
+            variants.append({
+                "id": str(uuid.uuid4())[:8],
+                "headline": c.get("headline", "Great offer") + (f" (v{i+1})" if i else ""),
+                "description": c.get("description", ""),
+                "cta": c.get("cta", "Claim Offer"),
+                "impressions": 0, "redemptions": 0, "revenue": 0.0,
+            })
+    exp = {
+        "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"], "coupon_id": cid,
+        "status": "running", "variants": variants, "winner_variant_id": None,
+        "created_at": now_iso(),
+    }
+    await db.experiments.insert_one({**exp})
+    # Only one active experiment per coupon
+    await db.experiments.update_many(
+        {"coupon_id": cid, "id": {"$ne": exp["id"]}, "status": "running"},
+        {"$set": {"status": "archived"}})
+    return {k: v for k, v in exp.items() if k != "_id"}
+
+
+@api.get("/coupons/{cid}/experiments")
+async def list_experiments(cid: str, user: dict = Depends(get_current_user)):
+    docs = await db.experiments.find(
+        {"coupon_id": cid, "workspace_id": user["workspace_id"]},
+        {"_id": 0}).sort("created_at", -1).to_list(50)
+    for d in docs:
+        for v in d.get("variants", []):
+            imp = v.get("impressions", 0) or 0
+            v["cvr"] = round((v.get("redemptions", 0) / imp * 100), 2) if imp else 0.0
+    return docs
+
+
+@api.post("/experiments/{eid}/promote")
+async def promote_experiment(eid: str, body: ExperimentPromoteIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    exp = await db.experiments.find_one({"id": eid, "workspace_id": user["workspace_id"]}, {"_id": 0})
+    if not exp:
+        raise HTTPException(404, "Experiment not found")
+    variants = exp.get("variants", [])
+    if not variants:
+        raise HTTPException(400, "No variants")
+    if body.variant_id:
+        winner = next((v for v in variants if v["id"] == body.variant_id), None)
+    else:
+        def rate(v):
+            imp = v.get("impressions", 0) or 0
+            return (v.get("redemptions", 0) / imp) if imp else 0
+        total_imp = sum(v.get("impressions", 0) or 0 for v in variants)
+        if total_imp == 0:
+            # No traffic yet — fall back to redemption count, then revenue.
+            winner = max(variants, key=lambda v: (v.get("redemptions", 0), v.get("revenue", 0)))
+        else:
+            winner = max(variants, key=rate)
+    if not winner:
+        raise HTTPException(400, "Variant not found")
+    await db.coupons.update_one(
+        {"id": exp["coupon_id"], "workspace_id": user["workspace_id"]},
+        {"$set": {"headline": winner["headline"], "description": winner["description"],
+                  "cta": winner["cta"], "updated_at": now_iso()}})
+    await db.experiments.update_one(
+        {"id": eid}, {"$set": {"status": "complete", "winner_variant_id": winner["id"],
+                               "completed_at": now_iso()}})
+    return {"ok": True, "winner": winner}
+
+
+# ---------------- Loyalty ----------------
+DEFAULT_TIERS = [
+    {"name": "Bronze", "threshold": 0},
+    {"name": "Silver", "threshold": 500},
+    {"name": "Gold", "threshold": 2000},
+    {"name": "Platinum", "threshold": 5000},
+]
+
+
+def _tier_for(points: float, tiers: List[dict]) -> str:
+    t = sorted(tiers or DEFAULT_TIERS, key=lambda x: x.get("threshold", 0))
+    name = t[0]["name"] if t else "Bronze"
+    for tier in t:
+        if points >= tier.get("threshold", 0):
+            name = tier["name"]
+    return name
+
+
+@api.put("/workspace/loyalty")
+async def update_loyalty_config(body: LoyaltyConfigIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    tiers = body.tiers or DEFAULT_TIERS
+    await db.workspaces.update_one(
+        {"id": user["workspace_id"]},
+        {"$set": {
+            "loyalty.enabled": body.enabled,
+            "loyalty.points_per_dollar": float(body.points_per_dollar),
+            "loyalty.tiers": tiers,
+            "updated_at": now_iso()}})
+    return {"ok": True}
+
+
+@api.get("/loyalty")
+async def loyalty_members(user: dict = Depends(get_current_user)):
+    ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0}) or {}
+    loyalty = ws.get("loyalty", {}) or {}
+    members = await db.loyalty_members.find(
+        {"workspace_id": user["workspace_id"]},
+        {"_id": 0}).sort("points", -1).to_list(500)
+    total_points = sum(m.get("points", 0) for m in members)
+    by_tier: Dict[str, int] = {}
+    for m in members:
+        by_tier[m.get("tier", "Bronze")] = by_tier.get(m.get("tier", "Bronze"), 0) + 1
+    return {
+        "config": {
+            "enabled": bool(loyalty.get("enabled", False)),
+            "points_per_dollar": float(loyalty.get("points_per_dollar", 1.0)),
+            "tiers": loyalty.get("tiers") or DEFAULT_TIERS,
+        },
+        "total_members": len(members),
+        "total_points": round(total_points, 2),
+        "by_tier": by_tier,
+        "members": members[:200],
+    }
 
 
 app.include_router(api)

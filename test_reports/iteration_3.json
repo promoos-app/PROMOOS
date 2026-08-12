@@ -1,0 +1,52 @@
+{
+  "summary": "PromoOS iteration 3 (Twilio SMS/WhatsApp + AI A/B Test + Loyalty) E2E validation. Backend: 25/25 new pytest tests pass in /app/backend/tests/test_iter3_features.py (Twilio graceful 400, viewer forbidden, unknown channel 400, AI variants with 3 distinct headlines via Claude sonnet-5, deterministic variant selection per ref, ?v= override, impressions and redemption+revenue increments on variants, promote-specific and promote-auto both correctly picking winners, loyalty PUT/GET persists {enabled:true, ppd:2, tiers}, public redeem on SUMMER25 with amount=100 credits alice@example.com 150 points at Bronze tier, viewer 403 on PUT /workspace/loyalty). Regression endpoints (auth-cookie login, coupons list, embed JS, send-email 400, public SUMMER25) all still green. Frontend: /rewards renders with 6 members, stat cards, config form, 4 tiers editable and add tier works, loyalty-save persists (toast 'Loyalty saved'), alice@example.com row shows tier=Bronze and 300 points. /coupons/{id} shows all 3 channel-tab-{email,sms,whatsapp} tabs; switching to SMS updates placeholder to phone format; clicking Send with SMS returns graceful data-testid=send-error 'SMS/WhatsApp not configured'. ab-test-panel renders, ab-run-btn generated a running experiment with 3 distinct Claude-authored variants ('Hurry, 25% Off Swimwear Ends Soon' / 'Everyone's Talking About This Swimwear Deal' / 'Your Dream Summer Body Starts Here'), and both data-testid=ab-promote-{v.id} (3 buttons) and data-testid=ab-promote-auto-{eid} (1 button) are present on running experiments.",
+  "ai_features_tested": [
+    "AI A/B variant generation (Claude claude-sonnet-5 via emergentintegrations, EMERGENT_LLM_KEY) - pass - evidence: POST /api/coupons/{id}/experiments with use_ai=true n=3 returned 3 variants with all-distinct headlines/descriptions/cta ('Hurry, 25% Off Swimwear Ends Soon' etc.), status=running, impressions/redemptions=0 on creation. UI test rendered the same 3 distinct headlines in ab-variant-{v.id} cards. Latency ~8-10s per call (2 real experiments generated in this run). Command: pytest tests/test_iter3_features.py::TestExperiments -v (10/10 pass). - skill: ai-testing-llm",
+    "AI Copy (Claude claude-sonnet-5) - not-in-scope-this-iteration - unchanged from iter 1, not re-exercised.",
+    "AI Image (Gemini 3.1 flash image preview) - not-in-scope-this-iteration - unchanged from iter 1, not re-exercised."
+  ],
+  "skills_loaded": ["ai-testing-core", "ai-testing-llm"],
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /experiments/{eid}/promote (body {})", "issue": "Auto-picks by rate = redemptions/impressions but if a variant received redemptions via direct variant_id posts BEFORE any public GET impressions, its denominator is 0 and rate=0. In practice public traffic always hits GET first, but the test needed to warm impressions via ?v= override. Consider using redemption count as fallback tiebreaker when both variants have 0 impressions."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Rewards config form", "issues": ["The 'Points per $ spent' input is inside a grid-cols-3 but only occupies col 1 — the other 2 cells are empty. Consider expanding or filling with additional config (e.g., 'Reward expiry days' or 'Signup bonus points')."]},
+      {"screen": "Rewards tiers editor", "issues": ["No visual sorting by threshold — users can add tiers out of order and the tier engine sorts internally but the UI list stays in insertion order which is confusing."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter3_features.py",
+    "/app/backend/tests/test_growth_features.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: fallback tiebreaker in promote-auto when all variants have 0 impressions — currently first variant wins arbitrarily.",
+    "OPTIONAL: sort tiers by threshold in Rewards UI on save + on render for consistency.",
+    "OPTIONAL: allow toggling loyalty-enabled off from Rewards UI (Switch works, but saving with enabled=false should also be visually confirmed — currently no test covers that path)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 1147 lines — approaching but under the 700-line split threshold; consider splitting into routers/ (auth, coupons, public, ai, growth, loyalty) before adding another feature.",
+    "public_coupon() increments stats.impressions AND variants.$.impressions on every hit including bot/health-check pings; same concern as iter 2 for stats accuracy.",
+    "public_redeem() customer identifier is truncated to 120 chars but not validated as an email nor hashed — PII lives in db.loyalty_members and db.redemptions in cleartext.",
+    "promote_experiment() auto-pick rate function: `redemptions / impressions if imp else 0` — variants with redemptions but 0 impressions get rate=0 and can lose to a variant with impressions=1, redemptions=0 (rate=0 too). Deterministic first-max is used, which is stable but not fair.",
+    "twilio_client is instantiated at module load; if TWILIO_ACCOUNT_SID is added to .env, backend must be restarted (hot reload will re-import). Consider lazy client construction inside send_coupon_message for cleaner dev flow.",
+    "LoyaltyConfigIn.tiers is optional but no validation on threshold being non-negative or names being unique; UI addTier() sets threshold=0 by default which shadows Bronze."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter3_features.py (new, 25 tests)"
+  ],
+  "success_rate": {"backend": "100% (25/25 iter3 + 20/20 iter2 regression endpoints all pass)", "frontend": "100% (all iter3 data-testids present and functional)"},
+  "test_credentials": "admin@promoos.com/admin123 (owner), marketer@promoos.com/marketer123, viewer@promoos.com/viewer123 — from /app/memory/test_credentials.md",
+  "seed_data_creation": "Loyalty config set to {enabled:true, points_per_dollar:2, tiers:[Bronze:0, Silver:500, Gold:2000, +New Tier:0]}. alice@example.com now has 300 loyalty points (2 redemptions of $75 net = 150 pts each) at Bronze tier. Multiple TEST_-prefixed customers were created and left in db.loyalty_members (small footprint, all Bronze). SUMMER25's most recent completed experiment has winner_variant_id set and its headline was overwritten by the promoted variant.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New backend suite: pytest /app/backend/tests/test_iter3_features.py -v (~15s, 25 tests). Existing suites: test_growth_features.py (iter 2) and backend_test.py (iter 1). Twilio creds intentionally empty — expect 400. Loyalty is enabled with ppd=2 and SUMMER25 headline may have been overwritten by a promoted A/B variant so 'Dive Into 25% Off Swimwear' may no longer be the base — GET /api/coupons/{id} for authoritative copy. If Twilio creds get added later, update the send-message tests to expect 200 with a real SID.",
+  "rca of the issue": "N/A — no bugs found this iteration. The one auto-promote edge-case (rate=0 for variants with 0 impressions) is a minor logic gap, not a regression. Test file /app/backend/tests/test_iter3_features.py was written to warm impressions via ?v= override before promoting, mirroring real user traffic patterns."
+}

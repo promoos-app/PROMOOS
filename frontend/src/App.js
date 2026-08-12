@@ -13,6 +13,7 @@ import Analytics from "@/pages/Analytics";
 import Settings from "@/pages/Settings";
 import Placeholder from "@/pages/Placeholder";
 import PublicCoupon from "@/pages/PublicCoupon";
+import Rewards from "@/pages/Rewards";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -43,7 +44,7 @@ function App() {
             <Route path="settings" element={<Settings />} />
             <Route path="campaigns" element={<Placeholder title="Campaigns" />} />
             <Route path="customers" element={<Placeholder title="Customers" />} />
-            <Route path="rewards" element={<Placeholder title="Rewards" />} />
+            <Route path="rewards" element={<Rewards />} />
             <Route path="design" element={<Placeholder title="Design Studio" />} />
             <Route path="integrations" element={<Placeholder title="Integrations" />} />
           </Route>
