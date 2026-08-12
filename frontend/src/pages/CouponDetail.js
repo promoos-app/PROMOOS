@@ -1,11 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { STATE_STYLES, TYPE_LABELS, discountText } from "@/lib/couponUtils";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Loader2, Download, RefreshCw, Zap } from "lucide-react";
+import { ArrowLeft, Loader2, Download, RefreshCw, Zap, Mail } from "lucide-react";
 
 function Stat({ label, value }) {
   return (
@@ -26,9 +26,14 @@ export default function CouponDetail() {
   const [redeemAmt, setRedeemAmt] = useState(80);
   const [redeemResult, setRedeemResult] = useState(null);
   const [redeemError, setRedeemError] = useState("");
+  const [emailTo, setEmailTo] = useState("");
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailResult, setEmailResult] = useState(null);
 
-  const load = () => api.get(`/coupons/${id}`).then((r) => setC(r.data)).catch((e) => toast.error(apiError(e)));
-  useEffect(() => { load(); }, [id]);
+  const load = useCallback(() => {
+    api.get(`/coupons/${id}`).then((r) => setC(r.data)).catch((e) => toast.error(apiError(e)));
+  }, [id]);
+  useEffect(() => { load(); }, [load]);
 
   if (!c) return <div className="text-[#71717A]">Loading…</div>;
 
@@ -55,6 +60,24 @@ export default function CouponDetail() {
   const downloadQR = () => {
     const a = document.createElement("a");
     a.href = c.qr_code; a.download = `${c.code}-qr.png`; a.click();
+  };
+
+  const sendEmail = async () => {
+    const list = emailTo.split(",").map((s) => s.trim()).filter(Boolean);
+    if (list.length === 0) { toast.error("Enter at least one email"); return; }
+    setEmailBusy(true); setEmailResult(null);
+    try {
+      const { data } = await api.post(`/coupons/${id}/send-email`, {
+        to: list,
+        landing_url: window.location.origin,
+      });
+      setEmailResult({ ok: true, ids: data.sent_to });
+      toast.success(`Sent to ${data.sent_to.length} recipient(s)`);
+    } catch (e) {
+      const m = apiError(e);
+      setEmailResult({ ok: false, msg: m });
+      toast.error(m);
+    } finally { setEmailBusy(false); }
   };
 
   return (
@@ -135,6 +158,38 @@ export default function CouponDetail() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Send by email */}
+      <div className="surface rounded-lg p-6 mt-6">
+        <div className="flex items-center gap-2 mb-1">
+          <Mail className="w-4 h-4 text-[#CCFF00]" />
+          <h3 className="font-display font-bold">Send by Email</h3>
+        </div>
+        <p className="text-xs text-[#71717A] mb-3">Deliver this coupon as a branded transactional email via Resend. Comma-separate multiple recipients.</p>
+        <div className="flex gap-2 flex-col sm:flex-row">
+          <Input
+            data-testid="email-to-input"
+            type="text"
+            placeholder="customer@example.com, another@example.com"
+            value={emailTo}
+            onChange={(e) => setEmailTo(e.target.value)}
+            className="bg-[#0A0A0A] border-[#27272A] text-white flex-1"
+          />
+          <Button data-testid="send-email-btn" onClick={sendEmail} disabled={emailBusy} className="btn-primary rounded-md gap-2 shrink-0">
+            {emailBusy ? <Loader2 className="w-4 h-4 spin" /> : <Mail className="w-4 h-4" />} Send
+          </Button>
+        </div>
+        {emailResult?.ok && (
+          <div data-testid="email-result" className="mt-3 p-3 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-sm text-emerald-400">
+            Delivered to {emailResult.ids.join(", ")}
+          </div>
+        )}
+        {emailResult && !emailResult.ok && (
+          <div data-testid="email-error" className="mt-3 p-3 rounded-md bg-red-500/10 border border-red-500/20 text-sm text-red-400">
+            {emailResult.msg}
+          </div>
+        )}
       </div>
     </div>
   );

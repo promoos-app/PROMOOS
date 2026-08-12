@@ -398,14 +398,21 @@ class TestRequestedContract:
 
 
 class TestAuthSecurityPlaybook:
-    def test_login_sets_httponly_cookie(self):
+    def test_login_sets_httponly_auth_cookie(self):
         response = requests.post(
             f"{API}/auth/login",
             json={"email": OWNER_EMAIL, "password": OWNER_PW}, timeout=15)
         assert response.status_code == 200
-        set_cookie = response.headers.get("set-cookie", "")
-        assert set_cookie, "Login did not set an authentication cookie"
-        assert "httponly" in set_cookie.lower()
+        token = response.json()["token"]
+        # Ignore infrastructure bot-management cookies; require an app auth cookie.
+        auth_cookies = {
+            cookie.name: cookie
+            for cookie in response.cookies
+            if cookie.name.lower() not in {"__cf_bm", "cf_clearance"}
+        }
+        assert auth_cookies, "Login did not set an application authentication cookie"
+        assert any(cookie.value == token for cookie in auth_cookies.values())
+        assert any(cookie.has_nonstandard_attr("HttpOnly") for cookie in auth_cookies.values())
 
     def test_cors_uses_explicit_origin_with_credentials(self):
         origin = "https://qa-origin.example.com"
@@ -430,3 +437,15 @@ class TestAuthSecurityPlaybook:
             f"{API}/auth/login",
             json={"email": MARKETER_EMAIL, "password": MARKETER_PW}, timeout=15)
         assert locked.status_code == 429, "Account accepted valid login immediately after five failures"
+
+    def test_seeded_password_hash_uses_bcrypt_2b(self):
+        try:
+            from pymongo import MongoClient
+        except ImportError:
+            pytest.fail("pymongo is unavailable for bcrypt seed verification")
+        backend_env = dotenv_values("/app/backend/.env")
+        mongo = MongoClient(backend_env["MONGO_URL"])
+        user = mongo[backend_env["DB_NAME"]].users.find_one({"email": OWNER_EMAIL})
+        mongo.close()
+        assert user is not None
+        assert user["password_hash"].startswith("$2b$")

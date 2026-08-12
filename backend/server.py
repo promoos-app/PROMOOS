@@ -5,14 +5,15 @@ import os
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
-import uuid, logging, jwt, bcrypt, io, base64, json, random, string, re
+import uuid, logging, jwt, bcrypt, io, base64, json, random, string, re, asyncio
 from datetime import datetime, timezone, timedelta
 import qrcode
+import resend
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -21,6 +22,10 @@ db = client[os.environ['DB_NAME']]
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGO = "HS256"
 EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
+RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
 
 app = FastAPI()
 api = APIRouter(prefix="/api")
@@ -145,6 +150,12 @@ class AIImageIn(BaseModel):
     prompt: str
 
 
+class SendCouponEmailIn(BaseModel):
+    to: List[EmailStr]
+    subject: Optional[str] = None
+    landing_url: Optional[str] = None
+
+
 # ---------------- QR ----------------
 def gen_qr(data: str) -> str:
     qr = qrcode.QRCode(version=1, box_size=8, border=2)
@@ -184,12 +195,22 @@ async def register(body: RegisterIn):
 
 
 @api.post("/auth/login")
-async def login(body: LoginIn):
+async def login(body: LoginIn, request: Request, response: Response):
     email = body.email.lower()
+    # Brute-force lockout: 5 failed attempts in last 15 min => 429 (locked by email)
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+    fails = await db.login_attempts.count_documents({"identifier": email, "created_at": {"$gt": cutoff}})
+    if fails >= 5:
+        raise HTTPException(429, "Too many failed attempts. Try again in 15 minutes.")
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user["password_hash"]):
+        await db.login_attempts.insert_one({"identifier": email, "created_at": now_iso()})
         raise HTTPException(401, "Invalid email or password")
+    await db.login_attempts.delete_many({"identifier": email})
     token = create_token(user["id"], email)
+    response.set_cookie(
+        key="access_token", value=token, httponly=True, secure=True,
+        samesite="none", max_age=7 * 24 * 3600, path="/")
     return {"token": token, "user": {k: user[k] for k in ("id", "name", "email", "role", "workspace_id")}}
 
 
@@ -462,12 +483,93 @@ async def ai_image(body: AIImageIn, user: dict = Depends(get_current_user)):
     return {"image_url": f"data:{img['mime_type']};base64,{img['data']}"}
 
 
+# ---------------- Email ----------------
+def render_coupon_email(coupon: dict, brand: dict, landing_url: str) -> str:
+    primary = brand.get("primary_color") or "#005CEE"
+    secondary = brand.get("secondary_color") or "#CCFF00"
+    brand_name = brand.get("name") or "PromoOS"
+    code = coupon.get("code", "")
+    headline = coupon.get("headline") or coupon.get("name") or "A gift for you"
+    description = coupon.get("description") or ""
+    cta = coupon.get("cta") or "Claim Offer"
+    terms = coupon.get("terms") or ""
+    hero = coupon.get("image_url") or ""
+    hero_html = (f'<tr><td style="padding:0"><img src="{hero}" alt="" '
+                 f'style="display:block;width:100%;max-width:600px;border-radius:8px"/></td></tr>'
+                 if hero.startswith("http") else "")
+    return f"""
+<!doctype html>
+<html><body style="margin:0;padding:0;background:#0A0A0A;font-family:Helvetica,Arial,sans-serif;color:#0A0A0A">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0A0A0A;padding:24px 0">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#FFFFFF;border-radius:12px;overflow:hidden">
+        <tr><td style="padding:20px 28px;background:{primary};color:#FFFFFF;font-weight:700;font-size:14px;letter-spacing:1px;text-transform:uppercase">{brand_name}</td></tr>
+        {hero_html}
+        <tr><td style="padding:32px 28px 8px 28px">
+          <h1 style="margin:0 0 12px 0;font-size:28px;line-height:1.15;color:#0A0A0A">{headline}</h1>
+          <p style="margin:0 0 20px 0;font-size:15px;line-height:1.55;color:#3F3F46">{description}</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 20px 0">
+            <tr>
+              <td style="padding:14px 18px;border:2px dashed {primary};border-radius:8px;font-family:'Courier New',monospace;font-size:20px;font-weight:700;color:{primary};letter-spacing:2px">{code}</td>
+            </tr>
+          </table>
+          <a href="{landing_url or '#'}" style="display:inline-block;background:{primary};color:#FFFFFF;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:700;font-size:15px">{cta}</a>
+        </td></tr>
+        <tr><td style="padding:16px 28px 28px 28px">
+          <p style="margin:0;font-size:11px;line-height:1.5;color:#71717A">{terms}</p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;background:#FAFAFA;border-top:1px solid #E4E4E7;font-size:11px;color:#71717A">
+          Sent by {brand_name} via PromoOS
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>
+""".strip()
+
+
+@api.post("/coupons/{cid}/send-email")
+async def send_coupon_email(cid: str, body: SendCouponEmailIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    if not RESEND_API_KEY:
+        raise HTTPException(400, "Email not configured. Add RESEND_API_KEY to backend/.env")
+    c = await db.coupons.find_one({"id": cid, "workspace_id": user["workspace_id"]}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Coupon not found")
+    ws = await db.workspaces.find_one({"id": user["workspace_id"]}, {"_id": 0}) or {}
+    subject = body.subject or f"{c.get('headline') or c.get('name')} — use code {c.get('code')}"
+    html = render_coupon_email(c, ws, body.landing_url or "")
+    params = {"from": SENDER_EMAIL, "to": body.to, "subject": subject, "html": html}
+    try:
+        result = await asyncio.to_thread(resend.Emails.send, params)
+    except Exception as e:
+        logger.exception("Resend send failed")
+        raise HTTPException(502, f"Email send failed: {e}")
+    email_id = result.get("id") if isinstance(result, dict) else None
+    await db.email_events.insert_one({
+        "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"], "coupon_id": cid,
+        "to": body.to, "subject": subject, "resend_id": email_id, "created_at": now_iso()})
+    return {"ok": True, "email_id": email_id, "sent_to": body.to}
+
+
 app.include_router(api)
-app.add_middleware(
-    CORSMiddleware, allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"], allow_headers=["*"],
-)
+
+# CORS: reflect incoming Origin with credentials. Wildcard "*" is browser-rejected
+# alongside credentials, so we echo whichever Origin the request presents (or the
+# explicit list from CORS_ORIGINS when set to something other than "*").
+_cors_env = os.environ.get('CORS_ORIGINS', '*')
+if _cors_env.strip() == '*':
+    app.add_middleware(
+        CORSMiddleware, allow_credentials=True,
+        allow_origin_regex=".*",
+        allow_methods=["*"], allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware, allow_credentials=True,
+        allow_origins=_cors_env.split(','),
+        allow_methods=["*"], allow_headers=["*"],
+    )
 
 
 # ---------------- Seed ----------------
@@ -553,6 +655,7 @@ async def seed():
 @app.on_event("startup")
 async def startup():
     try:
+        await db.login_attempts.create_index("identifier")
         await seed()
     except Exception as e:
         logger.error(f"Seed error: {e}")
