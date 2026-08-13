@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sparkles, Ticket, Bot, Wand2 } from "lucide-react";
+import Footer from "@/components/Footer";
 
 export default function Login() {
   const { login, register } = useAuth();
@@ -115,11 +116,13 @@ export default function Login() {
 
           {mode === "login" && (
             <div className="mt-6 p-3 rounded-md bg-[#141414] border border-[#27272A] text-xs text-[#A1A1AA]">
-              <span className="text-[#CCFF00]">Demo:</span> admin@promoos.com / admin123
+              <div><span className="text-[#CCFF00]">Owner:</span> admin@promoos.com / admin123</div>
+              <div><span className="text-[#CCFF00]">Superadmin:</span> superadmin@promoos.com / superadmin123</div>
             </div>
           )}
         </div>
       </div>
+      <div className="max-w-6xl mx-auto px-4 pb-6"><Footer compact /></div>
     </div>
   );
 }

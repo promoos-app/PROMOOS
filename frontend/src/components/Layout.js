@@ -1,10 +1,11 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import Footer from "@/components/Footer";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
 import api from "@/lib/api";
 import {
   LayoutDashboard, Ticket, Megaphone, Users, Gift, Palette,
-  BarChart3, Plug, Settings as SettingsIcon, Sparkles, LogOut, ChevronDown, CalendarDays, CreditCard,
+  BarChart3, Plug, Settings as SettingsIcon, Sparkles, LogOut, ChevronDown, CalendarDays, CreditCard, Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +15,7 @@ import {
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/coupons", label: "Coupons", icon: Ticket },
+  { to: "/library", label: "Library", icon: Sparkles },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/campaigns", label: "Campaigns", icon: Megaphone },
   { to: "/customers", label: "Customers", icon: Users },
@@ -23,6 +25,7 @@ const NAV = [
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/integrations", label: "Integrations", icon: Plug },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
+  { to: "/admin", label: "Admin", icon: Shield, superadmin: true },
 ];
 
 export default function Layout() {
@@ -45,12 +48,12 @@ export default function Layout() {
         </div>
 
         <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-0.5">
-          {NAV.map((n) => (
+          {NAV.filter((n) => !n.superadmin || user?.role === "superadmin").map((n) => (
             <NavLink
               key={n.to}
               to={n.to}
               end={n.end}
-              data-testid={`sidebar-${n.label.toLowerCase()}-link`}
+              data-testid={`sidebar-${n.label.toLowerCase().replace(/\s+/g, "-")}-link`}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
                   isActive
@@ -106,6 +109,7 @@ export default function Layout() {
 
         <main className="flex-1 overflow-y-auto p-6">
           <Outlet />
+          <Footer />
         </main>
       </div>
     </div>

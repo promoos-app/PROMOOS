@@ -10,7 +10,8 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
-import uuid, logging, jwt, bcrypt, io, base64, json, random, string, re, asyncio, secrets as _pysecrets
+import uuid, logging, jwt, bcrypt, io, base64, json, random, string, re, asyncio, secrets as _pysecrets, hashlib as _hashlib
+from cryptography.fernet import Fernet, InvalidToken
 from datetime import datetime, timezone, timedelta
 import qrcode
 import resend
@@ -25,6 +26,20 @@ db = client[os.environ['DB_NAME']]
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGO = "HS256"
 EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
+# Fernet key derived from JWT secret — deterministic across restarts, no external KMS needed.
+_FERNET = Fernet(base64.urlsafe_b64encode(_hashlib.sha256(
+    os.environ.get('JWT_SECRET', 'promoos').encode()).digest()))
+
+
+def encrypt_str(s: str) -> str:
+    return _FERNET.encrypt(s.encode()).decode()
+
+
+def decrypt_str(s: str) -> Optional[str]:
+    try:
+        return _FERNET.decrypt(s.encode()).decode()
+    except (InvalidToken, Exception):
+        return None
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 if RESEND_API_KEY:
@@ -240,6 +255,10 @@ async def login(body: LoginIn, request: Request, response: Response):
     if not user or not verify_password(body.password, user["password_hash"]):
         await db.login_attempts.insert_one({"identifier": email, "created_at": now_iso()})
         raise HTTPException(401, "Invalid email or password")
+    if user.get("deleted_at"):
+        raise HTTPException(403, "Account deleted")
+    if user.get("suspended"):
+        raise HTTPException(403, "Account suspended — contact your administrator")
     await db.login_attempts.delete_many({"identifier": email})
     token = create_token(user["id"], email)
     response.set_cookie(
@@ -2192,7 +2211,9 @@ async def shopify_webhook(workspace_id: str, request: Request):
     if not ws:
         raise HTTPException(404, "Workspace not found")
     raw = await request.body()
-    secret = (ws.get("webhook_secrets") or {}).get("shopify")
+    ws_secrets = ws.get("webhook_secrets") or {}
+    enc = ws_secrets.get("shopify")
+    secret = decrypt_str(enc) if enc else None
     if secret:
         if not _hmac_ok(secret, raw, request.headers.get("X-Shopify-Hmac-Sha256")):
             raise HTTPException(401, "Invalid HMAC signature")
@@ -2224,7 +2245,9 @@ async def woocommerce_webhook(workspace_id: str, request: Request):
     if not ws:
         raise HTTPException(404, "Workspace not found")
     raw = await request.body()
-    secret = (ws.get("webhook_secrets") or {}).get("woocommerce")
+    ws_secrets = ws.get("webhook_secrets") or {}
+    enc = ws_secrets.get("woocommerce")
+    secret = decrypt_str(enc) if enc else None
     if secret:
         if not _hmac_ok(secret, raw, request.headers.get("X-WC-Webhook-Signature")):
             raise HTTPException(401, "Invalid HMAC signature")
@@ -2261,11 +2284,275 @@ async def rotate_pos_secret(body: RotateSecretIn, user: dict = Depends(get_curre
     if body.provider not in ("shopify", "woocommerce"):
         raise HTTPException(400, "provider must be shopify or woocommerce")
     secret = "whsec_" + _pysecrets.token_urlsafe(30)
+    # Store ENCRYPTED at rest; only decrypt on webhook verification.
     await db.workspaces.update_one(
         {"id": user["workspace_id"]},
-        {"$set": {f"webhook_secrets.{body.provider}": secret,
-                  f"webhook_secrets.{body.provider}_rotated_at": now_iso()}})
+        {"$set": {f"webhook_secrets.{body.provider}": encrypt_str(secret),
+                  f"webhook_secrets.{body.provider}_rotated_at": now_iso(),
+                  f"webhook_secrets.{body.provider}_preview": secret[:14] + "…"}})
     return {"ok": True, "provider": body.provider, "secret": secret}
+
+
+@api.delete("/pos/secret/{provider}")
+async def clear_pos_secret(provider: str, user: dict = Depends(get_current_user)):
+    if user.get("role") != "owner":
+        raise HTTPException(403, "Only owners can clear webhook secrets")
+    if provider not in ("shopify", "woocommerce"):
+        raise HTTPException(400, "provider must be shopify or woocommerce")
+    await db.workspaces.update_one(
+        {"id": user["workspace_id"]},
+        {"$unset": {f"webhook_secrets.{provider}": "",
+                    f"webhook_secrets.{provider}_rotated_at": "",
+                    f"webhook_secrets.{provider}_preview": ""}})
+    return {"ok": True}
+
+
+# ---------------- API Key auth helper (server-to-server) ----------------
+async def verify_api_key(authorization: Optional[str] = None) -> dict:
+    """Bearer-token verification for public v1 endpoints. Returns the key doc."""
+    from fastapi import Header
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    if not token.startswith("pk_live_"):
+        raise HTTPException(401, "Not a PromoOS API key")
+    # bcrypt hashes are per-key; scan revoked=false keys and compare.
+    async for k in db.api_keys.find({"revoked": {"$ne": True}}):
+        try:
+            if bcrypt.checkpw(token.encode(), k["key_hash"].encode()):
+                await db.api_keys.update_one({"id": k["id"]},
+                    {"$set": {"last_used_at": now_iso()}})
+                return {k2: v for k2, v in k.items() if k2 not in ("_id", "key_hash")}
+        except Exception:
+            continue
+    raise HTTPException(401, "Invalid or revoked API key")
+
+
+from fastapi import Header
+
+
+@api.post("/v1/coupons/redeem")
+async def v1_redeem(body: PublicRedeemIn, authorization: Optional[str] = Header(None)):
+    """Server-to-server redemption endpoint that requires a valid pk_live_ API key."""
+    key = await verify_api_key(authorization)
+    # scope check
+    if "write" not in (key.get("scopes") or []):
+        raise HTTPException(403, "Key lacks 'write' scope")
+    return await public_redeem(body)
+
+
+# ---------------- All 23 Coupon Types (Coupon Library) ----------------
+COUPON_LIBRARY = [
+    {"id": "percentage", "name": "Percentage Discount", "cat": "Discount",
+     "desc": "Classic % off any order (10, 20, 25…).",
+     "default_value": 20, "audience": "all"},
+    {"id": "fixed", "name": "Fixed Amount", "cat": "Discount",
+     "desc": "Flat dollar amount off ($5, $10, $25…).",
+     "default_value": 10, "audience": "all"},
+    {"id": "bogo", "name": "Buy One Get One", "cat": "Bundle",
+     "desc": "Effectively 50% off — pair items at checkout.",
+     "default_value": 50, "audience": "all"},
+    {"id": "buy_x_get_y", "name": "Buy X Get Y", "cat": "Bundle",
+     "desc": "Custom quantity thresholds (Buy 2, get 1 free).",
+     "default_value": 33, "audience": "all"},
+    {"id": "free_shipping", "name": "Free Shipping", "cat": "Perk",
+     "desc": "Removes shipping at checkout.",
+     "default_value": 0, "audience": "all"},
+    {"id": "free_gift", "name": "Free Gift", "cat": "Perk",
+     "desc": "Bundle a complimentary item with any purchase.",
+     "default_value": 0, "audience": "all"},
+    {"id": "free_service", "name": "Free Service", "cat": "Perk",
+     "desc": "Complimentary consultation, install, or repair.",
+     "default_value": 0, "audience": "all"},
+    {"id": "bundle", "name": "Bundle Discount", "cat": "Bundle",
+     "desc": "% off when specific SKUs are purchased together.",
+     "default_value": 15, "audience": "all"},
+    {"id": "first_time", "name": "First-Time Customer", "cat": "Acquisition",
+     "desc": "Only redeemable on the customer's first order.",
+     "default_value": 15, "audience": "new"},
+    {"id": "returning", "name": "Returning Customer", "cat": "Retention",
+     "desc": "Rewards customers on their second and beyond.",
+     "default_value": 10, "audience": "returning"},
+    {"id": "referral", "name": "Referral Coupon", "cat": "Growth",
+     "desc": "Given by an existing customer to a friend.",
+     "default_value": 10, "audience": "new"},
+    {"id": "birthday", "name": "Birthday Coupon", "cat": "Lifecycle",
+     "desc": "Auto-fires in the customer's birthday month.",
+     "default_value": 20, "audience": "returning"},
+    {"id": "anniversary", "name": "Anniversary Coupon", "cat": "Lifecycle",
+     "desc": "Celebrates the customer's first purchase date.",
+     "default_value": 15, "audience": "returning"},
+    {"id": "abandoned_cart", "name": "Abandoned Cart", "cat": "Retention",
+     "desc": "Recovers customers who left with items in cart.",
+     "default_value": 10, "audience": "returning"},
+    {"id": "vip", "name": "VIP Coupon", "cat": "Loyalty",
+     "desc": "Reserved for top-spending customers.",
+     "default_value": 25, "audience": "vip"},
+    {"id": "flash_sale", "name": "Flash Sale", "cat": "Urgency",
+     "desc": "Time-boxed steep discount (a few hours).",
+     "default_value": 25, "audience": "all"},
+    {"id": "seasonal", "name": "Seasonal Coupon", "cat": "Urgency",
+     "desc": "Holiday or seasonal moment (Summer, BFCM…).",
+     "default_value": 20, "audience": "all"},
+    {"id": "location_based", "name": "Location-Based", "cat": "Geo",
+     "desc": "Fires when customer is inside a geofence.",
+     "default_value": 15, "audience": "all"},
+    {"id": "event", "name": "Event Coupon", "cat": "Campaign",
+     "desc": "Tied to a specific event (launch, pop-up, tour).",
+     "default_value": 15, "audience": "all"},
+    {"id": "subscription", "name": "Subscription Coupon", "cat": "Recurring",
+     "desc": "Applies to a recurring plan or bill cycle.",
+     "default_value": 10, "audience": "all"},
+    {"id": "membership", "name": "Membership Coupon", "cat": "Loyalty",
+     "desc": "Perk for paid or free members only.",
+     "default_value": 15, "audience": "vip"},
+    {"id": "influencer", "name": "Influencer Coupon", "cat": "Attribution",
+     "desc": "Unique code per creator with attribution.",
+     "default_value": 15, "audience": "all"},
+    {"id": "affiliate", "name": "Affiliate Coupon", "cat": "Attribution",
+     "desc": "Track partner-driven redemptions + commissions.",
+     "default_value": 10, "audience": "all"},
+]
+
+
+@api.get("/library/coupon-types")
+async def coupons_library_route():
+    return COUPON_LIBRARY
+
+
+# ---------------- Superadmin / Platform Admin Portal ----------------
+def require_superadmin(user: dict):
+    if user.get("role") != "superadmin":
+        raise HTTPException(403, "Superadmin only")
+
+
+@api.get("/admin/stats")
+async def admin_stats(user: dict = Depends(get_current_user)):
+    require_superadmin(user)
+    users_active = await db.users.count_documents({"suspended": {"$ne": True}, "deleted_at": None})
+    users_suspended = await db.users.count_documents({"suspended": True, "deleted_at": None})
+    users_deleted = await db.users.count_documents({"deleted_at": {"$ne": None}})
+    workspaces = await db.workspaces.count_documents({})
+    coupons = await db.coupons.count_documents({})
+    redemptions = await db.redemptions.count_documents({})
+    return {
+        "users": {"active": users_active, "suspended": users_suspended, "deleted": users_deleted},
+        "workspaces": workspaces, "coupons": coupons, "redemptions": redemptions,
+    }
+
+
+@api.get("/admin/users")
+async def admin_users(user: dict = Depends(get_current_user)):
+    require_superadmin(user)
+    rows = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(2000)
+    ws_map = {w["id"]: w.get("name", "") for w in
+              await db.workspaces.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
+    for r in rows:
+        r["workspace_name"] = ws_map.get(r.get("workspace_id"), "")
+        r["state"] = "deleted" if r.get("deleted_at") else ("suspended" if r.get("suspended") else "active")
+    return rows
+
+
+class AdminUserCreateIn(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: str = "marketer"
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
+
+
+@api.post("/admin/users")
+async def admin_create_user(body: AdminUserCreateIn, user: dict = Depends(get_current_user)):
+    require_superadmin(user)
+    if body.role not in ("owner", "marketer", "viewer", "superadmin"):
+        raise HTTPException(400, "invalid role")
+    existing = await db.users.find_one({"email": body.email.lower()})
+    if existing:
+        raise HTTPException(400, "email already registered")
+    wid = body.workspace_id
+    if not wid:
+        wid = str(uuid.uuid4())
+        await db.workspaces.insert_one({
+            "id": wid, "name": body.workspace_name or f"{body.name}'s workspace",
+            "primary_color": "#005CEE", "secondary_color": "#CCFF00",
+            "created_at": now_iso()})
+    uid = str(uuid.uuid4())
+    await db.users.insert_one({
+        "id": uid, "name": body.name, "email": body.email.lower(),
+        "password_hash": hash_password(body.password), "role": body.role,
+        "workspace_id": wid, "suspended": False, "deleted_at": None,
+        "created_at": now_iso(), "created_by_admin": user["id"]})
+    await _admin_log(user, "user.create", target=uid, meta={"email": body.email})
+    return {"ok": True, "user_id": uid, "workspace_id": wid}
+
+
+@api.post("/admin/users/{uid}/suspend")
+async def admin_suspend(uid: str, user: dict = Depends(get_current_user)):
+    require_superadmin(user)
+    await db.users.update_one({"id": uid}, {"$set": {"suspended": True, "suspended_at": now_iso()}})
+    await _admin_log(user, "user.suspend", target=uid)
+    return {"ok": True}
+
+
+@api.post("/admin/users/{uid}/activate")
+async def admin_activate(uid: str, user: dict = Depends(get_current_user)):
+    require_superadmin(user)
+    await db.users.update_one({"id": uid}, {"$set": {"suspended": False}, "$unset": {"suspended_at": ""}})
+    await _admin_log(user, "user.activate", target=uid)
+    return {"ok": True}
+
+
+@api.post("/admin/users/{uid}/restore")
+async def admin_restore(uid: str, user: dict = Depends(get_current_user)):
+    require_superadmin(user)
+    await db.users.update_one({"id": uid}, {"$set": {"deleted_at": None, "suspended": False}})
+    await _admin_log(user, "user.restore", target=uid)
+    return {"ok": True}
+
+
+@api.delete("/admin/users/{uid}")
+async def admin_delete(uid: str, user: dict = Depends(get_current_user)):
+    require_superadmin(user)
+    if uid == user["id"]:
+        raise HTTPException(400, "Cannot delete your own account")
+    await db.users.update_one({"id": uid}, {"$set": {"deleted_at": now_iso()}})
+    await _admin_log(user, "user.delete", target=uid)
+    return {"ok": True}
+
+
+@api.get("/admin/workspaces")
+async def admin_workspaces(user: dict = Depends(get_current_user)):
+    require_superadmin(user)
+    docs = await db.workspaces.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    for d in docs:
+        d["user_count"] = await db.users.count_documents({"workspace_id": d["id"], "deleted_at": None})
+        d["coupon_count"] = await db.coupons.count_documents({"workspace_id": d["id"]})
+        d["redemption_count"] = await db.redemptions.count_documents({"workspace_id": d["id"]})
+    return docs
+
+
+@api.get("/admin/logs")
+async def admin_logs(user: dict = Depends(get_current_user)):
+    require_superadmin(user)
+    docs = await db.admin_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@api.get("/admin/payments")
+async def admin_payments(user: dict = Depends(get_current_user)):
+    require_superadmin(user)
+    docs = await db.payments.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    total = sum(d.get("amount", 0) for d in docs if d.get("status") == "succeeded")
+    return {"total_collected": round(total, 2), "count": len(docs), "payments": docs}
+
+
+async def _admin_log(actor: dict, action: str, target: Optional[str] = None,
+                     meta: Optional[dict] = None):
+    await db.admin_logs.insert_one({
+        "id": str(uuid.uuid4()), "actor_id": actor["id"], "actor_email": actor["email"],
+        "action": action, "target": target, "meta": meta or {},
+        "created_at": now_iso()})
 
 
 @api.get("/pos/secrets")
@@ -2347,6 +2634,22 @@ else:
 # ---------------- Seed ----------------
 async def seed():
     await db.users.create_index("email", unique=True)
+    # Superadmin (platform-level, always ensured)
+    sa_email = os.environ.get("SUPERADMIN_EMAIL", "superadmin@promoos.com").lower()
+    sa_pass = os.environ.get("SUPERADMIN_PASSWORD", "superadmin123")
+    if not (await db.users.find_one({"email": sa_email})):
+        pw = await db.workspaces.find_one({"is_platform": True}, {"_id": 0})
+        pwid = pw["id"] if pw else str(uuid.uuid4())
+        if not pw:
+            await db.workspaces.insert_one({
+                "id": pwid, "name": "PromoOS Platform", "is_platform": True,
+                "primary_color": "#005CEE", "secondary_color": "#CCFF00",
+                "created_at": now_iso()})
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()), "name": "Platform Admin", "email": sa_email,
+            "password_hash": hash_password(sa_pass), "role": "superadmin",
+            "workspace_id": pwid, "created_at": now_iso(),
+            "suspended": False, "deleted_at": None})
     admin_email = os.environ["ADMIN_EMAIL"].lower()
     existing = await db.users.find_one({"email": admin_email})
     if existing:

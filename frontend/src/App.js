@@ -21,6 +21,9 @@ import Campaigns from "@/pages/Campaigns";
 import Customers from "@/pages/Customers";
 import DesignStudio from "@/pages/DesignStudio";
 import Integrations from "@/pages/Integrations";
+import Admin from "@/pages/Admin";
+import CouponLibrary from "@/pages/CouponLibrary";
+import { PrivacyPolicy, TermsOfUse } from "@/pages/Legal";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -42,6 +45,8 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/c/:code" element={<PublicCoupon />} />
           <Route path="/wallet/:token" element={<Wallet />} />
+          <Route path="/privacy" element={<PrivacyPolicy />} />
+          <Route path="/terms" element={<TermsOfUse />} />
           <Route path="/" element={<Protected><Layout /></Protected>}>
             <Route index element={<Dashboard />} />
             <Route path="coupons" element={<Coupons />} />
@@ -57,6 +62,8 @@ function App() {
             <Route path="rewards" element={<Rewards />} />
             <Route path="design" element={<DesignStudio />} />
             <Route path="integrations" element={<Integrations />} />
+            <Route path="admin" element={<Admin />} />
+            <Route path="library" element={<CouponLibrary />} />
           </Route>
         </Routes>
       </BrowserRouter>
