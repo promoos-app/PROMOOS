@@ -1,10 +1,58 @@
 # PromoOS — AI Promotional Commerce Platform (PRD)
 
-## Coverage after Iteration 7
-**36 ✅ · 8 🟡 · 9 🔲** out of 53 spec sections.
+## Coverage after Iteration 8
+**42 ✅ · 5 🟡 · 6 🔲** out of 53 spec sections.
 
-## Stack (unchanged)
-React + Tailwind + shadcn/ui · FastAPI + Motor · JWT Bearer + httpOnly cookie · background asyncio journey worker · Fernet-encrypted webhook secrets at rest · Emergent LLM Universal Key (Claude sonnet-5 + Gemini nano-banana) · Resend · Twilio · reportlab (PDF) · cryptography.
+## Stack
+React + Tailwind + shadcn/ui · FastAPI + Motor · JWT Bearer + httpOnly cookie · background asyncio journey worker · Fernet-encrypted webhook secrets · Emergent LLM Universal Key (Claude sonnet-5 + Gemini nano-banana) · Emergent Object Storage · Resend · Twilio · **Stripe** · reportlab · qrcode · Pillow.
+
+## Iteration 8 (Feb 2026) — Phase 1: Billing + Storage + Scale Foundations
+
+### Stripe Billing (P0 ✅)
+- **Plans**: Basic $49/mo + Pro $79/mo, each with **3-day free trial**. Stripe products+prices auto-created via `_ensure_stripe_catalog()` on first checkout.
+- **Endpoints**: `GET /billing/plans`, `POST /billing/checkout`, `GET /billing/status/{sid}`, `GET /billing/subscription`, `POST /stripe/webhook`, `GET /admin/stripe-onboarding` (superadmin).
+- **Frontend**: `/pricing` (public), `/billing/success` (polls status), `/billing/cancel`. Subscribe button auth-gated → redirects to Stripe checkout.
+- **Security**: `origin_url` whitelisted vs. PUBLIC_APP_URL / request Origin / Host (prevents redirect hijack). Webhook signature enforced in live mode; sandbox-only permissive fallback.
+- **Admin Payments tab**: "Connected" Stripe card with account_id, publishable key preview, and **Claim your Stripe account to go live** deep-link.
+
+### Security P0
+- **Superadmin credentials rotated**: `SUPERADMIN_PASSWORD=sZpRBNpLKypsQDURBQNqMIzE`. Seed logic re-hashes on every startup to match env — idempotent rotation.
+- **API-key prefix indexing**: `api_keys.key_prefix` (first 16 chars) indexed → O(1) lookup instead of O(N) bcrypt scan. Legacy keys backfilled on next use.
+
+### Global Currencies & Fonts
+- `GET /api/currencies` → **145 ISO-4217 codes** (fiat + BTC/ETH/USDT/USDC).
+- `GET /api/fonts` → **85 Google/Adobe font families**.
+- Settings page currency + font dropdowns bound to these endpoints.
+
+### Object Storage & Logo Upload
+- Emergent Object Storage integrated (namespaced under `promoos/uploads/{workspace_id}/`).
+- `POST /api/uploads` (multipart, `file` field, max 10MB, JPG/PNG/WebP/SVG/GIF/HEIC).
+- `GET /api/uploads/{id}` streams the file. `GET /api/uploads` lists workspace assets. `DELETE /api/uploads/{id}` soft-deletes.
+- Settings page: Upload logo button + live preview + fallback URL input.
+
+### Coupon Share · Embed · Download
+- `GET /api/coupons/{cid}/share` → landing_url + 5 embed snippets (inline/popup/bar/wheel/wallet) + 7 share links (email/twitter/facebook/linkedin/whatsapp/telegram/pinterest).
+- `GET /api/coupons/{cid}/download.png` → 1200×630 printable PNG with headline/description/code/QR (Pillow-rendered).
+- Coupons list dropdown → **Share & embed** dialog + **Download PNG**.
+
+### Expanded Integrations Page
+- **Email marketing** grid: Resend · SendGrid · Mailchimp · ConvertKit · Brevo · Postmark · Mailgun · AWS SES · Klaviyo.
+- **Social & AI auto-publish** grid: Facebook · Instagram · X · LinkedIn · TikTok · YouTube · Pinterest · Threads · Snapchat.
+- **Delivery** grid: Twilio · **Stripe (connected)** · PayPal · Razorpay · Paystack · Telegram.
+
+### Footer
+- Public **Admin login** link (`/login?admin=1`) alongside Privacy, Terms, Pricing.
+
+### Testing (iter-8)
+- **Backend 30/30 pytest passed** in ~7.5s. Frontend **9/9 flows passed**. Zero critical bugs.
+
+## Backlog (P1 — next iterations)
+1. **Phase 2 — Gift Card Studio & Integrations Hub** (20+ gift-card templates + editor + OAuth flows for email & social platforms).
+2. **Phase 3 — Funnel Builder** (drag-drop + coupon/gift-card blocks + custom-domain publishing via Caddy/Cloudflare).
+3. **Phase 4 — Scale + Payment coverage** (Redis cache, Mongo index audit, rate limits, CDN for widgets; PayPal + Razorpay + Paystack live integrations).
+4. **Router split** of `server.py` (now 2777 LOC) + `extras.py` (467 LOC) into `/routers/*`.
+5. **Optional hardening**: async storage/PIL via httpx + thread executor, cached Stripe price IDs, magic-byte MIME sniffing on uploads, `/logout` route.
+
 
 ## Iteration 7 (Feb 2026) — Ship Everything
 

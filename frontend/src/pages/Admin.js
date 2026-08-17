@@ -78,12 +78,15 @@ export default function Admin() {
   const [payments, setPayments] = useState(null);
   const [logs, setLogs] = useState([]);
 
+  const [stripeInfo, setStripeInfo] = useState(null);
+
   const load = () => {
     api.get("/admin/stats").then((r) => setStats(r.data)).catch((e) => toast.error(apiError(e)));
     api.get("/admin/users").then((r) => setUsers(r.data)).catch(() => {});
     api.get("/admin/workspaces").then((r) => setWs(r.data)).catch(() => {});
     api.get("/admin/payments").then((r) => setPayments(r.data)).catch(() => {});
     api.get("/admin/logs").then((r) => setLogs(r.data)).catch(() => {});
+    api.get("/admin/stripe-onboarding").then((r) => setStripeInfo(r.data)).catch(() => {});
   };
   useEffect(() => { load(); }, []);
 
@@ -202,6 +205,25 @@ export default function Admin() {
 
       {tab === "payments" && payments && (
         <div>
+          {stripeInfo && (
+            <div className="surface rounded-lg p-5 mb-4 border-[#CCFF00]/30" data-testid="stripe-onboarding-card">
+              <div className="flex items-center gap-2 mb-2">
+                <CreditCard className="w-4 h-4 text-[#CCFF00]" />
+                <div className="font-display font-bold">Stripe · {stripeInfo.mode === "test" ? "Sandbox" : "Live"} mode</div>
+                <span className="ml-auto text-[10px] uppercase tracking-widest font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400">Connected</span>
+              </div>
+              <div className="text-xs text-[#A1A1AA] mb-3">
+                Account <span className="font-mono">{stripeInfo.account_id}</span> · publishable key {stripeInfo.publishable_key.slice(0, 20)}…
+              </div>
+              {stripeInfo.onboarding_url && (
+                <a href={stripeInfo.onboarding_url} target="_blank" rel="noopener noreferrer"
+                   data-testid="stripe-onboard-link"
+                   className="btn-primary rounded-md text-xs inline-flex items-center gap-2 px-3 py-2">
+                  Claim your Stripe account to go live
+                </a>
+              )}
+            </div>
+          )}
           <div className="surface rounded-lg p-6 mb-4">
             <div className="text-xs uppercase text-[#71717A]">Total collected</div>
             <div className="text-4xl font-bold text-[#CCFF00]">${payments.total_collected.toFixed(2)}</div>
@@ -209,7 +231,7 @@ export default function Admin() {
           </div>
           {payments.payments.length === 0 ? (
             <div className="surface rounded-lg p-8 text-center text-sm text-[#71717A]">
-              No payment records yet — this log lights up automatically once Stripe billing is wired.
+              No customer subscriptions yet. Once workspaces subscribe to Basic/Pro via the /pricing page, they'll appear here.
             </div>
           ) : (
             <div className="surface rounded-lg overflow-hidden">

@@ -107,13 +107,59 @@ export default function Integrations() {
         <p className="text-sm text-[#A1A1AA] mt-1">Connect PromoOS to your store, email, SMS, and any external system.</p>
       </div>
 
+      <h2 className="font-display font-bold text-lg mb-3">Email marketing platforms</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8" data-testid="email-platforms-grid">
+        <ConnectorCard name="Resend" icon="✉️" connected={false} hint="Transactional + branded coupon emails."
+                       envHint="RESEND_API_KEY=re_..." />
+        <ConnectorCard name="SendGrid" icon="📧" connected={false} hint="High-volume transactional email delivery."
+                       envHint="SENDGRID_API_KEY=SG.…" />
+        <ConnectorCard name="Mailchimp" icon="🐵" connected={false} hint="Sync audiences and send mass campaigns."
+                       envHint="MAILCHIMP_API_KEY + MAILCHIMP_SERVER" />
+        <ConnectorCard name="ConvertKit" icon="✍️" connected={false} hint="Creator-focused broadcasts and sequences."
+                       envHint="CONVERTKIT_API_KEY" />
+        <ConnectorCard name="Brevo (Sendinblue)" icon="💌" connected={false} hint="Combined email + SMS marketing platform."
+                       envHint="BREVO_API_KEY=xkeysib-…" />
+        <ConnectorCard name="Postmark" icon="📬" connected={false} hint="Best-in-class deliverability for receipts."
+                       envHint="POSTMARK_SERVER_TOKEN" />
+        <ConnectorCard name="Mailgun" icon="📨" connected={false} hint="Developer-friendly SMTP + API email."
+                       envHint="MAILGUN_API_KEY + MAILGUN_DOMAIN" />
+        <ConnectorCard name="AWS SES" icon="☁️" connected={false} hint="Amazon Simple Email Service — cheap at scale."
+                       envHint="AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY" />
+        <ConnectorCard name="Klaviyo" icon="🎯" connected={false} hint="E-commerce-first email + SMS flows."
+                       envHint="KLAVIYO_API_KEY=pk_…" />
+      </div>
+
+      <h2 className="font-display font-bold text-lg mb-3">Social media & AI auto-publishing</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8" data-testid="social-platforms-grid">
+        <ConnectorCard name="Facebook Pages" icon="📘" connected={false} hint="Auto-post generated coupon graphics + captions."
+                       envHint="FACEBOOK_ACCESS_TOKEN + FACEBOOK_PAGE_ID" />
+        <ConnectorCard name="Instagram" icon="📸" connected={false} hint="Feed posts, stories, reels — scheduled by AI."
+                       envHint="IG_BUSINESS_ACCOUNT_ID + FACEBOOK_ACCESS_TOKEN" />
+        <ConnectorCard name="X (Twitter)" icon="𝕏" connected={false} hint="Tweet promos with generated visuals."
+                       envHint="X_BEARER_TOKEN or OAuth 2.0" />
+        <ConnectorCard name="LinkedIn" icon="in" connected={false} hint="Company page posts for B2B campaigns."
+                       envHint="LINKEDIN_ACCESS_TOKEN + LINKEDIN_ORG_ID" />
+        <ConnectorCard name="TikTok" icon="🎵" connected={false} hint="Video promos, hashtag challenges."
+                       envHint="TIKTOK_ACCESS_TOKEN" />
+        <ConnectorCard name="YouTube" icon="▶️" connected={false} hint="Community posts + Shorts scheduling."
+                       envHint="YOUTUBE_API_KEY + OAuth" />
+        <ConnectorCard name="Pinterest" icon="📌" connected={false} hint="Pin coupon graphics to boards."
+                       envHint="PINTEREST_ACCESS_TOKEN" />
+        <ConnectorCard name="Threads" icon="@" connected={false} hint="Meta's text-first social feed." envHint="Meta Graph API" />
+        <ConnectorCard name="Snapchat Ads" icon="👻" connected={false} hint="Snap AR filter promos + geofilters."
+                       envHint="SNAPCHAT_ACCESS_TOKEN" />
+      </div>
+
       <h2 className="font-display font-bold text-lg mb-3">Delivery channels</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8">
-        <ConnectorCard name="Resend" icon="✉️" connected={false} hint="Send branded coupon and gift-card emails."
-                       envHint="RESEND_API_KEY=re_..." />
         <ConnectorCard name="Twilio" icon="💬" connected={false} hint="Send SMS and WhatsApp coupons."
                        envHint="TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_SMS, TWILIO_FROM_WHATSAPP" />
-        <ConnectorCard name="Stripe" icon="💳" connected={false} hint="Sync payments and issue store credit at checkout." envHint="Coming soon" />
+        <ConnectorCard name="Stripe" icon="💳" connected={true} hint="Subscription billing + 100+ global payment methods (cards, Apple/Google Pay, SEPA, iDEAL, Klarna, Afterpay, Alipay, WeChat)." envHint="STRIPE_SECRET_KEY (configured)" />
+        <ConnectorCard name="PayPal" icon="🅿️" connected={false} hint="Alternative payment provider for global reach." envHint="PAYPAL_CLIENT_ID + PAYPAL_SECRET" />
+        <ConnectorCard name="Razorpay" icon="🇮🇳" connected={false} hint="India-first payments — UPI, NetBanking, cards." envHint="RAZORPAY_KEY_ID + RAZORPAY_SECRET" />
+        <ConnectorCard name="Paystack" icon="🌍" connected={false} hint="Africa-first payments — cards, bank transfer, mobile money." envHint="PAYSTACK_SECRET_KEY" />
+        <ConnectorCard name="Telegram Bot" icon="✈️" connected={false} hint="Push coupons to Telegram channels."
+                       envHint="TELEGRAM_BOT_TOKEN" />
       </div>
 
       <h2 className="font-display font-bold text-lg mb-3">Commerce connectors</h2>

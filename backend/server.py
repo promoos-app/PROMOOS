@@ -1940,8 +1940,11 @@ async def create_api_key(body: ApiKeyIn, user: dict = Depends(get_current_user))
     if user.get("role") != "owner":
         raise HTTPException(403, "Only owners can create API keys")
     key = _api_key_str()
+    # Store plaintext prefix (first 16 chars: "pk_live_" + 8 chars) for O(1) index lookup.
+    # Remaining entropy still gated by bcrypt on the full token.
     doc = {"id": str(uuid.uuid4()), "workspace_id": user["workspace_id"],
            "name": body.name, "scopes": body.scopes, "key_preview": key[:14] + "…",
+           "key_prefix": key[:16],
            "key_hash": bcrypt.hashpw(key.encode(), bcrypt.gensalt(rounds=10)).decode(),
            "created_by": user["id"], "created_at": now_iso(), "last_used_at": None,
            "revoked": False}
@@ -2314,14 +2317,24 @@ async def verify_api_key(authorization: Optional[str] = None) -> dict:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
-    if not token.startswith("pk_live_"):
+    if not token.startswith("pk_live_") or len(token) < 16:
         raise HTTPException(401, "Not a PromoOS API key")
-    # bcrypt hashes are per-key; scan revoked=false keys and compare.
-    async for k in db.api_keys.find({"revoked": {"$ne": True}}):
+    prefix = token[:16]
+    # O(1) index lookup by prefix; bcrypt only runs on candidates matching the prefix.
+    async for k in db.api_keys.find({"key_prefix": prefix, "revoked": {"$ne": True}}):
         try:
             if bcrypt.checkpw(token.encode(), k["key_hash"].encode()):
                 await db.api_keys.update_one({"id": k["id"]},
                     {"$set": {"last_used_at": now_iso()}})
+                return {k2: v for k2, v in k.items() if k2 not in ("_id", "key_hash")}
+        except Exception:
+            continue
+    # Legacy fallback: older keys created without key_prefix (backfilled on next use).
+    async for k in db.api_keys.find({"key_prefix": {"$exists": False}, "revoked": {"$ne": True}}):
+        try:
+            if bcrypt.checkpw(token.encode(), k["key_hash"].encode()):
+                await db.api_keys.update_one({"id": k["id"]},
+                    {"$set": {"last_used_at": now_iso(), "key_prefix": prefix}})
                 return {k2: v for k2, v in k.items() if k2 not in ("_id", "key_hash")}
         except Exception:
             continue
@@ -2611,6 +2624,11 @@ async def pos_snippets(request: Request, user: dict = Depends(get_current_user))
     }
 
 
+# ---------------- Phase 1 extras: Stripe billing, storage, currencies, fonts, share/download ----------------
+from extras import register_extras
+extras_ctx = register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso,
+                          get_current_user, require_writer, _admin_log)
+
 app.include_router(api)
 
 # CORS: reflect incoming Origin with credentials. Wildcard "*" is browser-rejected
@@ -2634,10 +2652,11 @@ else:
 # ---------------- Seed ----------------
 async def seed():
     await db.users.create_index("email", unique=True)
-    # Superadmin (platform-level, always ensured)
+    # Superadmin (platform-level, always ensured; password rotated to match env)
     sa_email = os.environ.get("SUPERADMIN_EMAIL", "superadmin@promoos.com").lower()
     sa_pass = os.environ.get("SUPERADMIN_PASSWORD", "superadmin123")
-    if not (await db.users.find_one({"email": sa_email})):
+    existing_sa = await db.users.find_one({"email": sa_email})
+    if not existing_sa:
         pw = await db.workspaces.find_one({"is_platform": True}, {"_id": 0})
         pwid = pw["id"] if pw else str(uuid.uuid4())
         if not pw:
@@ -2650,6 +2669,12 @@ async def seed():
             "password_hash": hash_password(sa_pass), "role": "superadmin",
             "workspace_id": pwid, "created_at": now_iso(),
             "suspended": False, "deleted_at": None})
+    else:
+        # Rotate password to match current env (idempotent).
+        if not verify_password(sa_pass, existing_sa.get("password_hash", "")):
+            await db.users.update_one({"id": existing_sa["id"]},
+                {"$set": {"password_hash": hash_password(sa_pass), "role": "superadmin",
+                          "suspended": False, "deleted_at": None}})
     admin_email = os.environ["ADMIN_EMAIL"].lower()
     existing = await db.users.find_one({"email": admin_email})
     if existing:
@@ -2732,6 +2757,14 @@ async def startup():
     try:
         await db.login_attempts.create_index("identifier")
         await db.journey_runs.create_index([("status", 1), ("next_at", 1)])
+        await db.api_keys.create_index("key_prefix")
+        await db.uploads.create_index([("workspace_id", 1), ("is_deleted", 1)])
+        await db.payment_transactions.create_index("session_id", unique=True)
+        # Initialize object storage (best-effort).
+        try:
+            extras_ctx["init_storage"]()
+        except Exception:
+            pass
         await seed()
         asyncio.create_task(journey_worker())
     except Exception as e:

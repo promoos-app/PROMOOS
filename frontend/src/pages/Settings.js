@@ -7,19 +7,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Sparkles, ShieldCheck } from "lucide-react";
-
-const FONTS = ["Cabinet Grotesk", "Satoshi", "Inter", "Poppins", "Playfair Display"];
-const CURRENCIES = ["USD", "EUR", "GBP", "INR", "AUD"];
+import { Sparkles, ShieldCheck, Upload, Loader2 } from "lucide-react";
 
 export default function Settings() {
   const { user } = useAuth();
   const [brand, setBrand] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [fonts, setFonts] = useState([]);
+  const [currencies, setCurrencies] = useState([]);
 
   const { data: ws } = useQuery({ queryKey: ["workspace"], queryFn: async () => (await api.get("/workspace")).data });
   const { data: team = [] } = useQuery({ queryKey: ["team"], queryFn: async () => (await api.get("/team")).data });
   const { data: apCfg } = useQuery({ queryKey: ["autopilot-config"], queryFn: async () => (await api.get("/autopilot/config")).data });
+
+  useEffect(() => {
+    api.get("/fonts").then((r) => setFonts(r.data.fonts)).catch(() => setFonts(["Cabinet Grotesk", "Inter", "Poppins"]));
+    api.get("/currencies").then((r) => setCurrencies(r.data)).catch(() => setCurrencies([{ code: "USD", name: "US Dollar", symbol: "$" }]));
+  }, []);
 
   const [ap, setAp] = useState(null);
   const [apSaving, setApSaving] = useState(false);
@@ -66,8 +71,34 @@ export default function Settings() {
             <Input data-testid="brand-name-input" value={brand.name || ""} onChange={(e) => set("name", e.target.value)} className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" />
           </div>
           <div>
-            <Label className="text-xs text-[#A1A1AA]">Logo URL</Label>
-            <Input data-testid="brand-logo-input" value={brand.logo_url || ""} onChange={(e) => set("logo_url", e.target.value)} className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" placeholder="https://…" />
+            <Label className="text-xs text-[#A1A1AA]">Logo</Label>
+            <div className="flex items-start gap-3 mt-1">
+              {brand.logo_url && (
+                <img src={brand.logo_url.startsWith("/api/") ? `${process.env.REACT_APP_BACKEND_URL}${brand.logo_url}` : brand.logo_url}
+                     alt="logo" className="w-14 h-14 rounded-md object-cover bg-[#0A0A0A] border border-[#27272A]" data-testid="brand-logo-preview" />
+              )}
+              <div className="flex-1 space-y-2">
+                <label className="btn-ghost inline-flex items-center gap-2 cursor-pointer rounded-md px-3 py-2 text-sm" data-testid="logo-upload-label">
+                  {uploading ? <Loader2 className="w-4 h-4 spin" /> : <Upload className="w-4 h-4" />}
+                  {uploading ? "Uploading…" : "Upload image"}
+                  <input type="file" accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif" className="hidden"
+                         data-testid="logo-upload-input"
+                         onChange={async (e) => {
+                           const f = e.target.files?.[0]; if (!f) return;
+                           setUploading(true);
+                           const fd = new FormData(); fd.append("file", f);
+                           try {
+                             const { data } = await api.post("/uploads", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                             set("logo_url", data.url);
+                             toast.success("Logo uploaded");
+                           } catch (err) { toast.error(apiError(err)); } finally { setUploading(false); e.target.value = ""; }
+                         }} />
+                </label>
+                <Input data-testid="brand-logo-input" value={brand.logo_url || ""} onChange={(e) => set("logo_url", e.target.value)}
+                       className="bg-[#0A0A0A] border-[#27272A] text-white text-xs" placeholder="or paste URL…" />
+                <div className="text-[10px] text-[#71717A]">JPG · PNG · WebP · SVG · GIF · max 10MB.</div>
+              </div>
+            </div>
           </div>
           <div>
             <Label className="text-xs text-[#A1A1AA]">Primary color</Label>
@@ -84,15 +115,15 @@ export default function Settings() {
             </div>
           </div>
           <div>
-            <Label className="text-xs text-[#A1A1AA]">Brand font</Label>
+            <Label className="text-xs text-[#A1A1AA]">Brand font ({fonts.length} options)</Label>
             <select data-testid="brand-font-select" value={brand.font || ""} onChange={(e) => set("font", e.target.value)} className="mt-1 w-full h-10 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white px-3 text-sm">
-              {FONTS.map((f) => <option key={f} value={f}>{f}</option>)}
+              {fonts.map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
           </div>
           <div>
-            <Label className="text-xs text-[#A1A1AA]">Currency</Label>
+            <Label className="text-xs text-[#A1A1AA]">Currency ({currencies.length} supported)</Label>
             <select data-testid="brand-currency-select" value={brand.currency || ""} onChange={(e) => set("currency", e.target.value)} className="mt-1 w-full h-10 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white px-3 text-sm">
-              {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              {currencies.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name} ({c.symbol})</option>)}
             </select>
           </div>
         </div>

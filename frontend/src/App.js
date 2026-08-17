@@ -24,6 +24,8 @@ import Integrations from "@/pages/Integrations";
 import Admin from "@/pages/Admin";
 import CouponLibrary from "@/pages/CouponLibrary";
 import { PrivacyPolicy, TermsOfUse } from "@/pages/Legal";
+import Pricing from "@/pages/Pricing";
+import { BillingSuccess, BillingCancel } from "@/pages/BillingResult";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -47,6 +49,9 @@ function App() {
           <Route path="/wallet/:token" element={<Wallet />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/terms" element={<TermsOfUse />} />
+          <Route path="/pricing" element={<Pricing />} />
+          <Route path="/billing/success" element={<BillingSuccess />} />
+          <Route path="/billing/cancel" element={<BillingCancel />} />
           <Route path="/" element={<Protected><Layout /></Protected>}>
             <Route index element={<Dashboard />} />
             <Route path="coupons" element={<Coupons />} />

@@ -6,10 +6,13 @@ import { STATE_STYLES, TYPE_LABELS, discountText } from "@/lib/couponUtils";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, MoreHorizontal, Ticket } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Ticket, Share2, Download, Copy } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
+} from "@/components/ui/dialog";
 
 const FILTERS = ["all", "draft", "scheduled", "active", "paused", "expired", "archived"];
 const NEXT_STATES = ["draft", "scheduled", "active", "paused", "expired", "archived"];
@@ -41,6 +44,24 @@ export default function Coupons() {
       toast.success("Coupon deleted");
     } catch (e) { toast.error(apiError(e)); }
   };
+
+  const [shareData, setShareData] = useState(null);
+  const openShare = async (cid) => {
+    try {
+      const { data } = await api.get(`/coupons/${cid}/share`);
+      setShareData({ ...data, cid });
+    } catch (e) { toast.error(apiError(e)); }
+  };
+  const downloadPng = async (cid, code) => {
+    try {
+      const res = await api.get(`/coupons/${cid}/download.png`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = `coupon-${code}.png`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      toast.success("Downloaded");
+    } catch (e) { toast.error(apiError(e)); }
+  };
+  const cp = (t) => { navigator.clipboard.writeText(t).catch(() => {}); toast.success("Copied"); };
 
   return (
     <div className="fade-up max-w-[1400px]">
@@ -117,6 +138,12 @@ export default function Coupons() {
                       <DropdownMenuContent align="end" className="bg-[#141414] border-[#27272A] text-white">
                         <DropdownMenuItem className="focus:bg-[#1E1E1E]" onClick={() => navigate(`/coupons/${c.id}/edit`)}>Edit</DropdownMenuItem>
                         <DropdownMenuItem className="focus:bg-[#1E1E1E]" onClick={() => navigate(`/coupons/${c.id}`)}>View & QR</DropdownMenuItem>
+                        <DropdownMenuItem data-testid={`share-${c.id}`} className="focus:bg-[#1E1E1E]" onClick={() => openShare(c.id)}>
+                          <Share2 className="w-3.5 h-3.5 mr-2" /> Share & embed
+                        </DropdownMenuItem>
+                        <DropdownMenuItem data-testid={`download-${c.id}`} className="focus:bg-[#1E1E1E]" onClick={() => downloadPng(c.id, c.code)}>
+                          <Download className="w-3.5 h-3.5 mr-2" /> Download PNG
+                        </DropdownMenuItem>
                         <DropdownMenuSeparator className="bg-[#27272A]" />
                         {NEXT_STATES.filter((s) => s !== c.state).map((s) => (
                           <DropdownMenuItem key={s} className="focus:bg-[#1E1E1E] capitalize" onClick={() => changeState(c.id, s)}>
@@ -134,6 +161,49 @@ export default function Coupons() {
           </table>
         )}
       </div>
+
+      <Dialog open={!!shareData} onOpenChange={(v) => !v && setShareData(null)}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="share-dialog">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><Share2 className="w-5 h-5 text-[#CCFF00]" /> Share & embed</DialogTitle></DialogHeader>
+          {shareData && (
+            <div className="space-y-4">
+              <div>
+                <div className="text-xs uppercase tracking-widest text-[#71717A] mb-1">Landing page</div>
+                <div className="flex gap-1">
+                  <code className="flex-1 text-xs font-mono bg-[#0A0A0A] border border-[#27272A] rounded px-2 py-1.5 break-all">{shareData.landing_url}</code>
+                  <button onClick={() => cp(shareData.landing_url)} className="p-1.5 rounded hover:bg-white/5"><Copy className="w-3.5 h-3.5" /></button>
+                </div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-widest text-[#71717A] mb-1">Share on socials</div>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(shareData.share_links).map(([k, v]) => (
+                    <a key={k} href={v} target="_blank" rel="noopener noreferrer" data-testid={`share-link-${k}`}
+                       className="btn-ghost rounded-md text-xs px-3 py-1.5 capitalize">{k}</a>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-widest text-[#71717A] mb-1">Embed on your site (5 variants)</div>
+                <div className="space-y-2">
+                  {Object.entries(shareData.embed_snippets).map(([variant, snippet]) => (
+                    <div key={variant} data-testid={`embed-${variant}`}>
+                      <div className="text-[10px] uppercase tracking-widest text-[#CCFF00] mb-0.5">{variant}</div>
+                      <div className="flex gap-1">
+                        <code className="flex-1 text-[10px] font-mono bg-[#0A0A0A] border border-[#27272A] rounded px-2 py-1.5 break-all">{snippet}</code>
+                        <button onClick={() => cp(snippet)} className="p-1.5 rounded hover:bg-white/5"><Copy className="w-3.5 h-3.5" /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <Button data-testid="dialog-download-png" onClick={() => downloadPng(shareData.cid, shareData.code)} className="btn-primary rounded-md gap-2 w-full">
+                <Download className="w-4 h-4" /> Download printable PNG (1200×630)
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
