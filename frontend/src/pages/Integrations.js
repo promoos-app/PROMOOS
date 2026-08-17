@@ -4,11 +4,93 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plug, Key, Copy, Trash2, ShieldOff, Webhook, Code2, ShieldCheck, RefreshCw } from "lucide-react";
+import { Loader2, Plug, Key, Copy, Trash2, ShieldOff, Webhook, Code2, ShieldCheck, RefreshCw, Link as LinkIcon } from "lucide-react";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
+} from "@/components/ui/dialog";
+
+function OAuthConnector({ provider, label, icon, hint, tokens, providers, onChange }) {
+  const cfg = providers.find((p) => p.id === provider);
+  const token = tokens.find((t) => t.provider === provider);
+  const [apiKey, setApiKey] = useState("");
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const connectOAuth = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.get(`/oauth/${provider}/start`);
+      window.location.href = data.authorize_url;
+    } catch (e) { toast.error(apiError(e)); setBusy(false); }
+  };
+  const connectKey = async () => {
+    if (!apiKey.trim()) { toast.error("API key required"); return; }
+    setBusy(true);
+    try {
+      await api.post(`/oauth/${provider}/connect`, { api_key: apiKey.trim() });
+      toast.success(`${label} connected`);
+      setOpen(false); setApiKey(""); onChange?.();
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+  };
+  const disconnect = async () => {
+    if (!window.confirm(`Disconnect ${label}?`)) return;
+    await api.delete(`/oauth/${provider}`); toast.success("Disconnected"); onChange?.();
+  };
+
+  return (
+    <div className="surface rounded-lg p-5" data-testid={`connector-${provider}`}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-lg">{icon}</span>
+        <div className="font-display font-bold">{label}</div>
+        <span className={`ml-auto text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded ${token ? "bg-emerald-500/15 text-emerald-400" : "bg-[#27272A] text-[#71717A]"}`}>
+          {token ? "Connected" : "Not connected"}
+        </span>
+      </div>
+      <p className="text-xs text-[#A1A1AA] leading-relaxed mb-3">{hint}</p>
+      {token ? (
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[10px] font-mono text-[#71717A]">{token.access_token_preview}</div>
+          <Button data-testid={`disconnect-${provider}`} onClick={disconnect} className="btn-ghost rounded-md text-xs gap-1">
+            <Trash2 className="w-3 h-3" /> Disconnect
+          </Button>
+        </div>
+      ) : cfg?.mode === "api_key" ? (
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild>
+            <Button data-testid={`connect-${provider}`} className="btn-primary rounded-md text-xs w-full gap-1">
+              <Key className="w-3 h-3" /> Connect with API key
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="bg-[#141414] border-[#27272A] text-white">
+            <DialogHeader><DialogTitle>Connect {label}</DialogTitle></DialogHeader>
+            <div>
+              <Label className="text-xs text-[#A1A1AA]">API key</Label>
+              <Input data-testid={`api-key-input-${provider}`} value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white font-mono" placeholder="SG.xxxx or key_xxxx" />
+              <div className="text-[10px] text-[#71717A] mt-1">Stored per-workspace. Rotate anytime from your {label} dashboard.</div>
+            </div>
+            <DialogFooter>
+              <Button data-testid={`api-key-submit-${provider}`} onClick={connectKey} disabled={busy} className="btn-primary rounded-md">
+                {busy && <Loader2 className="w-3 h-3 spin mr-1" />} Connect
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : cfg?.configured ? (
+        <Button data-testid={`connect-${provider}`} onClick={connectOAuth} disabled={busy} className="btn-primary rounded-md text-xs w-full gap-1">
+          {busy ? <Loader2 className="w-3 h-3 spin" /> : <LinkIcon className="w-3 h-3" />} Connect with OAuth
+        </Button>
+      ) : (
+        <div className="text-[10px] font-mono text-[#71717A] bg-[#0A0A0A] border border-[#27272A] rounded px-2 py-1.5">
+          Configure {(cfg?.env_needed || []).filter(Boolean).join(" + ") || "OAuth credentials"} in backend/.env
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ConnectorCard({ name, icon, connected, hint, envHint }) {
   return (
-    <div className="surface rounded-lg p-5" data-testid={`connector-${name.toLowerCase()}`}>
+    <div className="surface rounded-lg p-5" data-testid={`connector-${name.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}>
       <div className="flex items-center gap-2 mb-2">
         <span className="text-lg">{icon}</span>
         <div className="font-display font-bold">{name}</div>
@@ -74,10 +156,17 @@ export default function Integrations() {
   const [busy, setBusy] = useState(false);
   const [freshKey, setFreshKey] = useState(null);
   const [pos, setPos] = useState(null);
+  const [oauthTokens, setOauthTokens] = useState([]);
+  const [oauthProviders, setOauthProviders] = useState([]);
 
   const load = () => api.get("/api-keys").then((r) => setKeys(r.data)).catch(() => {});
+  const loadOauth = () => {
+    api.get("/oauth/tokens").then((r) => setOauthTokens(r.data)).catch(() => {});
+    api.get("/oauth/providers").then((r) => setOauthProviders(r.data.providers)).catch(() => {});
+  };
   useEffect(() => {
     load();
+    loadOauth();
     api.get("/pos/snippets").then((r) => setPos(r.data)).catch(() => {});
   }, []);
 
@@ -109,12 +198,12 @@ export default function Integrations() {
 
       <h2 className="font-display font-bold text-lg mb-3">Email marketing platforms</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8" data-testid="email-platforms-grid">
+        <OAuthConnector provider="mailchimp" label="Mailchimp" icon="🐵" hint="Sync audiences, send campaigns, auto-publish coupons."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="sendgrid" label="SendGrid" icon="📧" hint="High-volume transactional email. Uses your SG.xxx API key."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
         <ConnectorCard name="Resend" icon="✉️" connected={false} hint="Transactional + branded coupon emails."
                        envHint="RESEND_API_KEY=re_..." />
-        <ConnectorCard name="SendGrid" icon="📧" connected={false} hint="High-volume transactional email delivery."
-                       envHint="SENDGRID_API_KEY=SG.…" />
-        <ConnectorCard name="Mailchimp" icon="🐵" connected={false} hint="Sync audiences and send mass campaigns."
-                       envHint="MAILCHIMP_API_KEY + MAILCHIMP_SERVER" />
         <ConnectorCard name="ConvertKit" icon="✍️" connected={false} hint="Creator-focused broadcasts and sequences."
                        envHint="CONVERTKIT_API_KEY" />
         <ConnectorCard name="Brevo (Sendinblue)" icon="💌" connected={false} hint="Combined email + SMS marketing platform."
@@ -131,23 +220,19 @@ export default function Integrations() {
 
       <h2 className="font-display font-bold text-lg mb-3">Social media & AI auto-publishing</h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8" data-testid="social-platforms-grid">
-        <ConnectorCard name="Facebook Pages" icon="📘" connected={false} hint="Auto-post generated coupon graphics + captions."
-                       envHint="FACEBOOK_ACCESS_TOKEN + FACEBOOK_PAGE_ID" />
-        <ConnectorCard name="Instagram" icon="📸" connected={false} hint="Feed posts, stories, reels — scheduled by AI."
-                       envHint="IG_BUSINESS_ACCOUNT_ID + FACEBOOK_ACCESS_TOKEN" />
-        <ConnectorCard name="X (Twitter)" icon="𝕏" connected={false} hint="Tweet promos with generated visuals."
-                       envHint="X_BEARER_TOKEN or OAuth 2.0" />
-        <ConnectorCard name="LinkedIn" icon="in" connected={false} hint="Company page posts for B2B campaigns."
-                       envHint="LINKEDIN_ACCESS_TOKEN + LINKEDIN_ORG_ID" />
-        <ConnectorCard name="TikTok" icon="🎵" connected={false} hint="Video promos, hashtag challenges."
-                       envHint="TIKTOK_ACCESS_TOKEN" />
-        <ConnectorCard name="YouTube" icon="▶️" connected={false} hint="Community posts + Shorts scheduling."
-                       envHint="YOUTUBE_API_KEY + OAuth" />
-        <ConnectorCard name="Pinterest" icon="📌" connected={false} hint="Pin coupon graphics to boards."
-                       envHint="PINTEREST_ACCESS_TOKEN" />
+        <OAuthConnector provider="facebook" label="Facebook Pages" icon="📘" hint="Auto-post generated coupon graphics and captions to your Pages."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="instagram" label="Instagram Business" icon="📸" hint="Feed posts, stories, reels — scheduled by AI."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="linkedin" label="LinkedIn" icon="in" hint="Company page posts for B2B campaigns."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="tiktok" label="TikTok" icon="🎵" hint="Video promos and hashtag challenges."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <ConnectorCard name="X (Twitter)" icon="𝕏" connected={false} hint="Tweet promos with generated visuals." envHint="X_BEARER_TOKEN or OAuth 2.0" />
+        <ConnectorCard name="YouTube" icon="▶️" connected={false} hint="Community posts + Shorts scheduling." envHint="YOUTUBE_API_KEY + OAuth" />
+        <ConnectorCard name="Pinterest" icon="📌" connected={false} hint="Pin coupon graphics to boards." envHint="PINTEREST_ACCESS_TOKEN" />
         <ConnectorCard name="Threads" icon="@" connected={false} hint="Meta's text-first social feed." envHint="Meta Graph API" />
-        <ConnectorCard name="Snapchat Ads" icon="👻" connected={false} hint="Snap AR filter promos + geofilters."
-                       envHint="SNAPCHAT_ACCESS_TOKEN" />
+        <ConnectorCard name="Snapchat Ads" icon="👻" connected={false} hint="Snap AR filter promos + geofilters." envHint="SNAPCHAT_ACCESS_TOKEN" />
       </div>
 
       <h2 className="font-display font-bold text-lg mb-3">Delivery channels</h2>

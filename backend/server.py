@@ -2625,9 +2625,15 @@ async def pos_snippets(request: Request, user: dict = Depends(get_current_user))
 
 
 # ---------------- Phase 1 extras: Stripe billing, storage, currencies, fonts, share/download ----------------
-from extras import register_extras
+from routers.billing import register_extras
+from routers.giftcards import register as register_giftcards
+from routers.oauth_hub import register as register_oauth
+from routers.funnels import register as register_funnels
 extras_ctx = register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso,
                           get_current_user, require_writer, _admin_log)
+register_giftcards(api, db, EMERGENT_LLM_KEY, now_iso, get_current_user, require_writer)
+register_oauth(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
+register_funnels(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
 
 app.include_router(api)
 
@@ -2760,6 +2766,8 @@ async def startup():
         await db.api_keys.create_index("key_prefix")
         await db.uploads.create_index([("workspace_id", 1), ("is_deleted", 1)])
         await db.payment_transactions.create_index("session_id", unique=True)
+        # OAuth state tokens expire after 10 minutes to prevent unbounded accumulation.
+        await db.oauth_states.create_index("created_at", expireAfterSeconds=600)
         # Initialize object storage (best-effort).
         try:
             extras_ctx["init_storage"]()

@@ -26,6 +26,9 @@ import CouponLibrary from "@/pages/CouponLibrary";
 import { PrivacyPolicy, TermsOfUse } from "@/pages/Legal";
 import Pricing from "@/pages/Pricing";
 import { BillingSuccess, BillingCancel } from "@/pages/BillingResult";
+import GiftCardStudio from "@/pages/GiftCardStudio";
+import { Funnels, FunnelEditor } from "@/pages/Funnels";
+import PublicFunnel from "@/pages/PublicFunnel";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -46,6 +49,7 @@ function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/c/:code" element={<PublicCoupon />} />
+          <Route path="/f/:slug" element={<PublicFunnel />} />
           <Route path="/wallet/:token" element={<Wallet />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/terms" element={<TermsOfUse />} />
@@ -59,6 +63,9 @@ function App() {
             <Route path="coupons/:id/edit" element={<CouponEditor />} />
             <Route path="calendar" element={<Calendar />} />
             <Route path="gift-cards" element={<GiftCards />} />
+            <Route path="gift-cards/studio" element={<GiftCardStudio />} />
+            <Route path="funnels" element={<Funnels />} />
+            <Route path="funnels/:id/edit" element={<FunnelEditor />} />
             <Route path="coupons/:id" element={<CouponDetail />} />
             <Route path="analytics" element={<Analytics />} />
             <Route path="settings" element={<Settings />} />

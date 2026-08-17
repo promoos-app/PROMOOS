@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Gift, Loader2, Plus, DollarSign, CreditCard, Copy } from "lucide-react";
+import { Gift, Loader2, Plus, DollarSign, CreditCard, Copy, Palette } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
@@ -160,6 +161,7 @@ function IssueCreditDialog({ onIssued }) {
 }
 
 export default function GiftCards() {
+  const nav = useNavigate();
   const [data, setData] = useState(null);
   const [credits, setCredits] = useState(null);
   const load = () => {
@@ -180,6 +182,9 @@ export default function GiftCards() {
           <p className="text-sm text-[#A1A1AA] mt-1">Issue, track and redeem gift cards; award store credit for appreciation, refunds or loyalty.</p>
         </div>
         <div className="flex gap-2">
+          <Button data-testid="gc-studio-btn" onClick={() => nav("/gift-cards/studio")} className="btn-ghost rounded-md gap-2">
+            <Palette className="w-4 h-4" /> Design gallery
+          </Button>
           <IssueCreditDialog onIssued={load} />
           <IssueGiftCardDialog onIssued={load} />
         </div>
