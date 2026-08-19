@@ -31,7 +31,8 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex bg-[#0A0A0A] grain text-white">
+    <div className="min-h-screen flex flex-col bg-[#0A0A0A] grain text-white">
+      <div className="flex-1 flex">
       {/* Left brand panel */}
       <div className="hidden lg:flex flex-col justify-between w-1/2 border-r border-[#27272A] p-12 relative overflow-hidden">
         <div className="flex items-center gap-2 z-10">
@@ -117,12 +118,13 @@ export default function Login() {
           {mode === "login" && (
             <div className="mt-6 p-3 rounded-md bg-[#141414] border border-[#27272A] text-xs text-[#A1A1AA]">
               <div><span className="text-[#CCFF00]">Owner:</span> admin@promoos.com / admin123</div>
-              <div><span className="text-[#CCFF00]">Superadmin:</span> superadmin@promoos.com / superadmin123</div>
+              <div className="mt-1 text-[10px] text-[#71717A]">Superadmin credentials rotated — see <code>/app/memory/test_credentials.md</code>.</div>
             </div>
           )}
         </div>
       </div>
-      <div className="max-w-6xl mx-auto px-4 pb-6"><Footer compact /></div>
+      </div>
+      <div className="border-t border-[#27272A] px-6 lg:px-12"><Footer compact /></div>
     </div>
   );
 }

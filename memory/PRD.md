@@ -1,7 +1,25 @@
 # PromoOS — AI Promotional Commerce Platform (PRD)
 
-## Coverage after Iteration 9
-**48 ✅ · 3 🟡 · 2 🔲** out of 53 spec sections.
+## Coverage after Iteration 10
+**49 ✅ · 3 🟡 · 1 🔲** out of 53 spec sections.
+
+## Iteration 10 (Feb 2026) — QR Studio + Login layout fix
+
+### QR Code Studio ✅
+- **7 content types**: URL · Text · Phone (tel:) · SMS (SMSTO) · Email (mailto) · WiFi (WIFI:) · vCard.
+- **6 module shapes**: square · rounded · circle · gapped · vertical bars · horizontal bars.
+- **4 color modes**: solid · radial gradient · horizontal gradient · vertical gradient.
+- **10 curated presets**: neon-lime, electric, sunset, midnight, champagne, monochrome, forest, royal-blue, berry, print-safe.
+- **Center logo overlay** from Emergent Object Storage uploads.
+- **Error correction levels** L/M/Q/H (H tolerates ~30% of the code being obscured by a logo).
+- Endpoints: `GET /api/qr/options`, `POST /api/qr/preview`, `POST /api/qr/download`, `GET /api/qr/saved`, `DELETE /api/qr/saved/{id}`.
+- Frontend: `/qr` — live preview updates on every field change (debounced 400ms), Save-to-library, Download PNG, saved-QR gallery with delete.
+- New sidebar item: **QR Studio** (QrCode icon).
+
+### Login page layout fix ✅
+- Wrapped the two-panel layout in `flex flex-col` so the footer (`©` + Pricing / Privacy / Terms / Admin) sits **below** the full-height auth area instead of squeezing the login box.
+- Superadmin credentials hint replaced with a note pointing to `/app/memory/test_credentials.md` (no longer shows the old rotated-away password).
+
 
 ## Stack
 React + Tailwind + shadcn/ui · FastAPI + Motor + `/routers/` package · JWT Bearer + httpOnly cookie · background asyncio journey worker · Fernet encryption for POS + OAuth tokens · Emergent LLM Universal Key (Claude sonnet-5 + Gemini nano-banana) · Emergent Object Storage · Resend · Twilio · **Stripe** · reportlab · qrcode · Pillow · dnspython.

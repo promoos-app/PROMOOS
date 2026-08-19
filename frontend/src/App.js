@@ -29,6 +29,7 @@ import { BillingSuccess, BillingCancel } from "@/pages/BillingResult";
 import GiftCardStudio from "@/pages/GiftCardStudio";
 import { Funnels, FunnelEditor } from "@/pages/Funnels";
 import PublicFunnel from "@/pages/PublicFunnel";
+import QRStudio from "@/pages/QRStudio";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -66,6 +67,7 @@ function App() {
             <Route path="gift-cards/studio" element={<GiftCardStudio />} />
             <Route path="funnels" element={<Funnels />} />
             <Route path="funnels/:id/edit" element={<FunnelEditor />} />
+            <Route path="qr" element={<QRStudio />} />
             <Route path="coupons/:id" element={<CouponDetail />} />
             <Route path="analytics" element={<Analytics />} />
             <Route path="settings" element={<Settings />} />

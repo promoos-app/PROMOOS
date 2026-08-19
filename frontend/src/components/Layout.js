@@ -5,7 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import api from "@/lib/api";
 import {
   LayoutDashboard, Ticket, Megaphone, Users, Gift, Palette,
-  BarChart3, Plug, Settings as SettingsIcon, Sparkles, LogOut, ChevronDown, CalendarDays, CreditCard, Shield, Rocket,
+  BarChart3, Plug, Settings as SettingsIcon, Sparkles, LogOut, ChevronDown, CalendarDays, CreditCard, Shield, Rocket, QrCode,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +22,7 @@ const NAV = [
   { to: "/rewards", label: "Rewards", icon: Gift },
   { to: "/gift-cards", label: "Gift Cards", icon: CreditCard },
   { to: "/funnels", label: "Funnels", icon: Rocket },
+  { to: "/qr", label: "QR Studio", icon: QrCode },
   { to: "/design", label: "Design", icon: Palette },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/integrations", label: "Integrations", icon: Plug },

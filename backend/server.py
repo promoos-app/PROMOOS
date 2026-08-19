@@ -2629,11 +2629,13 @@ from routers.billing import register_extras
 from routers.giftcards import register as register_giftcards
 from routers.oauth_hub import register as register_oauth
 from routers.funnels import register as register_funnels
+from routers.qr import register as register_qr
 extras_ctx = register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso,
                           get_current_user, require_writer, _admin_log)
 register_giftcards(api, db, EMERGENT_LLM_KEY, now_iso, get_current_user, require_writer)
 register_oauth(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
 register_funnels(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
+register_qr(api, db, now_iso, get_current_user, require_writer)
 
 app.include_router(api)
 
