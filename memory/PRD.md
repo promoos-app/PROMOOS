@@ -1,7 +1,53 @@
 # PromoOS — AI Promotional Commerce Platform (PRD)
 
-## Coverage after Iteration 10
-**49 ✅ · 3 🟡 · 1 🔲** out of 53 spec sections.
+## Coverage after Iteration 11
+**52 ✅ · 1 🟡** out of 53 spec sections.
+
+## Iteration 11 (Feb 2026) — Router split (admin) · Real social publishing · Payment expansion · QR scan analytics
+
+### Router Split — Wave 2 ✅
+- Extracted `routers/admin.py` from server.py (10 endpoints, ~120 lines removed from server.py).
+- Pattern established: `register(api, db, now_iso, get_current_user, require_superadmin, hash_password, _admin_log)` — future waves will pick off `pos`, `embed`, `exports`, `journeys`.
+
+### Real social publishing ✅
+`POST /api/oauth/{provider}/publish` now actually calls provider APIs when connected + not scheduled:
+- **Facebook Pages**: `POST /{page_id}/photos` (with image) or `/feed` (text + optional link).
+- **Instagram Business**: 2-step — create media container → publish.
+- **LinkedIn**: `POST /v2/ugcPosts` with member/org URN + optional article link.
+- **Mailchimp**: create campaign → set HTML → send.
+- **TikTok**: returns 501 immediately (hoisted above token check) with clear "requires video content + production API approval" message.
+- Scheduled path (`scheduled_at` set) queues in `social_posts` collection without hitting the provider.
+
+### Payment providers expansion ✅
+New `routers/payments_alt.py`:
+- `GET /api/billing/providers` — Stripe (configured) + PayPal, Razorpay, Paystack (returns `configured: false` + exact env-var list when unset).
+- `POST /api/billing/alt-checkout` — creates real subscription checkout with PayPal Billing / Razorpay Subscriptions / Paystack Transactions when keys are present; returns clean 501 with `Set X in backend/.env` when not.
+- Frontend `/pricing`: `payment-provider-selector` row with 4 chips; disabled providers show `(setup)` suffix.
+
+### QR scan analytics ✅
+- `POST /api/qr/preview {tracking: true, save: true, origin_url}` — rewrites URL payload to a short redirect service and stores `destination` server-side.
+- `GET /api/qr/r/{tracking_id}` — public 302 redirect + increments `scan_count` + logs event (UA, IP, referer, timestamp) to `qr_scans` collection.
+- `GET /api/qr/saved/{qid}/scans` — returns `{scan_count, scans:[…], trackable}`.
+- Frontend `/qr`: `qr-tracking-toggle` checkbox, live scan-count chip on each saved-QR card.
+- **URL scheme allowlist** — only `http://` and `https://` allowed (blocks `javascript:`, `data:`, `file:` etc.).
+
+### Testing (iter-11)
+- **36/36 backend pytest passed** in ~6s. **4/4 frontend flows passed**. Zero critical bugs.
+
+### Post-testing hardenings applied
+- **TikTok 501** hoisted above token check — real users now see the accurate "coming in Phase 4" message immediately instead of a red-herring "not connected".
+- **OAuth `configured` flag** now requires BOTH client_id_env AND client_secret_env (was false-positive with partial config).
+- **Encryption fallback logging** — emits a warning if `encrypt_str/decrypt_str` fails to import from server, so ops sees plaintext-storage regression.
+- **QR redirect URL scheme allowlist** — `http://` and `https://` only, preventing `javascript:` and `data:` scheme redirect abuse.
+
+## Backlog (P1)
+1. **Continue server.py router split** — auth · coupons · campaigns · pos_webhooks · journeys · ai_copy · analytics · exports · embed · customers · library · api_keys still in server.py (~2600 lines remaining). Each future wave shrinks server.py further.
+2. **Provision real OAuth apps** for FB/IG/LinkedIn/Mailchimp/TikTok — code path is complete; just needs `FACEBOOK_APP_ID`, etc. in env.
+3. **Provision real payment keys** for PayPal/Razorpay/Paystack — code path is complete; add `PAYPAL_CLIENT_ID`, etc.
+4. **QR scan de-dup** — same per-IP+per-tracking cool-off idea as `funnel.views`. Naive counter today.
+5. **Razorpay INR default** — currently hardcoded USD in plan; INR/UPI is Razorpay's primary market.
+6. **Radix DialogDescription a11y** — add descriptions to all `DialogContent`s to remove SR warnings.
+
 
 ## Iteration 10 (Feb 2026) — QR Studio + Login layout fix
 

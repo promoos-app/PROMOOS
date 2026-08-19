@@ -24,6 +24,8 @@ export default function QRStudio() {
   const [ec, setEc] = useState("H");
   const [logoUploadId, setLogoUploadId] = useState(null);
   const [label, setLabel] = useState("");
+  const [tracking, setTracking] = useState(false);
+  const [scanCount, setScanCount] = useState(null);
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -74,10 +76,21 @@ export default function QRStudio() {
   const save = async () => {
     setSaving(true);
     try {
-      await api.post("/qr/preview", { ...payload, save: true, label: label || null });
-      toast.success("Saved");
+      const { data } = await api.post("/qr/preview", {
+        ...payload, save: true, label: label || null,
+        tracking, origin_url: tracking ? window.location.origin : undefined,
+      });
+      toast.success(tracking ? "Saved with scan tracking enabled" : "Saved");
+      if (data.tracking_id) setScanCount({ id: data.saved_id, tracking_id: data.tracking_id, count: 0 });
       loadSaved();
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
+  };
+
+  const loadScans = async (qid) => {
+    try {
+      const { data } = await api.get(`/qr/saved/${qid}/scans`);
+      setScanCount({ id: qid, count: data.scan_count, scans: data.scans });
+    } catch {}
   };
 
   const del = async (id) => {
@@ -310,6 +323,24 @@ export default function QRStudio() {
               <Download className="w-4 h-4" /> Download PNG
             </Button>
           </div>
+          {contentType === "url" && (
+            <label className="flex items-center gap-2 text-xs text-[#A1A1AA] px-1 cursor-pointer" data-testid="qr-tracking-toggle-label">
+              <input type="checkbox" checked={tracking} onChange={(e) => setTracking(e.target.checked)} data-testid="qr-tracking-toggle" className="rounded" />
+              <Sparkles className="w-3 h-3 text-[#CCFF00]" />
+              Enable scan tracking (URL redirect adds analytics)
+            </label>
+          )}
+          {scanCount && (
+            <div className="surface rounded-lg p-4 text-sm" data-testid="qr-scan-analytics">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs uppercase tracking-widest text-[#71717A]">Scans</div>
+                  <div className="text-2xl font-bold text-[#CCFF00]">{scanCount.count}</div>
+                </div>
+                <div className="text-[10px] text-[#71717A] text-right">Last {scanCount.scans?.length || 0} events</div>
+              </div>
+            </div>
+          )}
 
           {saved.length > 0 && (
             <div className="surface rounded-lg p-4" data-testid="qr-saved-list">
@@ -319,6 +350,11 @@ export default function QRStudio() {
                   <div key={q.id} data-testid={`qr-saved-${q.id}`} className="group relative border border-[#27272A] rounded-md p-3 bg-[#0A0A0A]">
                     <div className="text-xs font-medium truncate mb-0.5">{q.label}</div>
                     <div className="text-[10px] text-[#71717A] capitalize">{q.content_type} · {q.style}</div>
+                    {q.tracking_id && (
+                      <button onClick={() => loadScans(q.id)} className="mt-1 text-[10px] text-[#CCFF00] hover:underline flex items-center gap-1" data-testid={`qr-saved-scans-${q.id}`}>
+                        <Sparkles className="w-2.5 h-2.5" /> {q.scan_count || 0} scans
+                      </button>
+                    )}
                     <button onClick={() => del(q.id)} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 text-red-400 hover:bg-red-500/10 rounded p-1 transition"
                       data-testid={`qr-saved-delete-${q.id}`}>
                       <Trash2 className="w-3 h-3" />

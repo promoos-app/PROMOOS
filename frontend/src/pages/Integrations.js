@@ -14,7 +14,10 @@ function OAuthConnector({ provider, label, icon, hint, tokens, providers, onChan
   const token = tokens.find((t) => t.provider === provider);
   const [apiKey, setApiKey] = useState("");
   const [open, setOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [postContent, setPostContent] = useState("");
+  const [postImage, setPostImage] = useState("");
 
   const connectOAuth = async () => {
     setBusy(true);
@@ -36,6 +39,17 @@ function OAuthConnector({ provider, label, icon, hint, tokens, providers, onChan
     if (!window.confirm(`Disconnect ${label}?`)) return;
     await api.delete(`/oauth/${provider}`); toast.success("Disconnected"); onChange?.();
   };
+  const publish = async () => {
+    if (!postContent.trim()) { toast.error("Message required"); return; }
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/oauth/${provider}/publish`, {
+        content: postContent, image_url: postImage || null,
+      });
+      toast.success(`Published to ${label}${data.provider_post_id ? ` · ${data.provider_post_id.slice(0, 12)}…` : ""}`);
+      setPublishOpen(false); setPostContent(""); setPostImage("");
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+  };
 
   return (
     <div className="surface rounded-lg p-5" data-testid={`connector-${provider}`}>
@@ -48,11 +62,44 @@ function OAuthConnector({ provider, label, icon, hint, tokens, providers, onChan
       </div>
       <p className="text-xs text-[#A1A1AA] leading-relaxed mb-3">{hint}</p>
       {token ? (
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-[10px] font-mono text-[#71717A]">{token.access_token_preview}</div>
-          <Button data-testid={`disconnect-${provider}`} onClick={disconnect} className="btn-ghost rounded-md text-xs gap-1">
-            <Trash2 className="w-3 h-3" /> Disconnect
-          </Button>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[10px] font-mono text-[#71717A]">{token.access_token_preview}</div>
+            <div className="flex gap-1">
+              <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
+                <DialogTrigger asChild>
+                  <Button data-testid={`publish-${provider}`} className="btn-ghost rounded-md text-xs gap-1">
+                    <LinkIcon className="w-3 h-3" /> Publish
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="bg-[#141414] border-[#27272A] text-white">
+                  <DialogHeader><DialogTitle>Publish to {label}</DialogTitle></DialogHeader>
+                  <div className="space-y-3">
+                    <div>
+                      <Label className="text-xs text-[#A1A1AA]">Message</Label>
+                      <textarea data-testid={`publish-content-${provider}`} value={postContent} onChange={(e) => setPostContent(e.target.value)} rows={4}
+                        className="mt-1 w-full bg-[#0A0A0A] border border-[#27272A] text-white rounded-md p-2 text-sm"
+                        placeholder="Big news — 20% off this week with code WINTER20…" />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-[#A1A1AA]">Image URL (optional)</Label>
+                      <Input data-testid={`publish-image-${provider}`} value={postImage} onChange={(e) => setPostImage(e.target.value)}
+                        className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" placeholder="https://…jpg" />
+                      <div className="text-[10px] text-[#71717A] mt-1">Instagram requires an image.</div>
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button data-testid={`publish-submit-${provider}`} onClick={publish} disabled={busy} className="btn-primary rounded-md gap-1">
+                      {busy && <Loader2 className="w-3 h-3 spin" />} Publish now
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+              <Button data-testid={`disconnect-${provider}`} onClick={disconnect} className="btn-ghost rounded-md text-xs gap-1">
+                <Trash2 className="w-3 h-3" /> Disconnect
+              </Button>
+            </div>
+          </div>
         </div>
       ) : cfg?.mode === "api_key" ? (
         <Dialog open={open} onOpenChange={setOpen}>

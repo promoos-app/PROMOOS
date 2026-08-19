@@ -11,11 +11,14 @@ export default function Pricing() {
   const nav = useNavigate();
   const { user } = useAuth();
   const [plans, setPlans] = useState([]);
+  const [providers, setProviders] = useState([]);
   const [busy, setBusy] = useState(null);
   const [sub, setSub] = useState(null);
+  const [provider, setProvider] = useState("stripe");
 
   useEffect(() => {
     api.get("/billing/plans").then((r) => setPlans(r.data.plans)).catch(() => {});
+    api.get("/billing/providers").then((r) => setProviders(r.data.providers)).catch(() => {});
     if (user) api.get("/billing/subscription").then((r) => setSub(r.data)).catch(() => {});
   }, [user]);
 
@@ -23,10 +26,16 @@ export default function Pricing() {
     if (!user) { nav("/login?next=/pricing"); return; }
     setBusy(lookup_key);
     try {
-      const { data } = await api.post("/billing/checkout", {
-        lookup_key,
-        origin_url: window.location.origin,
-      });
+      let data;
+      if (provider === "stripe") {
+        ({ data } = await api.post("/billing/checkout", {
+          lookup_key, origin_url: window.location.origin,
+        }));
+      } else {
+        ({ data } = await api.post("/billing/alt-checkout", {
+          provider, lookup_key, origin_url: window.location.origin,
+        }));
+      }
       window.location.href = data.checkout_url;
     } catch (e) {
       toast.error(apiError(e));
@@ -52,6 +61,21 @@ export default function Pricing() {
         {sub?.status === "active" && (
           <div className="mb-6 text-center text-sm text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-md py-2" data-testid="active-plan-banner">
             You are on <span className="font-bold">{sub.plan}</span>.
+          </div>
+        )}
+
+        {providers.length > 0 && (
+          <div className="flex flex-wrap items-center justify-center gap-2 mb-8" data-testid="payment-provider-selector">
+            <span className="text-xs uppercase tracking-widest text-[#71717A] mr-2">Pay with</span>
+            {providers.map((p) => (
+              <button key={p.id} onClick={() => p.configured && setProvider(p.id)}
+                data-testid={`provider-${p.id}`}
+                disabled={!p.configured}
+                title={p.configured ? p.note : `Not configured — ${(p.env_needed || []).join(", ")}`}
+                className={`px-3 py-1.5 rounded-md text-xs uppercase tracking-widest border ${provider === p.id ? "bg-[#CCFF00] text-[#0A0A0A] border-[#CCFF00] font-bold" : p.configured ? "border-[#27272A] text-white hover:border-[#CCFF00]/50" : "border-[#27272A] text-[#52525B] cursor-not-allowed"}`}>
+                {p.label}{!p.configured && " (setup)"}
+              </button>
+            ))}
           </div>
         )}
 

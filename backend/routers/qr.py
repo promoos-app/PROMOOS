@@ -5,7 +5,7 @@ optional center logo overlay, per-QR error correction level.
 """
 import io, base64, re, uuid
 from typing import Optional
-from fastapi import HTTPException, Depends, Response
+from fastapi import HTTPException, Depends, Response, Request
 from pydantic import BaseModel
 
 import qrcode
@@ -43,6 +43,9 @@ def _build_payload(content_type: str, data: dict) -> str:
         v = (data.get("url") or "").strip()
         if not v: raise HTTPException(400, "url is required")
         if not v.startswith(("http://", "https://")): v = "https://" + v
+        # Allowlist http/https schemes only — prevents javascript:, data:, file: etc. in redirect service.
+        if not v.startswith(("http://", "https://")):
+            raise HTTPException(400, "URL must use http:// or https://")
         return v
     if ct == "text":
         return data.get("text") or ""
@@ -153,6 +156,8 @@ def register(api, db, now_iso, get_current_user, require_writer):
         logo_upload_id: Optional[str] = None
         save: bool = False
         label: Optional[str] = None
+        tracking: bool = False
+        origin_url: Optional[str] = None
 
     @api.get("/qr/options")
     async def qr_options():
@@ -178,6 +183,20 @@ def register(api, db, now_iso, get_current_user, require_writer):
     @api.post("/qr/preview")
     async def qr_preview(body: QRRequest, user: dict = Depends(get_current_user)):
         payload = _build_payload(body.content_type, body.data or {})
+        tracking_id = None
+        destination = None
+        # Tracking mode (URL only): rewrite payload to a redirect service so scans can be counted.
+        if body.tracking and body.content_type == "url" and body.save:
+            require_writer(user)
+            tracking_id = uuid.uuid4().hex[:10]
+            origin = (body.origin_url or "").rstrip("/")
+            if not origin:
+                import os as _os
+                origin = (_os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
+            if not origin:
+                raise HTTPException(400, "origin_url required for tracking mode")
+            destination = payload
+            payload = f"{origin}/api/qr/r/{tracking_id}"
         logo_bytes = None
         if body.logo_upload_id:
             up = await db.uploads.find_one(
@@ -223,6 +242,9 @@ def register(api, db, now_iso, get_current_user, require_writer):
                 "label": body.label or f"{body.content_type.upper()} · {payload[:40]}",
                 "content_type": body.content_type,
                 "payload": payload,
+                "destination": destination if tracking_id else None,
+                "tracking_id": tracking_id,
+                "scan_count": 0,
                 "style": body.style,
                 "color_mask": body.color_mask,
                 "front_color": body.front_color,
@@ -236,7 +258,42 @@ def register(api, db, now_iso, get_current_user, require_writer):
             }
             await db.qr_codes.insert_one({**doc})
             result["saved_id"] = doc["id"]
+            if tracking_id:
+                result["tracking_id"] = tracking_id
+                result["scan_url"] = payload
         return result
+
+    @api.get("/qr/r/{tracking_id}")
+    async def qr_redirect(tracking_id: str, request: Request):
+        from fastapi.responses import RedirectResponse
+        q = await db.qr_codes.find_one({"tracking_id": tracking_id}, {"_id": 0})
+        if not q or not q.get("destination"):
+            raise HTTPException(404, "QR code not found or not trackable")
+        # Fire-and-forget scan log with best-effort UA + IP.
+        try:
+            await db.qr_codes.update_one({"tracking_id": tracking_id},
+                {"$inc": {"scan_count": 1}, "$set": {"last_scan_at": now_iso()}})
+            await db.qr_scans.insert_one({
+                "id": str(uuid.uuid4()),
+                "tracking_id": tracking_id,
+                "workspace_id": q.get("workspace_id"),
+                "ua": request.headers.get("user-agent", ""),
+                "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else ""),
+                "referer": request.headers.get("referer", ""),
+                "scanned_at": now_iso(),
+            })
+        except Exception:
+            pass
+        return RedirectResponse(url=q["destination"], status_code=302)
+
+    @api.get("/qr/saved/{qid}/scans")
+    async def qr_scan_analytics(qid: str, user: dict = Depends(get_current_user)):
+        q = await db.qr_codes.find_one({"id": qid, "workspace_id": user["workspace_id"]}, {"_id": 0})
+        if not q: raise HTTPException(404, "Not found")
+        scans = await db.qr_scans.find(
+            {"tracking_id": q.get("tracking_id")}, {"_id": 0}
+        ).sort("scanned_at", -1).to_list(500) if q.get("tracking_id") else []
+        return {"scan_count": q.get("scan_count", 0), "scans": scans, "trackable": bool(q.get("tracking_id"))}
 
     @api.post("/qr/download")
     async def qr_download(body: QRRequest, user: dict = Depends(get_current_user)):

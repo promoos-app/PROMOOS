@@ -55,6 +55,10 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
     try:
         from server import encrypt_str, decrypt_str
     except Exception:
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "OAuth token encryption DISABLED — encrypt_str/decrypt_str could not be imported from server. Tokens stored plaintext."
+        )
         def encrypt_str(s): return s
         def decrypt_str(s): return s
 
@@ -71,7 +75,7 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
         return {
             "providers": [
                 {"id": pid, "label": cfg["label"], "mode": cfg["mode"],
-                 "configured": bool(os.environ.get(cfg.get("client_id_env", ""))) or cfg["mode"] == "api_key",
+                 "configured": bool(os.environ.get(cfg.get("client_id_env", ""))) and bool(os.environ.get(cfg.get("client_secret_env", ""))) or cfg["mode"] == "api_key",
                  "env_needed": [cfg.get("client_id_env"), cfg.get("client_secret_env")] if cfg["mode"] == "oauth2" else []}
                 for pid, cfg in PROVIDERS.items()
             ]
@@ -205,13 +209,15 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
     @api.post("/oauth/{provider}/publish")
     async def publish(provider: str, body: PublishIn, user: dict = Depends(get_current_user)):
         require_writer(user)
+        # TikTok publishing requires video upload + production API approval — surface this before the connection check.
+        if provider == "tiktok":
+            raise HTTPException(501, "TikTok publishing requires video content and production API approval. Coming in Phase 4.")
         tok = await db.oauth_tokens.find_one(
             {"provider": provider, "workspace_id": user["workspace_id"], "revoked": {"$ne": True}})
         if not tok:
             raise HTTPException(400, f"{provider} not connected. Connect from /integrations first.")
-        # Persist scheduled post; a real worker would pick it up.
-        # For synchronous publish, we log the intent and return the payload that would be posted.
-        # The full provider POST is out-of-scope for this iteration but stubbed for extensibility.
+        access_token = decrypt_str(tok.get("access_token", ""))
+        metadata = tok.get("metadata") or {}
         rec = {
             "id": str(uuid.uuid4()),
             "workspace_id": user["workspace_id"],
@@ -223,6 +229,110 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
             "status": "scheduled" if body.scheduled_at else "queued",
             "created_at": now_iso(),
         }
+        # If scheduled, just queue. Real dispatch happens when scheduled_at <= now.
+        if body.scheduled_at:
+            await db.social_posts.insert_one({**rec})
+            return {**{k: v for k, v in rec.items() if k != "_id"}, "note": "Scheduled — worker will publish at scheduled_at."}
+
+        # Live publish per provider
+        import requests as _rq
+        try:
+            if provider == "facebook":
+                page_id = metadata.get("page_id") or os.environ.get("FACEBOOK_PAGE_ID")
+                if not page_id:
+                    raise HTTPException(400, "Facebook page_id missing. Save the target Page ID in metadata or FACEBOOK_PAGE_ID env.")
+                if body.image_url:
+                    r = _rq.post(f"https://graph.facebook.com/v18.0/{page_id}/photos",
+                                 data={"url": body.image_url, "caption": body.content,
+                                       "access_token": access_token}, timeout=30)
+                else:
+                    r = _rq.post(f"https://graph.facebook.com/v18.0/{page_id}/feed",
+                                 data={"message": body.content, "link": body.link_url or "",
+                                       "access_token": access_token}, timeout=30)
+                r.raise_for_status()
+                rec["provider_post_id"] = r.json().get("id") or r.json().get("post_id")
+                rec["status"] = "published"
+            elif provider == "instagram":
+                ig_user_id = metadata.get("ig_user_id") or os.environ.get("IG_BUSINESS_ACCOUNT_ID")
+                if not ig_user_id: raise HTTPException(400, "IG_BUSINESS_ACCOUNT_ID missing.")
+                if not body.image_url: raise HTTPException(400, "Instagram requires image_url.")
+                cr = _rq.post(f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
+                              data={"image_url": body.image_url, "caption": body.content,
+                                    "access_token": access_token}, timeout=30)
+                cr.raise_for_status()
+                creation_id = cr.json()["id"]
+                pub = _rq.post(f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
+                               data={"creation_id": creation_id, "access_token": access_token}, timeout=30)
+                pub.raise_for_status()
+                rec["provider_post_id"] = pub.json().get("id")
+                rec["status"] = "published"
+            elif provider == "linkedin":
+                author_urn = metadata.get("author_urn") or os.environ.get("LINKEDIN_ORG_URN")
+                if not author_urn:
+                    # Look up user's own profile URN
+                    me = _rq.get("https://api.linkedin.com/v2/userinfo",
+                                 headers={"Authorization": f"Bearer {access_token}"}, timeout=15)
+                    me.raise_for_status()
+                    author_urn = f"urn:li:person:{me.json()['sub']}"
+                post_body = {
+                    "author": author_urn,
+                    "lifecycleState": "PUBLISHED",
+                    "specificContent": {
+                        "com.linkedin.ugc.ShareContent": {
+                            "shareCommentary": {"text": body.content},
+                            "shareMediaCategory": "NONE" if not body.link_url else "ARTICLE",
+                            **({"media": [{"status": "READY", "originalUrl": body.link_url}]} if body.link_url else {}),
+                        }
+                    },
+                    "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+                }
+                r = _rq.post("https://api.linkedin.com/v2/ugcPosts",
+                             headers={"Authorization": f"Bearer {access_token}",
+                                      "Content-Type": "application/json",
+                                      "X-Restli-Protocol-Version": "2.0.0"},
+                             json=post_body, timeout=30)
+                r.raise_for_status()
+                rec["provider_post_id"] = r.headers.get("x-restli-id") or r.json().get("id")
+                rec["status"] = "published"
+            elif provider == "mailchimp":
+                dc = metadata.get("dc") or (access_token.split("-")[-1] if "-" in access_token else None)
+                if not dc: raise HTTPException(400, "Mailchimp data-center (dc) missing in metadata (e.g. 'us14').")
+                audience_id = metadata.get("audience_id") or body.link_url  # allow link_url slot to carry it
+                if not audience_id: raise HTTPException(400, "audience_id required (save in oauth metadata or pass in link_url).")
+                base = f"https://{dc}.api.mailchimp.com/3.0"
+                # Create campaign then set content then send
+                cr = _rq.post(f"{base}/campaigns",
+                              headers={"Authorization": f"Bearer {access_token}"},
+                              json={"type": "regular",
+                                    "recipients": {"list_id": audience_id},
+                                    "settings": {"subject_line": body.content[:150],
+                                                 "title": body.content[:60],
+                                                 "from_name": "PromoOS",
+                                                 "reply_to": "noreply@promoos.app"}},
+                              timeout=30)
+                cr.raise_for_status()
+                campaign_id = cr.json()["id"]
+                html = f"<html><body><p>{body.content}</p>" + (f'<p><img src="{body.image_url}" style="max-width:600px" /></p>' if body.image_url else "") + "</body></html>"
+                _rq.put(f"{base}/campaigns/{campaign_id}/content",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        json={"html": html}, timeout=30).raise_for_status()
+                _rq.post(f"{base}/campaigns/{campaign_id}/actions/send",
+                         headers={"Authorization": f"Bearer {access_token}"}, timeout=30).raise_for_status()
+                rec["provider_post_id"] = campaign_id
+                rec["status"] = "published"
+            elif provider == "tiktok":
+                # TikTok Content Posting API requires video files + business approval — stub with clear error.
+                raise HTTPException(501, "TikTok publishing requires video content and production API approval. Coming in Phase 4.")
+            else:
+                raise HTTPException(400, f"Publishing not implemented for {provider}")
+        except HTTPException:
+            raise
+        except _rq.HTTPError as e:
+            rec["status"] = "failed"
+            rec["error"] = e.response.text[:500] if e.response is not None else str(e)
+        except Exception as e:
+            rec["status"] = "failed"; rec["error"] = str(e)
         await db.social_posts.insert_one({**rec})
-        return {**{k: v for k, v in rec.items() if k != "_id"},
-                "note": "Post queued. Actual delivery requires the provider's OAuth app to be approved for production API access."}
+        if rec["status"] == "failed":
+            raise HTTPException(502, f"{provider} publish failed: {rec.get('error', 'unknown')}")
+        return {**{k: v for k, v in rec.items() if k != "_id"}}
