@@ -16,8 +16,10 @@ def register(api, db, now_iso, get_current_user):
         origin_url: str
 
     PLANS = {
-        "basic_monthly": {"name": "Basic", "amount_cents": 4900, "currency": "USD", "interval": "MONTH", "trial_days": 3},
-        "pro_monthly": {"name": "Pro", "amount_cents": 7900, "currency": "USD", "interval": "MONTH", "trial_days": 3},
+        "basic_monthly": {"name": "Basic", "amount_cents": 4900, "currency": "USD", "interval": "MONTH", "trial_days": 3,
+                          "razorpay_currency": "INR", "razorpay_amount_paise": 407500},   # ≈$49 in INR (roughly ₹4075)
+        "pro_monthly": {"name": "Pro", "amount_cents": 7900, "currency": "USD", "interval": "MONTH", "trial_days": 3,
+                        "razorpay_currency": "INR", "razorpay_amount_paise": 657000},     # ≈$79 in INR
     }
 
     def _need(env_var):
@@ -109,12 +111,14 @@ def register(api, db, now_iso, get_current_user):
     def razorpay_checkout(lookup_key, ws_id, user_id):
         plan = PLANS[lookup_key]
         auth = razorpay_auth()
-        # Create or reuse plan
+        # Razorpay's primary market is India — use INR + UPI-friendly amounts by default.
+        currency = plan.get("razorpay_currency", "INR")
+        amount = plan.get("razorpay_amount_paise", plan["amount_cents"])
         rp = requests.post(f"{RAZORPAY_BASE}/plans", auth=auth,
                            json={"period": "monthly", "interval": 1,
                                  "item": {"name": f"PromoOS {plan['name']}",
-                                          "amount": plan["amount_cents"],
-                                          "currency": "USD",
+                                          "amount": amount,
+                                          "currency": currency,
                                           "description": "Subscription plan"}},
                            timeout=15)
         rp.raise_for_status()

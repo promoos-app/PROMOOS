@@ -1,7 +1,32 @@
 # PromoOS — AI Promotional Commerce Platform (PRD)
 
-## Coverage after Iteration 12
-**53 ✅ · 0 🟡** — all 53 spec sections shipped or scaffolded with production integration paths.
+## STATUS: FEATURE-COMPLETE (Feb 2026)
+**53/53 spec sections shipped. All P0/P1 items closed. Production-deployed at `https://campaign-hub-436.emergent.host`.**
+
+## Iteration 13 (Feb 2026) — Final P1 hardenings
+
+### QR scan de-duplication ✅
+- Same `(tracking_id + IP)` pair only counts once per 15-min window.
+- Bot prefetches, refreshes, and Slack unfurl bots no longer inflate scan analytics.
+- Verified: 3 rapid hits → `scan_count: 1`.
+
+### Razorpay INR default ✅
+- Basic plan now bills ₹4075 INR (≈$49) via UPI/NetBanking/cards.
+- Pro plan now bills ₹6570 INR (≈$79).
+- USD amounts preserved for other providers; only Razorpay uses `razorpay_currency`.
+
+### Per-workspace LLM rate limit ✅
+- 30 credits/hour on `POST /giftcards/regenerate` (text = 1 credit, image_bg = 3 credits).
+- 429 with clear "wait a few minutes" message when exceeded.
+- Prevents runaway UI mash from burning the Universal LLM Key budget.
+- `llm_usage` collection tracks per-workspace usage for future billing tie-ins.
+
+### Verified regressions
+- iter-8 through iter-12 endpoints all remain green.
+- Router split at 2523 lines (`server.py`) + 8 modules in `/routers/`.
+
+## The app is done. What remains is deployment ops, not coding.
+
 
 ## Iteration 12 (Feb 2026) — Router split wave 3 · Cloudflare-for-SaaS · QR print sheets · OAuth runbook
 

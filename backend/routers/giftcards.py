@@ -182,6 +182,22 @@ def register(api, db, EMERGENT_LLM_KEY, now_iso, get_current_user, require_write
         require_writer(user)
         if not EMERGENT_LLM_KEY:
             raise HTTPException(501, "EMERGENT_LLM_KEY not configured")
+        # Per-workspace rate limit — 30 AI regens per rolling hour. Image regens count 3x (nano-banana is pricier).
+        from datetime import datetime, timezone, timedelta
+        cost = 3 if body.field in ("background", "image_bg") else 1
+        window_start = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        used = await db.llm_usage.aggregate([
+            {"$match": {"workspace_id": user["workspace_id"], "at": {"$gte": window_start}}},
+            {"$group": {"_id": None, "total": {"$sum": "$cost"}}},
+        ]).to_list(1)
+        used_amt = (used[0]["total"] if used else 0)
+        LIMIT = 30
+        if used_amt + cost > LIMIT:
+            raise HTTPException(429, f"AI rate limit reached: {used_amt}/{LIMIT} credits used in the last hour. Wait a few minutes and try again.")
+        await db.llm_usage.insert_one({
+            "workspace_id": user["workspace_id"], "user_id": user["id"],
+            "field": body.field, "cost": cost, "at": now_iso(),
+        })
         field = body.field
         if field in ("headline", "subline", "message"):
             # Use Emergent LLM text (Claude sonnet-5) via emergentintegrations

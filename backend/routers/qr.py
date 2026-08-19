@@ -269,19 +269,27 @@ def register(api, db, now_iso, get_current_user, require_writer):
         q = await db.qr_codes.find_one({"tracking_id": tracking_id}, {"_id": 0})
         if not q or not q.get("destination"):
             raise HTTPException(404, "QR code not found or not trackable")
-        # Fire-and-forget scan log with best-effort UA + IP.
+        # Per-IP+per-tracking 15-min cool-off so bot prefetches and refreshes don't inflate counts.
+        client_ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                     or (request.client.host if request.client else ""))
         try:
-            await db.qr_codes.update_one({"tracking_id": tracking_id},
-                {"$inc": {"scan_count": 1}, "$set": {"last_scan_at": now_iso()}})
-            await db.qr_scans.insert_one({
-                "id": str(uuid.uuid4()),
-                "tracking_id": tracking_id,
-                "workspace_id": q.get("workspace_id"),
-                "ua": request.headers.get("user-agent", ""),
-                "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else ""),
-                "referer": request.headers.get("referer", ""),
-                "scanned_at": now_iso(),
-            })
+            from datetime import datetime, timezone, timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+            recent = await db.qr_scans.find_one({
+                "tracking_id": tracking_id, "ip": client_ip,
+                "scanned_at": {"$gte": cutoff}})
+            if not recent:
+                await db.qr_codes.update_one({"tracking_id": tracking_id},
+                    {"$inc": {"scan_count": 1}, "$set": {"last_scan_at": now_iso()}})
+                await db.qr_scans.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "tracking_id": tracking_id,
+                    "workspace_id": q.get("workspace_id"),
+                    "ua": request.headers.get("user-agent", ""),
+                    "ip": client_ip,
+                    "referer": request.headers.get("referer", ""),
+                    "scanned_at": now_iso(),
+                })
         except Exception:
             pass
         return RedirectResponse(url=q["destination"], status_code=302)
