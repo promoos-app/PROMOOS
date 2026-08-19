@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Download, Save, Trash2, QrCode, Sparkles, Link as LinkIcon, Phone, MessageSquare, Mail, Wifi, User, FileText } from "lucide-react";
+import { Loader2, Download, Save, Trash2, QrCode, Sparkles, Link as LinkIcon, Phone, MessageSquare, Mail, Wifi, User, FileText, Printer } from "lucide-react";
 
 const CONTENT_TYPE_ICONS = {
   url: LinkIcon, text: FileText, phone: Phone, sms: MessageSquare,
@@ -104,6 +104,21 @@ export default function QRStudio() {
       const { data } = await api.post("/uploads", fd, { headers: { "Content-Type": "multipart/form-data" } });
       setLogoUploadId(data.id);
       toast.success("Logo attached");
+    } catch (e) { toast.error(apiError(e)); }
+  };
+
+  const [selectedForPrint, setSelectedForPrint] = useState([]);
+  const [printFormat, setPrintFormat] = useState("a4");
+  const toggleSelect = (id) => setSelectedForPrint((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+  const printSheet = async () => {
+    if (!selectedForPrint.length) { toast.error("Select at least one QR"); return; }
+    try {
+      const res = await api.post("/qr/print-sheet", { ids: selectedForPrint, format: printFormat, columns: 3 }, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url;
+      a.download = `qr-sheet-${selectedForPrint.length}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      toast.success(`Downloaded ${selectedForPrint.length}-QR sheet`);
     } catch (e) { toast.error(apiError(e)); }
   };
 
@@ -344,24 +359,39 @@ export default function QRStudio() {
 
           {saved.length > 0 && (
             <div className="surface rounded-lg p-4" data-testid="qr-saved-list">
-              <div className="text-xs uppercase tracking-widest text-[#71717A] mb-3">Your saved QR codes ({saved.length})</div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-xs uppercase tracking-widest text-[#71717A]">Your saved QR codes ({saved.length})</div>
+                <div className="flex items-center gap-2">
+                  <select value={printFormat} onChange={(e) => setPrintFormat(e.target.value)} data-testid="qr-print-format"
+                    className="h-8 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white px-2 text-xs">
+                    <option value="a4">A4</option><option value="letter">US Letter</option>
+                  </select>
+                  <Button data-testid="qr-print-sheet-btn" onClick={printSheet} disabled={!selectedForPrint.length}
+                    className="btn-primary rounded-md text-xs gap-1">
+                    <Printer className="w-3 h-3" /> Print sheet ({selectedForPrint.length})
+                  </Button>
+                </div>
+              </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {saved.map((q) => (
-                  <div key={q.id} data-testid={`qr-saved-${q.id}`} className="group relative border border-[#27272A] rounded-md p-3 bg-[#0A0A0A]">
+                  <div key={q.id} data-testid={`qr-saved-${q.id}`}
+                    onClick={() => toggleSelect(q.id)}
+                    className={`group relative border rounded-md p-3 bg-[#0A0A0A] cursor-pointer transition ${selectedForPrint.includes(q.id) ? "border-[#CCFF00] ring-2 ring-[#CCFF00]/30" : "border-[#27272A] hover:border-[#3f3f46]"}`}>
                     <div className="text-xs font-medium truncate mb-0.5">{q.label}</div>
                     <div className="text-[10px] text-[#71717A] capitalize">{q.content_type} · {q.style}</div>
                     {q.tracking_id && (
-                      <button onClick={() => loadScans(q.id)} className="mt-1 text-[10px] text-[#CCFF00] hover:underline flex items-center gap-1" data-testid={`qr-saved-scans-${q.id}`}>
+                      <button onClick={(e) => { e.stopPropagation(); loadScans(q.id); }} className="mt-1 text-[10px] text-[#CCFF00] hover:underline flex items-center gap-1" data-testid={`qr-saved-scans-${q.id}`}>
                         <Sparkles className="w-2.5 h-2.5" /> {q.scan_count || 0} scans
                       </button>
                     )}
-                    <button onClick={() => del(q.id)} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 text-red-400 hover:bg-red-500/10 rounded p-1 transition"
+                    <button onClick={(e) => { e.stopPropagation(); del(q.id); }} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 text-red-400 hover:bg-red-500/10 rounded p-1 transition"
                       data-testid={`qr-saved-delete-${q.id}`}>
                       <Trash2 className="w-3 h-3" />
                     </button>
                   </div>
                 ))}
               </div>
+              <div className="text-[10px] text-[#71717A] mt-2">Tap cards to select for the printable sheet.</div>
             </div>
           )}
         </div>

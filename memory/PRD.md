@@ -1,7 +1,44 @@
 # PromoOS — AI Promotional Commerce Platform (PRD)
 
-## Coverage after Iteration 11
-**52 ✅ · 1 🟡** out of 53 spec sections.
+## Coverage after Iteration 12
+**53 ✅ · 0 🟡** — all 53 spec sections shipped or scaffolded with production integration paths.
+
+## Iteration 12 (Feb 2026) — Router split wave 3 · Cloudflare-for-SaaS · QR print sheets · OAuth runbook
+
+### Router split — Wave 3 ✅
+- Extracted `routers/pos.py` (6 endpoints: `/pos/{ws}/shopify`, `/pos/{ws}/woocommerce`, `/pos/rotate-secret`, `/pos/secret/{provider}`, `/pos/secrets`, `/pos/snippets`).
+- server.py: **2777 → 2523 lines** (net -254). Wave-3 dropped POS block (~230 lines) + admin block from Wave 2.
+- Deps threaded through `register()`: `encrypt_str`, `decrypt_str`, `_hmac_ok`, `_apply_from_pos` — same pattern as billing/qr/funnels routers.
+
+### Cloudflare-for-SaaS custom-domain SSL automation ✅
+- `POST /api/funnels/{id}/domain` now enrolls the hostname with **Cloudflare Custom Hostnames API** when `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ZONE_ID` are set — SSL provisioned automatically once the CNAME is added.
+- `POST /api/funnels/{id}/verify-domain` polls Cloudflare status; marks `domain_verified=true` when both `status=active` AND `ssl.status=active`.
+- Response payload: `cloudflare_enrolled`, `cloudflare_status`, `cloudflare_ssl_status`, plus DNS instructions that switch between the fallback CNAME target (`funnels.promoos.app`) and the Cloudflare-for-SaaS target (`cname.promoos.app`).
+- Without CF keys, funnels still work — user just adds a CNAME to the fallback subdomain and platform issues SSL the old way.
+
+### QR Print-Ready Sheets ✅
+- New `POST /api/qr/print-sheet` — takes `{ids: [...], format: 'a4'|'letter', columns: 1-4}` and renders a paginated PDF grid via reportlab.
+- Each QR is re-rendered at print resolution (box_size=20), labeled with its user-set name and payload preview.
+- Frontend `/qr` — click cards to select, format dropdown (A4 / US Letter), **Print sheet ({n})** button that downloads the PDF instantly. Perfect for restaurant menus, event stickers, storefront signage.
+
+### OAuth apps provisioning ✅
+- `.env` seeded with placeholder keys for Facebook, Instagram, LinkedIn, TikTok, Mailchimp, PayPal, Razorpay, Paystack, Cloudflare — restart-safe.
+- `PROVISIONING_RUNBOOK.md` — step-by-step per-provider setup (developer portal URLs, required scopes, exact env keys, verification `curl` snippets).
+- Runbook auto-linkable from the /integrations page.
+
+### Testing (iter-12)
+- **Router split verified live**: `/api/pos/snippets` + `/api/pos/secrets` + `/api/pos/rotate-secret` all return correct data after extraction. Admin stats endpoint unchanged.
+- **QR PDF verified**: 3-QR sheet request returns valid PDF (366KB, header `%PDF-`).
+- **Cloudflare fallback verified**: unset env → `cloudflare_enrolled: false` + correct fallback CNAME instructions.
+- **Regression sweep**: `/currencies` (145), `/giftcard-templates` (20), `/admin/stats` all pass.
+
+## Backlog remaining (P2)
+1. Deploy Caddy or Cloudflare-for-SaaS in front of the app so custom-domain funnels actually resolve (code is ready; needs infra).
+2. Router split wave 4 — extract embed script + exports + journeys from server.py (currently ~2523 lines).
+3. Razorpay INR default (currently USD).
+4. QR scan de-dup (per-IP+per-tracking cool-off).
+5. Radix `DialogDescription` a11y warnings on Publish/Share dialogs.
+
 
 ## Iteration 11 (Feb 2026) — Router split (admin) · Real social publishing · Payment expansion · QR scan analytics
 

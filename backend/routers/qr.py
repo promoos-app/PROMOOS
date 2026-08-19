@@ -295,6 +295,76 @@ def register(api, db, now_iso, get_current_user, require_writer):
         ).sort("scanned_at", -1).to_list(500) if q.get("tracking_id") else []
         return {"scan_count": q.get("scan_count", 0), "scans": scans, "trackable": bool(q.get("tracking_id"))}
 
+    class QRSheetIn(BaseModel):
+        ids: list[str]
+        format: str = "a4"  # a4 | letter
+        columns: int = 3
+
+    @api.post("/qr/print-sheet")
+    async def qr_print_sheet(body: QRSheetIn, user: dict = Depends(get_current_user)):
+        """Renders selected saved QRs onto a printable PDF grid (A4 or US Letter)."""
+        if not body.ids:
+            raise HTTPException(400, "ids required")
+        docs = await db.qr_codes.find(
+            {"id": {"$in": body.ids}, "workspace_id": user["workspace_id"]},
+            {"_id": 0}
+        ).to_list(60)
+        if not docs:
+            raise HTTPException(404, "No QR codes found")
+
+        try:
+            from reportlab.lib.pagesizes import A4, LETTER
+            from reportlab.pdfgen import canvas as _canvas
+            from reportlab.lib.utils import ImageReader
+        except Exception as e:
+            raise HTTPException(502, f"reportlab not available: {e}")
+
+        page_size = A4 if body.format.lower() == "a4" else LETTER
+        cols = max(1, min(4, int(body.columns or 3)))
+        buf = io.BytesIO()
+        c = _canvas.Canvas(buf, pagesize=page_size)
+        pw, ph = page_size
+        margin = 36  # 0.5 inch
+        gap = 12
+        cell_w = (pw - 2 * margin - (cols - 1) * gap) / cols
+        cell_h = cell_w + 32  # extra for label
+        x = margin; y = ph - margin - cell_h
+        col = 0
+        for d in docs:
+            # Render each QR PNG fresh at high resolution.
+            try:
+                png = _render_qr(
+                    d.get("payload", ""), d.get("style", "square"), d.get("color_mask", "solid"),
+                    d.get("front_color", "#0A0A0A"), d.get("back_color", "#FFFFFF"),
+                    d.get("edge_color", "#0A0A0A"), d.get("error_correction", "H"),
+                    box_size=20, border=2, logo_bytes=None,
+                )
+            except Exception:
+                continue
+            img = ImageReader(io.BytesIO(png))
+            c.drawImage(img, x, y + 32, cell_w, cell_w, preserveAspectRatio=True, mask="auto")
+            # Label under QR
+            c.setFont("Helvetica-Bold", 9)
+            label = (d.get("label") or d.get("content_type") or "")[:60]
+            c.drawCentredString(x + cell_w / 2, y + 18, label)
+            c.setFont("Helvetica", 7)
+            c.setFillGray(0.4)
+            c.drawCentredString(x + cell_w / 2, y + 6, (d.get("payload") or "")[:80])
+            c.setFillGray(0)
+            col += 1
+            if col >= cols:
+                col = 0
+                x = margin
+                y -= cell_h + gap
+                if y < margin:
+                    c.showPage(); y = ph - margin - cell_h
+            else:
+                x += cell_w + gap
+        c.save()
+        pdf = buf.getvalue()
+        return Response(content=pdf, media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="qr-sheet-{len(docs)}.pdf"'})
+
     @api.post("/qr/download")
     async def qr_download(body: QRRequest, user: dict = Depends(get_current_user)):
         payload = _build_payload(body.content_type, body.data or {})

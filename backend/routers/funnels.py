@@ -7,7 +7,7 @@ Block: { id, type, props }
 
 Block types: hero, features, coupon, giftcard, cta, testimonial, faq, footer, image, heading, paragraph, video, spacer
 """
-import uuid, re
+import uuid, re, os
 from typing import Optional, List
 from fastapi import HTTPException, Depends, Request
 from pydantic import BaseModel
@@ -255,25 +255,65 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
         if r.matched_count == 0: raise HTTPException(404, "Not found")
         return {"ok": True}
 
+    def _cloudflare_ready():
+        return bool(os.environ.get("CLOUDFLARE_API_TOKEN") and os.environ.get("CLOUDFLARE_ZONE_ID"))
+
+    async def _cloudflare_provision(domain: str, funnel_id: str):
+        """Call Cloudflare-for-SaaS Custom Hostnames API to enroll the domain and issue SSL.
+        Returns (cf_id, verification_status). Requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ZONE_ID env.
+        """
+        import requests as _rq
+        token = os.environ["CLOUDFLARE_API_TOKEN"]
+        zone = os.environ["CLOUDFLARE_ZONE_ID"]
+        r = _rq.post(
+            f"https://api.cloudflare.com/client/v4/zones/{zone}/custom_hostnames",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"hostname": domain,
+                  "ssl": {"method": "http", "type": "dv",
+                          "settings": {"http2": "on", "min_tls_version": "1.2"}},
+                  "custom_metadata": {"funnel_id": funnel_id, "source": "promoos"}},
+            timeout=30)
+        if r.status_code >= 400:
+            errs = r.json().get("errors", []) if r.headers.get("content-type", "").startswith("application/json") else []
+            msg = "; ".join(str(e.get("message", "")) for e in errs) or r.text[:200]
+            raise HTTPException(502, f"Cloudflare error: {msg}")
+        data = r.json().get("result") or {}
+        return data.get("id"), data.get("status", "pending")
+
     @api.post("/funnels/{fid}/domain")
     async def set_custom_domain(fid: str, body: DomainSet, user: dict = Depends(get_current_user)):
         require_writer(user)
         domain = body.domain.lower().strip().rstrip("/")
         if not re.match(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$", domain):
             raise HTTPException(400, "Invalid domain format")
-        # Reserve — one funnel per domain across the platform.
         other = await db.funnels.find_one({"custom_domain": domain, "id": {"$ne": fid}})
         if other:
             raise HTTPException(409, "Domain is already in use by another funnel")
+        upd = {"custom_domain": domain, "domain_verified": False, "updated_at": now_iso()}
+        # If Cloudflare-for-SaaS is configured, enroll the hostname immediately and let CF handle SSL.
+        cf_status = None
+        if _cloudflare_ready():
+            try:
+                cf_id, cf_status = await _cloudflare_provision(domain, fid)
+                upd["cloudflare_hostname_id"] = cf_id
+                upd["cloudflare_status"] = cf_status
+            except HTTPException:
+                raise
+            except Exception as e:
+                # non-fatal; user can still add DNS manually.
+                upd["cloudflare_error"] = str(e)[:200]
         r = await db.funnels.update_one(
-            {"id": fid, "workspace_id": user["workspace_id"]},
-            {"$set": {"custom_domain": domain, "domain_verified": False, "updated_at": now_iso()}})
+            {"id": fid, "workspace_id": user["workspace_id"]}, {"$set": upd})
         if r.matched_count == 0: raise HTTPException(404, "Not found")
         return {
             "domain": domain,
+            "cloudflare_enrolled": bool(cf_status),
+            "cloudflare_status": cf_status,
             "verification": {
-                "cname": {"host": domain, "value": "funnels.promoos.app",
-                          "note": "Point your domain's CNAME to funnels.promoos.app (or A-record 76.76.21.21) — the platform will issue SSL automatically once verified."},
+                "cname": {"host": domain,
+                          "value": "funnels.promoos.app" if not _cloudflare_ready() else "cname.promoos.app",
+                          "note": ("Cloudflare-for-SaaS is enrolling your hostname. Add this CNAME and SSL will be issued automatically." if _cloudflare_ready()
+                                    else "Point your domain's CNAME to funnels.promoos.app — SSL is provisioned once verified.")},
                 "txt":   {"host": f"_promoos-verify.{domain}", "value": fid,
                           "note": "Add this TXT record to prove ownership."}
             }
@@ -283,9 +323,34 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
     async def verify_domain(fid: str, user: dict = Depends(get_current_user)):
         require_writer(user)
         d = await db.funnels.find_one({"id": fid, "workspace_id": user["workspace_id"]})
-        if not d: raise HTTPException(404, "Not found")
+        if not d: raise HTTPException(400, "Not found") if False else HTTPException(404, "Not found")
         if not d.get("custom_domain"): raise HTTPException(400, "No custom domain set")
         fid_str = fid
+        # If Cloudflare-for-SaaS is configured, poll the custom-hostname status.
+        if _cloudflare_ready() and d.get("cloudflare_hostname_id"):
+            import requests as _rq
+            token = os.environ["CLOUDFLARE_API_TOKEN"]
+            zone = os.environ["CLOUDFLARE_ZONE_ID"]
+            try:
+                r = _rq.get(
+                    f"https://api.cloudflare.com/client/v4/zones/{zone}/custom_hostnames/{d['cloudflare_hostname_id']}",
+                    headers={"Authorization": f"Bearer {token}"}, timeout=15)
+                r.raise_for_status()
+                res = r.json().get("result") or {}
+                cf_status = res.get("status", "pending")
+                ssl_status = (res.get("ssl") or {}).get("status", "pending")
+                verified = cf_status == "active" and ssl_status == "active"
+                await db.funnels.update_one({"id": fid},
+                    {"$set": {"domain_verified": verified,
+                              "cloudflare_status": cf_status,
+                              "cloudflare_ssl_status": ssl_status,
+                              "domain_verified_at": now_iso() if verified else None}})
+                return {"verified": verified, "cloudflare_status": cf_status, "ssl_status": ssl_status,
+                        "note": ("Domain is live with SSL." if verified
+                                  else f"Cloudflare status: {cf_status}, SSL: {ssl_status}. Add the CNAME and re-check in a few minutes.")}
+            except Exception as e:
+                # fall through to DNS-only verification
+                pass
         # Attempt DNS TXT lookup (best-effort).
         verified = False
         try:
