@@ -30,6 +30,7 @@ import GiftCardStudio from "@/pages/GiftCardStudio";
 import { Funnels, FunnelEditor } from "@/pages/Funnels";
 import PublicFunnel from "@/pages/PublicFunnel";
 import QRStudio from "@/pages/QRStudio";
+import Landing from "@/pages/Landing";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -40,6 +41,22 @@ function Protected({ children }) {
       </div>
     );
   return user ? children : <Navigate to="/login" replace />;
+}
+
+function Home() {
+  // Public homepage for visitors, protected app shell for logged-in users.
+  const { user, loading } = useAuth();
+  const path = typeof window !== "undefined" ? window.location.pathname : "/";
+  if (loading)
+    return (
+      <div className="h-screen flex items-center justify-center bg-[#0A0A0A]">
+        <div className="w-8 h-8 rounded-full border-2 border-[#27272A] border-t-[#CCFF00] spin" />
+      </div>
+    );
+  if (user) return <Layout />;
+  // Logged-out — show Landing only at exact "/"; otherwise route through Protected to force login.
+  if (path === "/" || path === "") return <Landing />;
+  return <Navigate to="/login" replace />;
 }
 
 function App() {
@@ -57,8 +74,9 @@ function App() {
           <Route path="/pricing" element={<Pricing />} />
           <Route path="/billing/success" element={<BillingSuccess />} />
           <Route path="/billing/cancel" element={<BillingCancel />} />
-          <Route path="/" element={<Protected><Layout /></Protected>}>
+          <Route path="/" element={<Home />}>
             <Route index element={<Dashboard />} />
+            <Route path="dashboard" element={<Dashboard />} />
             <Route path="coupons" element={<Coupons />} />
             <Route path="coupons/new" element={<CouponEditor />} />
             <Route path="coupons/:id/edit" element={<CouponEditor />} />

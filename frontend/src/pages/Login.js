@@ -114,13 +114,6 @@ export default function Login() {
             className="mt-5 text-sm text-[#A1A1AA] hover:text-white transition-colors">
             {mode === "login" ? "Need an account? Create one" : "Already have an account? Sign in"}
           </button>
-
-          {mode === "login" && (
-            <div className="mt-6 p-3 rounded-md bg-[#141414] border border-[#27272A] text-xs text-[#A1A1AA]">
-              <div><span className="text-[#CCFF00]">Owner:</span> admin@promoos.com / admin123</div>
-              <div className="mt-1 text-[10px] text-[#71717A]">Superadmin credentials rotated — see <code>/app/memory/test_credentials.md</code>.</div>
-            </div>
-          )}
         </div>
       </div>
       </div>
