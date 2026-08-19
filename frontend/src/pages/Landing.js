@@ -4,6 +4,8 @@ import api from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import Footer from "@/components/Footer";
+import CrispChat from "@/components/CrispChat";
+import { DashboardMockup, GiftCardStudioMockup, CouponBuilderMockup } from "@/pages/LandingMockups";
 import {
   Sparkles, Ticket, Bot, Wand2, Gift, Rocket, QrCode, Wifi, ShieldCheck,
   Palette, Layers, ArrowRight, Check, Zap, TrendingUp, Globe, Wallet as WalletIcon, Store,
@@ -122,6 +124,54 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* Product preview showcase */}
+      <section className="max-w-6xl mx-auto px-6 py-24" data-testid="product-showcase">
+        <div className="text-center mb-12">
+          <div className="text-[10px] uppercase tracking-[0.3em] text-[#CCFF00] font-bold mb-3">See it live</div>
+          <h2 className="font-display font-bold text-4xl lg:text-5xl mb-4">Every workflow, one interface.</h2>
+          <p className="text-[#A1A1AA] max-w-xl mx-auto">Ship promotions from a command center that looks — and works — this good.</p>
+        </div>
+
+        <div className="mb-16" data-testid="showcase-dashboard">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.25em] text-[#CCFF00] font-bold mb-3">Command Center</div>
+              <h3 className="font-display font-bold text-3xl mb-3 leading-tight">Real-time revenue, redemptions and CLV.</h3>
+              <p className="text-[#A1A1AA] text-base leading-relaxed">
+                Every coupon, gift card and referral fires an event. Revenue attribution across Shopify, WooCommerce, embed widgets and manual redemptions rolls up automatically.
+              </p>
+            </div>
+            <DashboardMockup />
+          </div>
+        </div>
+
+        <div className="mb-16" data-testid="showcase-giftcard">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
+            <div className="lg:order-2">
+              <div className="text-[10px] uppercase tracking-[0.25em] text-[#CCFF00] font-bold mb-3">Gift Card Studio</div>
+              <h3 className="font-display font-bold text-3xl mb-3 leading-tight">20 luxury templates. AI on every field.</h3>
+              <p className="text-[#A1A1AA] text-base leading-relaxed">
+                Diamond, Champagne, Noir, Rosé and 16 more. Click any field — headline, subline, background — and Claude sonnet + Gemini nano-banana regenerate it in your brand voice.
+              </p>
+            </div>
+            <div className="lg:order-1"><GiftCardStudioMockup /></div>
+          </div>
+        </div>
+
+        <div data-testid="showcase-coupon">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.25em] text-[#CCFF00] font-bold mb-3">Coupon Builder</div>
+              <h3 className="font-display font-bold text-3xl mb-3 leading-tight">23 coupon types. Zero code.</h3>
+              <p className="text-[#A1A1AA] text-base leading-relaxed">
+                Percentage, BOGO, cart tiers, referral loops, loyalty rewards, VIP unlocks — all with one visual rule builder. AI writes the copy, generates the visual, and publishes to a public URL.
+              </p>
+            </div>
+            <CouponBuilderMockup />
+          </div>
+        </div>
+      </section>
+
       {/* Features */}
       <section id="features" className="max-w-6xl mx-auto px-6 py-24">
         <div className="max-w-2xl mb-14">
@@ -224,6 +274,7 @@ export default function Landing() {
       </section>
 
       <div className="max-w-6xl mx-auto px-6"><Footer /></div>
+      <CrispChat />
     </div>
   );
 }
