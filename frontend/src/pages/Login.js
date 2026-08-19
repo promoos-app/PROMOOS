@@ -36,10 +36,7 @@ export default function Login() {
       {/* Left brand panel */}
       <div className="hidden lg:flex flex-col justify-between w-1/2 border-r border-[#27272A] p-12 relative overflow-hidden">
         <div className="flex items-center gap-2 z-10">
-          <div className="w-9 h-9 rounded-md bg-[#CCFF00] flex items-center justify-center">
-            <Sparkles className="w-5 h-5 text-[#0A0A0A]" />
-          </div>
-          <span className="font-display font-extrabold text-xl">PromoOS</span>
+          <img src="/promoos-logo.jpg" alt="PromoOS" className="h-9 w-auto object-contain rounded" data-testid="login-logo" />
         </div>
         <div className="z-10 max-w-md">
           <h1 className="font-display font-extrabold text-5xl leading-[1.05] tracking-tight mb-4">

@@ -42,11 +42,8 @@ export default function Layout() {
     <div className="h-screen flex overflow-hidden bg-[#0A0A0A] grain">
       {/* Sidebar */}
       <aside className="w-64 shrink-0 border-r border-[#27272A] flex flex-col bg-[#0A0A0A] z-10">
-        <div className="h-16 flex items-center gap-2 px-5 border-b border-[#27272A]">
-          <div className="w-8 h-8 rounded-md bg-[#CCFF00] flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-[#0A0A0A]" />
-          </div>
-          <span className="font-display font-extrabold text-lg tracking-tight">PromoOS</span>
+        <div className="h-16 flex items-center px-5 border-b border-[#27272A]">
+          <img src="/promoos-logo.jpg" alt="PromoOS" className="h-9 w-auto object-contain rounded" data-testid="sidebar-logo" />
         </div>
 
         <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-0.5">

@@ -53,10 +53,7 @@ export default function Landing() {
       <nav className="border-b border-[#27272A]/50 backdrop-blur-lg bg-[#0A0A0A]/80 sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2" data-testid="nav-brand">
-            <div className="w-8 h-8 rounded-md bg-[#CCFF00] flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-[#0A0A0A]" />
-            </div>
-            <span className="font-display font-extrabold text-lg">PromoOS</span>
+            <img src="/promoos-logo.jpg" alt="PromoOS" className="h-8 w-auto object-contain rounded" data-testid="landing-logo" />
           </Link>
           <div className="flex items-center gap-1 md:gap-3 text-sm">
             <a href="#features" className="hidden md:inline text-[#A1A1AA] hover:text-white px-3 py-1.5" data-testid="nav-features">Features</a>
