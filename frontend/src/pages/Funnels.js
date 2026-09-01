@@ -133,6 +133,7 @@ export function FunnelEditor() {
   const nav = useNavigate();
   const [funnel, setFunnel] = useState(null);
   const [coupons, setCoupons] = useState([]);
+  const [products, setProducts] = useState([]);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [domain, setDomain] = useState("");
@@ -141,6 +142,7 @@ export function FunnelEditor() {
   useEffect(() => {
     api.get(`/funnels/${id}`).then((r) => { setFunnel(r.data); setDomain(r.data.custom_domain || ""); }).catch((e) => toast.error(apiError(e)));
     api.get("/coupons?state=all").then((r) => setCoupons(r.data)).catch(() => {});
+    api.get("/products").then((r) => setProducts(r.data)).catch(() => {});
   }, [id]);
 
   if (!funnel) return <div className="text-[#71717A]">Loading…</div>;
@@ -287,10 +289,20 @@ export function FunnelEditor() {
               )}
               {b.type === "product" && (
                 <div className="space-y-2">
-                  <Input value={b.props.product_id || ""} onChange={(e) => updateBlock(b.id, { product_id: e.target.value })}
-                    placeholder="Product ID (create products under /products)" className="bg-[#0A0A0A] border-[#27272A] text-white" />
-                  <Input value={b.props.coupon_code || ""} onChange={(e) => updateBlock(b.id, { coupon_code: e.target.value })}
-                    placeholder="Optional coupon to apply on Buy-Now" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <Label className="text-xs text-[#A1A1AA]">Attach a product</Label>
+                  <select value={b.props.product_id || ""} onChange={(e) => updateBlock(b.id, { product_id: e.target.value })}
+                    data-testid={`block-product-select-${b.id}`}
+                    className="mt-1 w-full h-10 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white px-3 text-sm">
+                    <option value="">— Select a product —</option>
+                    {products.map((pr) => <option key={pr.id} value={pr.id}>{pr.name} · ${pr.price} {pr.currency}</option>)}
+                  </select>
+                  <Label className="text-xs text-[#A1A1AA] mt-2 block">Optional launch coupon</Label>
+                  <select value={b.props.coupon_code || ""} onChange={(e) => updateBlock(b.id, { coupon_code: e.target.value })}
+                    data-testid={`block-product-coupon-select-${b.id}`}
+                    className="w-full h-10 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white px-3 text-sm">
+                    <option value="">— No coupon —</option>
+                    {coupons.map((c) => <option key={c.id} value={c.code}>{c.name} · {c.code}</option>)}
+                  </select>
                   <div className="text-[10px] text-[#71717A]">Buy-Now uses your workspace's Stripe checkout.</div>
                 </div>
               )}
@@ -334,8 +346,25 @@ export function FunnelEditor() {
               )}
               {b.type === "testimonial" && (
                 <div className="space-y-2">
-                  <textarea value={b.props.quote || ""} onChange={(e) => updateBlock(b.id, { quote: e.target.value })} rows={2} className="w-full bg-[#0A0A0A] border border-[#27272A] text-white rounded-md p-2 text-sm" placeholder="Quote" />
-                  <Input value={b.props.author || ""} onChange={(e) => updateBlock(b.id, { author: e.target.value })} placeholder="Author" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  {Array.isArray(b.props.items) ? (
+                    <>
+                      <Input value={b.props.title || ""} onChange={(e) => updateBlock(b.id, { title: e.target.value })} placeholder="Section title (optional)" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                      <div className="text-xs text-[#71717A]">Edit reviews (advanced JSON):</div>
+                      <textarea value={JSON.stringify(b.props.items, null, 2)}
+                        data-testid={`block-testimonial-items-${b.id}`}
+                        onChange={(e) => { try { updateBlock(b.id, { items: JSON.parse(e.target.value) }); } catch {} }}
+                        rows={8} className="w-full bg-[#0A0A0A] border border-[#27272A] text-white rounded-md p-2 text-[11px] font-mono" />
+                      <div className="text-[10px] text-[#71717A]">Each item: {`{ quote, author, role, avatar_url }`}. Link to real reviews later — placeholder-only for now.</div>
+                    </>
+                  ) : (
+                    <>
+                      <textarea value={b.props.quote || ""} onChange={(e) => updateBlock(b.id, { quote: e.target.value })} rows={2} className="w-full bg-[#0A0A0A] border border-[#27272A] text-white rounded-md p-2 text-sm" placeholder="Quote" />
+                      <Input value={b.props.author || ""} onChange={(e) => updateBlock(b.id, { author: e.target.value })} placeholder="Author" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                      <button onClick={() => updateBlock(b.id, { title: "Loved by customers",
+                        items: [{ quote: b.props.quote || "", author: b.props.author || "", role: "", avatar_url: "" }] })}
+                        className="text-[10px] text-[#CCFF00] hover:underline">Convert to multi-review section →</button>
+                    </>
+                  )}
                 </div>
               )}
               {b.type === "heading" && (

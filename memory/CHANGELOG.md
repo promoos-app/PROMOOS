@@ -1,5 +1,32 @@
 # PromoOS — CHANGELOG
 
+## Iteration 14 (Feb 2026) — Storefront Template + Preview crash fixes
+
+### Storefront funnel template ✅ (P0 — user-requested)
+- New `storefront` template in `/api/funnels/templates` — full product landing page in one click.
+- Block sequence: **hero → video → countdown → product → features → testimonial (3 reviews) → faq → cta**.
+- Countdown auto-resolves `duration_hours` (default 72h) into a concrete `ends_at` at create time.
+- Auto-attach on create: if the workspace has any product/coupon, the newest ones are wired into the product block automatically; otherwise renders as placeholders the merchant fills in.
+- Multi-item testimonial variant with `items: [{quote, author, role, avatar_url}]` — placeholders now, structured enough to link to a real reviews collection later.
+- Public renderer hydrates `block.props.product` (name / price / image / currency) and `block.props.coupon` (workspace-scoped, no tenant leaks) so the storefront looks like a real product page immediately.
+- Product block now shows product image, name, description, price with strike-through discounted price if a coupon is attached, and a proper "Buy now" CTA (fallback: "Attach a product to enable checkout" when unattached).
+- Video block auto-hides when its URL is empty (no more dead vertical gap on the storefront default).
+- Frontend `computeDiscounted()` supports the platform's 23-type coupon taxonomy via an explicit allow-list (vip, frequent, regular, new, at_risk, flash, launch, loyalty, welcome, seasonal, percentage) + fixed-amount types.
+
+### Preview crash fixes ✅ (P0 — reported)
+- Fixed a real syntax error in `PublicFunnel.js` (missing closing brace on `ProductBlock`) that was blocking the entire preview build with "'import' and 'export' may only appear at the top level".
+- Fixed a Babel `Maximum call stack size exceeded` triggered by the long `if (block.type === "…") return …` chain — refactored to a `REGISTRY` component map and split heavy components (`Countdown`, `ProductBlock`, `Testimonials`) into `PublicFunnelBlocks.js`.
+- Fixed a critical hydration regression: `GET /api/public/f/{slug}` was projecting `workspace_id` **out** of the Mongo document before using it to scope the product/coupon lookups, so **no coupon block on any funnel had ever hydrated in this iteration**. Removed the projection, kept the `d.pop("workspace_id", None)` before return, so hydration works and no tenant data leaks.
+- Cleaned up the dead `raise HTTPException(400, "Not found") if False else HTTPException(404, "Not found")` in `verify_domain`.
+
+### Funnel editor upgrades ✅
+- Product block: `<select>` of workspace products (`data-testid="block-product-select-<id>"`) instead of raw UUID input, plus a coupon dropdown.
+- Testimonial block: when `items[]` is present, renders a JSON editor with a hint about linking to real reviews later; legacy quote/author form has a one-click "Convert to multi-review section" button.
+
+### Testing
+- **Iter 12** flagged 1 CRITICAL + 3 minor issues → **all fixed**.
+- **Iter 13**: 15/15 backend pytest pass (`test_iter13_hydration.py`), including positive cross-tenant isolation with foreign-workspace product/coupon controls; 100% frontend flows pass (storefront render with $39.20 strike-through vs $49.00, video hidden when empty, /customers bulk-delete UI, /funnels editor).
+
 ## Iteration 4 (Feb 2026) — Six-bundle mega-ship
 Ran through the full 53-section product spec and shipped every core surface across 6 bundles in one iteration.
 

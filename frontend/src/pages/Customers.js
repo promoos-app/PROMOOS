@@ -27,6 +27,8 @@ export default function Customers() {
   const [promoBusy, setPromoBusy] = useState(false);
   const [promo, setPromo] = useState(null);
 
+  const [selectedIds, setSelectedIds] = useState([]);
+
   const load = () => api.get("/customers").then((r) => setData(r.data)).catch((e) => toast.error(apiError(e)));
   useEffect(() => { load(); }, []);
 
@@ -37,6 +39,19 @@ export default function Customers() {
     if (search && !c.customer.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
+
+  const toggleSel = (id) => setSelectedIds((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+  const toggleAll = () => setSelectedIds(selectedIds.length === filtered.length ? [] : filtered.map((c) => c.customer));
+  const bulkDelete = async () => {
+    if (!selectedIds.length) return;
+    if (!window.confirm(`Delete ${selectedIds.length} customers?`)) return;
+    try {
+      await api.post("/customers/bulk-delete", { ids: selectedIds });
+      setSelectedIds([]);
+      const { data: d } = await api.get("/customers"); setData(d);
+      toast.success("Deleted");
+    } catch (e) { toast.error(apiError(e)); }
+  };
 
   const generateSegmentPromo = async (seg) => {
     setPromoBusy(true); setPromo(null);
@@ -89,20 +104,6 @@ export default function Customers() {
           <div className="text-xs text-[#71717A] mt-2">Type · {promo.type} · {promo.discount_value}% · CTA · {promo.cta}</div>
         </div>
       )}
-
-  const [selectedIds, setSelectedIds] = useState([]);
-  const toggleSel = (id) => setSelectedIds((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
-  const toggleAll = () => setSelectedIds(selectedIds.length === filtered.length ? [] : filtered.map((c) => c.customer));
-  const bulkDelete = async () => {
-    if (!selectedIds.length) return;
-    if (!window.confirm(`Delete ${selectedIds.length} customers?`)) return;
-    try {
-      await api.post("/customers/bulk-delete", { ids: selectedIds });
-      setSelectedIds([]);
-      const { data } = await api.get("/customers"); setData(data);
-      toast.success("Deleted");
-    } catch (e) { toast.error(apiError(e)); }
-  };
 
       <div className="surface rounded-lg overflow-hidden">
         {selectedIds.length > 0 && (

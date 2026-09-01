@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 13 — targeted re-verification of the 3 fixes from iteration 12 plus the requested regressions. ALL FIXES CONFIRMED WORKING. Backend: 15/15 pytest assertions pass in the new /app/backend/tests/test_iter13_hydration.py — GET /api/public/f/qa-storefront-live now hydrates block.props.product (name='Signature Hoodie', price=49.0, currency='USD') and block.props.coupon (code='VIPELITJRIXE', type='vip', discount_value=20.0); workspace_id/_id/created_by are absent from the public payload and from nested product/coupon objects (stripe_price_id also stripped); coupon-block hydration on a fresh diamond funnel works; cross-tenant isolation is now POSITIVELY verified (own coupon/product hydrate = positive control, then the same funnel pointed at a superadmin-workspace coupon and product does NOT hydrate); all 7 templates (diamond, champagne, noir, emerald, rose, storefront, electric) create+publish+public-GET 200 with no workspace_id leak. Frontend: /f/qa-storefront-live renders 'Signature Hoodie', '$39.20', strike-through '$49.00 USD', 'Code VIPELITJRIXE applied at checkout' and the 'Buy now' button; funnel-block-video is absent (count=0) with the default empty url; zero pageerrors, no error elements. /customers loads with no hook-order crash and bulk-actions-bar shows '1 selected | Delete selected'; /funnels/{id}/edit renders block-product-select, block-product-coupon-select and block-testimonial-items with zero pageerrors. The dead `if False else` in verify_domain is gone.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Public storefront /f/qa-storefront-live (storefront template default copy)",
+        "issues": [
+          "Hero subhead still says 'Watch the 60-second story below, then claim your launch discount.' but the video block is now correctly hidden when url is empty, so the default storefront funnel promises a video that does not exist. Suggest changing the default hero copy (or shipping a default poster) so the out-of-box page is coherent."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter13_hydration.py",
+    "/app/test_reports/pytest/iter13_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL (cosmetic): reword the storefront template's default hero subhead which references a video that is hidden by default.",
+    "OPTIONAL (consistency): two different testids exist for testimonial sections — PublicFunnel.js legacy TestimonialBlock uses data-testid='funnel-block-testimonial' while PublicFunnelBlocks.js items[] variant uses 'funnel-block-testimonials'. Unify to one id so tests don't silently match zero elements.",
+    "OPTIONAL: computeDiscounted() now treats EVERY non-fixed type as percentage-off. For non-monetary types (free_shipping, bogo, gift) discount_value is not a percentage, so a coupon like bogo/discount_value=1 would render a bogus '1% off' price. Consider an explicit allow-list of percentage types and returning null otherwise."
+  ],
+  "critical_code_review_comments": [
+    "public_funnel() fix is correct: workspace_id is read for scoping and popped before return; nested product/coupon projections also strip workspace_id/_id/stripe_price_id — no tenant data leaks in the payload.",
+    "PUT /api/funnels/{fid} (FunnelPatch) silently ignores unknown fields such as `published` — publishing only works via POST /api/funnels/{fid}/publish. Not a bug, but an API-consumer footgun; consider rejecting unknown keys or documenting it.",
+    "computeDiscounted()'s catch-all percentage branch is optimistic for the 23-type taxonomy (see action items).",
+    "Still open from iteration 12 (not re-tested, unchanged): silent `try { JSON.parse } catch {}` blocks in Funnels.js swallow invalid JSON with no user feedback; ProductBlock uses alert() instead of sonner toast; countdown uses native datetime-local instead of the shadcn picker; Funnels.js is ~434 lines and should be split."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter13_hydration.py (new — hydration, workspace_id stripping, positive cross-tenant isolation, 7-template regression)"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100% of tested flows (storefront render, video hidden, discount strike-through, /customers bulk-delete, funnel editor)"},
+  "seed_data_creation": "Seed funnel 'qa-storefront-live' left untouched and still published. Test funnels named TEST_iter13_* and temporary foreign-workspace coupon/product (TEST_iter13_foreign*) were created and deleted by fixture teardown.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@promoos.com/admin123 and superadmin@promoos.com/sZpRBNpLKypsQDURBQNqMIzE both verified working. Note: after login the app lands on '/' (not '/dashboard') — Playwright scripts should not wait_for_url('**/dashboard**').",
+  "context_for_next_testing_agent": "Iteration 13 verified ALL iteration-12 defects as fixed: (1) public funnel hydration (product + coupon, storefront and diamond coupon block), (2) workspace_id stripped from public payload and nested objects, (3) positive cross-tenant isolation (foreign coupon AND foreign product both refuse to hydrate while own ones do), (4) video block hidden on empty url, (5) computeDiscounted handles the vip type -> $39.20 with $49.00 strike-through, (6) all 7 templates create/publish/public-GET 200, (7) /customers bulk-delete UI and /funnels/{id}/edit product dropdown + testimonial JSON editor. Reusable regression suite: /app/backend/tests/test_iter13_hydration.py. IMPORTANT API notes for future tests: publish ONLY via POST /api/funnels/{fid}/publish (PUT ignores `published`); public testimonial testid is 'funnel-block-testimonials' (with s) for the items[] variant. Nothing else was re-tested this round per the main agent's instruction; iteration_12.json's context list remains valid.",
+  "rca_of_the_issue": "No new defects. The iteration-12 root cause (Mongo projection stripping workspace_id before it was consumed in public_funnel()) is resolved by removing workspace_id from the projection and relying on the existing d.pop('workspace_id', None) before return; regression coverage added in test_iter13_hydration.py::TestSeedHydration and ::TestCrossTenantIsolation (with positive controls so the isolation assertions can never be vacuous again)."
+}

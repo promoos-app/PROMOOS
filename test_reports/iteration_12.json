@@ -1,0 +1,86 @@
+{
+  "summary": "Iteration 12 — tested the new Storefront funnel template end-to-end (templates -> create -> auto-attach -> publish -> public render), regression-tested the PublicFunnel REGISTRY refactor across all 6 legacy templates, verified the Preview compile error is gone, the /customers hook-order crash is fixed with working bulk-delete UI, the Funnel Editor product/coupon dropdowns + testimonial JSON editor, and ran the auth playbook checks. 18/21 backend assertions pass. ONE CRITICAL backend bug found: public funnel block hydration is completely broken (product AND coupon) because `workspace_id` is projected out of the Mongo query before it is used for the workspace-scoped lookup — so the storefront public page shows a placeholder 'Buy now' card with no product name/price/image even when a product IS attached. This is also a REGRESSION for every existing coupon-block funnel.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/public/f/{slug}",
+        "issue": "Block hydration NEVER works. Line 452 projects workspace_id OUT (`{\"_id\":0,\"workspace_id\":0,\"created_by\":0}`), then line 460 does `workspace_id = d.get('workspace_id')` -> always None. Every hydration lookup (`db.products.find_one({..., 'workspace_id': None})`, `db.coupons.find_one({..., 'workspace_id': None})`) matches nothing, so props.product and props.coupon are never set. Verified live: funnel qa-storefront-live has product_id=2b47512b… and coupon_code=VIPELITJRIXE attached, yet the public payload returns only {'product_id','coupon_code'} with no hydrated objects. REGRESSION: existing coupon-block funnels (diamond/noir/emerald/electric) also stopped hydrating. FIX: keep workspace_id in the projection (drop it from the projection dict), read it, then `d.pop('workspace_id', None)` at the end (that pop already exists at line 488).",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/public/f/{slug}",
+        "issue": "Cross-tenant isolation could NOT be positively verified because hydration is dead (nothing hydrates for anyone, so the test vacuously 'passes'). Re-run the cross-tenant test AFTER the workspace_id fix — the scoping code itself looks correct."
+      },
+      {
+        "endpoint": "routers/funnels.py:399",
+        "issue": "Dead/confusing code: `raise HTTPException(400, 'Not found') if False else HTTPException(404, 'Not found')` in verify_domain. Works by accident; should be a plain `raise HTTPException(404, 'Not found')`."
+      },
+      {
+        "endpoint": "frontend computeDiscounted (PublicFunnelBlocks.js:39)",
+        "issue": "Only handles coupon.type 'percentage' and 'fixed'. Real workspace coupons use the 23-type taxonomy (e.g. type='vip' with discount_value=20.0), so the strike-through discounted price will NEVER render for real coupons. Needs to map discount_type/discount_value or the library taxonomy."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "ProductBlock (public storefront)",
+        "issue": "Renders headline 'Buy now', 'Product image' placeholder and no price even though a real product is attached — direct user-visible fallout of the backend hydration bug, not a frontend defect. Will self-resolve once /api/public/f/{slug} hydrates props.product.",
+        "selector": "[data-testid=\"funnel-block-product\"]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Public storefront /f/{slug}",
+        "issues": [
+          "Video block with an empty url renders a 64px-tall empty section, leaving a dead vertical gap between hero and countdown. Either hide the block when url is blank or render a poster/placeholder frame.",
+          "Storefront template ships video.url = '' so the 'video hero' promised by the feature is invisible by default — consider a default poster or an inline 'Add your video URL' editor hint on the public preview."
+        ]
+      },
+      {
+        "screen": "Funnel editor /funnels/{id}/edit",
+        "issues": [
+          "Countdown 'Countdown ends at' uses the browser-native datetime-local picker instead of the shadcn calendar/date-time component used elsewhere — inconsistent with the design system.",
+          "React dev-console warning on the product <select>: 'In HTML, <span> cannot be a child of <option>' (injected by the dev instrumentation wrapper on the dynamic option text). Harmless in prod but noisy; consider a non-dynamic option label render."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter12_storefront.py",
+    "/app/backend/tests/test_iter12_auth_playbook.py",
+    "/app/test_reports/pytest/iter12_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: In /app/backend/routers/funnels.py public_funnel(), stop projecting workspace_id out of the find_one (line ~452) so hydration can scope its lookups; keep the existing d.pop('workspace_id', None) before returning. This single line breaks the entire storefront feature AND regresses all coupon-block funnels.",
+    "After the fix, re-run tests/test_iter12_storefront.py::TestPublicHydration (incl. the cross-tenant isolation test, which is currently vacuous).",
+    "Map the real coupon taxonomy in computeDiscounted() so discounted pricing renders for types like 'vip' (discount_value=20.0), not just 'percentage'/'fixed'.",
+    "Hide the video block (or render a poster) when props.url is empty to remove the dead vertical gap on the storefront page.",
+    "Replace the native datetime-local input for the countdown with the shadcn date-time picker.",
+    "Surface JSON parse errors in the features/testimonial/row JSON textareas instead of swallowing them in empty catch blocks (silent no-op today: users typing invalid JSON get zero feedback).",
+    "Clean up the dead `if False else` HTTPException expression at funnels.py:399."
+  ],
+  "critical_code_review_comments": [
+    "funnels.py public_funnel: projecting a field out and then reading it is a classic silent-null bug. Mongo projections must be applied AFTER internal fields are consumed. Add a regression test asserting props.product/props.coupon are present.",
+    "Funnels.js: three `try { JSON.parse(...) } catch {}` blocks silently discard user input errors — no toast, no red border. Add validation state.",
+    "PublicFunnelBlocks.js ProductBlock uses `alert()` for checkout failures instead of the app's sonner toast used everywhere else — inconsistent UX.",
+    "Testimonial block 'items' is edited as raw JSON only. Acceptable for this iteration, but the user asked for 'link to real reviews later' — plan a structured repeater UI.",
+    "Funnels.js is 434 lines with FunnelEditor + FunnelsList in one file; approaching the point where the editor should be split out."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/Funnels.js (added missing data-testid: block-product-coupon-select-<id> on the product block's coupon <select>, block-testimonial-items-<id> on the testimonial items JSON textarea)",
+    "/app/backend/tests/test_iter12_storefront.py (new)",
+    "/app/backend/tests/test_iter12_auth_playbook.py (new)"
+  ],
+  "success_rate": {"backend": "86% (18/21 assertions; 1 real CRITICAL bug causing 2 failures, 1 skip)", "frontend": "95% (all flows work; only failure is the backend-driven product hydration render)"},
+  "seed_data_creation": "Created and published funnel 'QA Storefront Live' (slug: qa-storefront-live, id: 87a8379b-a671-4ec6-940d-c411ce703e87, template storefront, product Signature Hoodie + coupon VIPELITJRIXE attached) — LEFT IN PLACE so the main agent can verify the hydration fix by hitting /api/public/f/qa-storefront-live and /f/qa-storefront-live. All other TEST_/qa-ui funnels were deleted.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Verified working: admin@promoos.com/admin123 (owner), superadmin@promoos.com/sZpRBNpLKypsQDURBQNqMIzE. /app/memory/test_credentials.md is accurate.",
+  "context_for_next_testing_agent": "VERIFIED PASSING this round — do not re-test unless code changes: (1) GET /api/funnels/templates contains storefront with exact block order hero,video,countdown,product,features,testimonial,faq,cta and 3 testimonial items each with quote/author/role. (2) POST /api/funnels template_id=storefront resolves duration_hours->concrete ends_at at +72h (±1h) and removes duration_hours; auto-attaches the newest workspace product + coupon; returns empty strings when the workspace has none (verified on the superadmin workspace which has 0 products/coupons). (3) All 6 legacy templates (diamond/champagne/noir/emerald/rose/electric) create+publish+public-GET 200 — REGISTRY refactor is fine, all block types render with their funnel-block-* testids. (4) Preview compile error is GONE: /f/qa-storefront-live and /f/{diamond} render with ZERO pageerrors and no 'Compiled with problems' overlay. (5) /customers loads with data-testid=customers-page, no hook-order crash; checkbox testid is `select-customer-<id>` (NOT customer-checkbox-*), select-all is `select-all-customers`, and bulk-actions-bar correctly shows '1 selected'/'292 selected'. (6) Funnel editor: block-product-select-<id> lists workspace products, block-product-coupon-select-<id> and block-coupon-select-<id> list coupons, block-testimonial-items-<id> renders the JSON editor and the legacy Quote textarea is absent for items[] testimonials; save + create-from-storefront-tile both work. (7) Auth playbook all green: $2b$ bcrypt prefix, HttpOnly access_token cookie on login, 429 lockout on the 6th failed login, idempotent seed_admin. NOTE: the preview CDN edge rewrites CORS headers to '*' on both OPTIONS and POST, so CORS must be asserted against http://localhost:8001 (app-level config is correct: allow_credentials=True + allow_origin_regex). STILL OPEN: the public_funnel workspace_id projection bug — that is the only thing blocking the storefront feature.",
+  "rca_of_the_issue": "ROOT CAUSE (single line): /app/backend/routers/funnels.py, public_funnel(). The Mongo query at line ~452 uses projection {\"_id\":0, \"workspace_id\":0, \"created_by\":0}, which strips workspace_id from the returned document. Line ~460 then does `workspace_id = d.get('workspace_id')`, which evaluates to None. All three hydration branches build their lookup filters with that None value — db.products.find_one({'id': pid, 'workspace_id': None, ...}) and db.coupons.find_one({'code': code, 'workspace_id': None}) — which match zero documents, so block.props.product and block.props.coupon are never populated. There is no exception and no log line, so the failure is completely silent. REPRODUCTION: login as admin@promoos.com, GET /api/public/f/qa-storefront-live, inspect the product block -> props = {'product_id': '2b47512b-d35d-4a02-b611-0dd7a2fc4b50', 'coupon_code': 'VIPELITJRIXE'} with no 'product'/'coupon' keys; the browser at /f/qa-storefront-live correspondingly shows 'Buy now' + 'Product image' placeholder and no price. Same for the diamond coupon block (test_coupon_block_hydration_regression). MITIGATION: remove workspace_id from the projection so it is returned, keep the existing `d.pop('workspace_id', None)` at the end of the function to keep it out of the public payload. The giftcard branch is unaffected because it resolves from a static TEMPLATES list, which is why the bug was not caught by earlier iterations."
+}

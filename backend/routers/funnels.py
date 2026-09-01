@@ -105,6 +105,48 @@ TEMPLATES = [
         ],
     },
     {
+        "id": "storefront",
+        "name": "Storefront",
+        "aesthetic": "full product landing page — video hero, countdown, testimonials, high-conversion",
+        "theme": {"bg": "#0A0A0A", "fg": "#FFFFFF", "muted": "#A1A1AA", "accent": "#CCFF00",
+                  "font_display": "Cabinet Grotesk", "font_body": "Inter"},
+        "blocks": [
+            {"type": "hero", "props": {"eyebrow": "New drop · limited stock",
+                                        "headline": "The product everyone's talking about.",
+                                        "subline": "Real reviews below — grab yours before the launch offer ends.",
+                                        "cta_label": "Shop now", "cta_scroll_to": "product-1"}},
+            {"type": "video", "props": {"url": "", "poster_url": "", "autoplay": False}},
+            {"type": "countdown", "props": {"ends_at": None, "label": "Launch offer ends in",
+                                             "duration_hours": 72}},
+            {"type": "product", "props": {"product_id": "", "coupon_code": ""}, "anchor": "product-1"},
+            {"type": "features", "props": {"title": "Why customers keep coming back",
+                                            "items": [
+                                                {"title": "Free shipping", "text": "On every order, worldwide."},
+                                                {"title": "60-day returns", "text": "Love it or send it back."},
+                                                {"title": "Lifetime warranty", "text": "We stand behind every unit."},
+                                            ]}},
+            {"type": "testimonial", "props": {"title": "Real customers, real reviews",
+                                                "items": [
+                                                    {"quote": "Blew away my expectations — worth every dollar.",
+                                                     "author": "Maya R.", "role": "Verified buyer",
+                                                     "avatar_url": ""},
+                                                    {"quote": "Shipping was fast and the quality is unreal.",
+                                                     "author": "Jordan T.", "role": "Verified buyer",
+                                                     "avatar_url": ""},
+                                                    {"quote": "I already ordered a second one for my sister.",
+                                                     "author": "Priya K.", "role": "Verified buyer",
+                                                     "avatar_url": ""},
+                                                ]}},
+            {"type": "faq", "props": {"items": [
+                {"q": "How long does shipping take?", "a": "3-5 business days in the US, 7-14 internationally."},
+                {"q": "Can I use the coupon with other offers?", "a": "The launch coupon is standalone — no stacking."},
+                {"q": "What's your return policy?", "a": "60 days from delivery, no questions asked."},
+            ]}},
+            {"type": "cta", "props": {"headline": "Ready to grab yours?",
+                                        "cta_label": "Buy now", "cta_scroll_to": "product-1"}},
+        ],
+    },
+    {
         "id": "electric",
         "name": "Electric",
         "aesthetic": "futuristic gradient, tech-forward",
@@ -169,9 +211,40 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
         # ensure unique slug within workspace
         while await db.funnels.find_one({"workspace_id": user["workspace_id"], "slug": slug}):
             slug = f"{slug}-{uuid.uuid4().hex[:4]}"
+        # For the Storefront template, try to auto-attach an existing product + coupon so the
+        # merchant lands in an editor that already looks like a real product page.
+        auto_product_id = ""
+        auto_coupon_code = ""
+        if body.template_id == "storefront":
+            prod = await db.products.find_one(
+                {"workspace_id": user["workspace_id"], "is_deleted": {"$ne": True}},
+                {"_id": 0}, sort=[("created_at", -1)])
+            if prod:
+                auto_product_id = prod.get("id", "")
+            cpn = await db.coupons.find_one(
+                {"workspace_id": user["workspace_id"], "is_deleted": {"$ne": True}, "state": {"$ne": "archived"}},
+                {"_id": 0}, sort=[("created_at", -1)])
+            if cpn:
+                auto_coupon_code = cpn.get("code", "")
+        import datetime as _dt
         blocks = []
         for i, b in enumerate((tpl or {}).get("blocks", [])):
-            blocks.append({"id": str(uuid.uuid4()), "type": b["type"], "props": b["props"],
+            props = dict(b["props"])  # shallow copy so we don't mutate the shared template
+            # Countdown: resolve duration_hours into a concrete ends_at at create time.
+            if b["type"] == "countdown" and not props.get("ends_at"):
+                hrs = int(props.pop("duration_hours", 72) or 72)
+                props["ends_at"] = (_dt.datetime.now(_dt.timezone.utc)
+                                    + _dt.timedelta(hours=hrs)).isoformat()
+            # Storefront auto-attach: fill the product + coupon blocks if we found any.
+            if body.template_id == "storefront":
+                if b["type"] == "product":
+                    if auto_product_id and not props.get("product_id"):
+                        props["product_id"] = auto_product_id
+                    if auto_coupon_code and not props.get("coupon_code"):
+                        props["coupon_code"] = auto_coupon_code
+                if b["type"] == "coupon" and auto_coupon_code and not props.get("coupon_code"):
+                    props["coupon_code"] = auto_coupon_code
+            blocks.append({"id": str(uuid.uuid4()), "type": b["type"], "props": props,
                            "anchor": b.get("anchor")})
         doc = {
             "id": str(uuid.uuid4()),
@@ -323,7 +396,7 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
     async def verify_domain(fid: str, user: dict = Depends(get_current_user)):
         require_writer(user)
         d = await db.funnels.find_one({"id": fid, "workspace_id": user["workspace_id"]})
-        if not d: raise HTTPException(400, "Not found") if False else HTTPException(404, "Not found")
+        if not d: raise HTTPException(404, "Not found")
         if not d.get("custom_domain"): raise HTTPException(400, "No custom domain set")
         fid_str = fid
         # If Cloudflare-for-SaaS is configured, poll the custom-hostname status.
@@ -376,7 +449,7 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
     async def public_funnel(slug: str):
         d = await db.funnels.find_one(
             {"slug": slug, "published": True, "is_deleted": {"$ne": True}},
-            {"_id": 0, "workspace_id": 0, "created_by": 0})
+            {"_id": 0, "created_by": 0})
         if not d: raise HTTPException(404, "Funnel not found or unpublished")
         # increment view count (fire-and-forget best-effort)
         try:
@@ -399,6 +472,18 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
                     from routers.giftcards import TEMPLATES as GC_TEMPLATES
                     tpl = next((t for t in GC_TEMPLATES if t["id"] == tid), None)
                     if tpl: block["props"]["template"] = tpl
+            elif block["type"] == "product":
+                pid = (block.get("props") or {}).get("product_id")
+                if pid:
+                    prod = await db.products.find_one(
+                        {"id": pid, "workspace_id": workspace_id, "is_deleted": {"$ne": True}},
+                        {"_id": 0, "workspace_id": 0, "stripe_price_id": 0})
+                    if prod: block["props"]["product"] = prod
+                code = (block.get("props") or {}).get("coupon_code")
+                if code:
+                    c = await db.coupons.find_one({"code": code, "workspace_id": workspace_id},
+                                                    {"_id": 0, "workspace_id": 0})
+                    if c: block["props"]["coupon"] = c
         # drop workspace_id from response (not part of public payload)
         d.pop("workspace_id", None)
         return d
