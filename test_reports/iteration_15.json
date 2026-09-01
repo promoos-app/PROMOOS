@@ -1,0 +1,53 @@
+{
+  "summary": "Iteration 15 verification: (a) Stripe hosted Payment Links, (b) industrialized Funnel Builder (9 new block types + 5 new templates + opt-in capture), (c) regression on the 9 deferred iter-14 fixes. Backend: created /app/backend/tests/test_iter15_stripe_industrial.py — 29/29 PASS; prior suites test_iter14_batch5.py + test_iter13_hydration.py re-run 37/37 PASS. Frontend: Playwright verified /pricing Stripe redirects (anon + authenticated), all 9 industrial blocks rendering on a public funnel, live opt-in submission, categorized editor palette with all 9 add-block-<type> buttons, analytics-optin-submits badge, clipboard-denial resilience, exactly-one view event per page load, and $39.20/$49.00 strike-through on qa-storefront-live. Two real defects found: invisible CTA buttons on /c/{code} (white-on-white) and missing property editors for all 9 new block types in the funnel editor.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/funnels/{fid}/leads", "issue": "Ownership guard uses `await find_one(...) or (_ for _ in ()).throw(HTTPException(404))` and does not filter `is_deleted`, so leads of a soft-deleted funnel are still readable. Works but is an unreadable idiom — replace with an explicit if/raise plus `is_deleted: {$ne: True}`."},
+      {"endpoint": "GET /api/public/f/{slug} vs GET /api/funnels/{fid}/analytics", "issue": "The raw `funnels.views` counter is incremented on every public API GET (server-side, incl. bots/pytest) while analytics prefers the client `view` event count. The two diverge (qa-storefront-live: funnels.views=39 vs event views=23). Not a bug per spec, but the dashboard number is ambiguous."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "PublicCoupon (/c/{code})", "issue": "CTA buttons are completely invisible — contrast ratio 1:1. 'Claim Offer' renders color rgb(255,255,255) on background rgb(255,255,255); 'Copy' renders color rgb(10,10,10) on background rgb(10,10,10). RCA: PublicCoupon.js hardcodes `text-white` on the redeem button (style background = `bg` = design.accent || brand.primary_color || '#005CEE') and `color:'#0A0A0A'` on the copy button (background = `accent` = brand.secondary_color). The seeded workspace brand is primary_color '#FFFFFF' / secondary_color '#0A0A0A', so both buttons collapse. Fix: compute foreground from background luminance (e.g. YIQ/relative-luminance helper) instead of hardcoding. Reproduce: https://campaign-hub-436.preview.emergentagent.com/c/TESTCTAEMPTY01 (and VIPELITJRIXE — same workspace brand).", "selector": "[data-testid=\"public-redeem-btn\"], [data-testid=\"public-copy-btn\"]", "priority": "HIGH"},
+      {"component": "FunnelEditor palette (/funnels/{id}/edit)", "issue": "None of the 9 new industrial block types have a property editor. Funnels.js only renders prop inputs for image/video/audio/countdown/product/row/hero/coupon/giftcard/cta/testimonial/heading/paragraph/features/faq. logo_bar, stats, guarantee, pricing_table, order_bump, upsell, optin, spacer and divider render only the BG/ACCENT swatches — merchants can add them but can never change headline, logos, stat values, pricing tiers, bump/upsell price, opt-in fields/lead_tag, or spacer height. This blocks the stated goal of 'industrialize the Funnel Builder to match systeme.io'.", "selector": "[data-testid=\"add-block-pricing_table\"] (added card has no inputs)", "priority": "HIGH"},
+      {"component": "PublicFunnel hero (qa-storefront-live)", "issue": "Hero CTA 'Shop now' uses the block-level accent override #361b1b (dark maroon) with dark text — text is barely legible; the eyebrow 'NEW DROP · LIMITED STOCK' is also near-invisible on #0A0A0A. Same root cause as the coupon page: accent-driven buttons never compute a contrasting foreground.", "selector": "[data-testid=\"funnel-block-hero\"] button", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Public funnel — logo_bar block", "issues": ["Logo names (Forbes/TechCrunch/Wired) render in a very dim gray on near-black; contrast is below WCAG AA for the size used."]},
+      {"screen": "Public funnel — coupon block on 390px mobile", "issues": ["Long codes (VIPELITJRIXE) fill the dashed box edge-to-edge with almost no horizontal padding; needs a smaller clamp or letter-spacing reduction at <420px."]},
+      {"screen": "PublicFunnelIndustrial.js", "issues": ["ESLint react/no-unescaped-entities at line 179:99 — raw apostrophe in JSX text."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter15_stripe_industrial.py",
+    "/app/backend/tests/seed_iter15_industrial.py",
+    "/app/test_reports/pytest/iter15_results.xml"
+  ],
+  "action_items": [
+    "HIGH: Add a luminance-based contrast helper and use it for the foreground of every accent/brand-coloured button (PublicCoupon redeem + copy buttons, PublicFunnel hero/CTA buttons). Currently 'Claim Offer' is white-on-white and 'Copy' is #0A0A0A-on-#0A0A0A on every public coupon page of the seeded workspace.",
+    "HIGH: Add property editors in Funnels.js for the 9 new block types (logo_bar label+logos, stats items, guarantee title/text/icon, pricing_table tiers, order_bump title/text/price/currency, upsell headline/text/price/cta, optin headline/sub/cta/fields/lead_tag, spacer height). Without these the industrial blocks are add-only.",
+    "LOW: Fix ESLint react/no-unescaped-entities in PublicFunnelIndustrial.js:179.",
+    "LOW: Clean up the generator-throw guard in GET /api/funnels/{fid}/leads and add the is_deleted filter.",
+    "LOW: funnels.py is 830 lines (>700 guideline) — consider splitting templates into a separate module."
+  ],
+  "critical_code_review_comments": [
+    "PublicCoupon.js: button text colours are hardcoded ('text-white' / '#0A0A0A') while their backgrounds are dynamic brand colours — guaranteed contrast failures for white or near-black brand palettes. Derive fg from bg luminance.",
+    "Funnels.js editor renders a block-type-specific prop form via a chain of `b.type === '...'` conditionals; the 9 new types were added to the palette and to the public REGISTRY but never to this chain. Consider a config-driven schema map (type -> field list) so palette, defaults and editor cannot drift again.",
+    "funnels.py (830 lines) mixes 12 hardcoded templates with route handlers — move TEMPLATES to routers/funnel_templates.py.",
+    "trackFunnelEvent uses navigator.sendBeacon; verified working via DB event counts (exactly +1 view per page load), but note it is invisible to Playwright request interception — future agents should assert against /api/funnels/{fid}/analytics instead of network listeners."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter15_stripe_industrial.py",
+    "/app/backend/tests/seed_iter15_industrial.py",
+    "/app/test_reports/iteration_15.json"
+  ],
+  "success_rate": {"backend": "100% (29/29 new + 37/37 prior regression)", "frontend": "100% of the requested new/regression flows verified; 2 pre-existing/adjacent HIGH defects found outside the pass criteria"},
+  "seed_data_creation": "Created published funnel slug 'qa-industrial-all' (id 110aa3a0-c961-456e-945e-04d63f0dde79) containing all 9 industrial block types + a coupon block wired to VIPELITJRIXE — reusable for future industrial-block regression. Created active coupon TESTCTAEMPTY01 (cta='') which reproduces the invisible-CTA bug. Test funnels/coupons created by pytest are auto-deleted by session fixtures. A handful of TEST_*@example.com funnel_leads remain on qa-industrial-all.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin@promoos.com / admin123 (owner, workspace Acme Swimwear Co.); superadmin@promoos.com / sZpRBNpLKypsQDURBQNqMIzE — both validated, httpOnly access_token cookie set on login, bad password -> 401.",
+  "context_for_next_testing_agent": "VERIFIED PASSING (do not re-test): GET /api/billing/plans payment_link values for both plans; /pricing labels 'Subscribe · $49/mo' / 'Subscribe · $79/mo'; anon + authenticated redirect to the exact buy.stripe.com URLs with client_reference_id + prefilled_email; legacy POST /api/billing/checkout still returns checkout_url for auth users and 401 for anon; all 5 new templates create/publish/hydrate; opt-in create + upsert (submits=2, no dupe) + 400 on bad email + 404 unknown funnel + 401 unauth leads + cross-tenant 404 + analytics optin_submits increment; coupon PUT partial-update preserves name/type/discount_value/headline/description; VIPELITJRIXE active/vip/20.0; /public/wallet/{email} no 500; /journeys no workspace_id; DELETE /api/reviews/{rid} idempotent (2nd = 404); clipboard denial does not trigger the CRA overlay and shows '✓ Copied' on success; exactly ONE view event per page load (verified via funnel_events DB counts, NOT network interception — sendBeacon is invisible to Playwright); $39.20 with $49.00 strike-through; editor palette categories + all 9 add-block-<type> buttons + analytics-optin-submits + Save. STILL OPEN: (1) invisible CTA buttons on /c/{code}, (2) no property editors for the 9 industrial block types. Re-test both after the fix, plus re-check contrast on PublicFunnel hero/CTA buttons.",
+  "rca_of_the_issue": "Invisible CTAs on /c/{code}: PublicCoupon.js line ~148 sets the redeem button style to `{background: bg}` with className 'text-white', where bg = design.accent || brand.primary_color || '#005CEE'. The seeded workspace brand primary_color is '#FFFFFF', so white text lands on a white button. Symmetrically the copy button at line ~130 uses `{background: accent, color: '#0A0A0A'}` where accent falls back to brand.secondary_color '#0A0A0A'. Confirmed via getComputedStyle: redeem = color rgb(255,255,255) / bg rgb(255,255,255); copy = color rgb(10,10,10) / bg rgb(10,10,10). Mitigation: add a getContrastText(hex) helper (relative luminance > 0.5 -> '#0A0A0A' else '#FFFFFF') and apply it to every dynamically-coloured button in PublicCoupon.js and PublicFunnel.js/PublicFunnelIndustrial.js."
+}

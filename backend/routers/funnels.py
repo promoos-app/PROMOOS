@@ -161,6 +161,206 @@ TEMPLATES = [
             {"type": "cta", "props": {"headline": "Move fast.", "cta_label": "Redeem now", "cta_scroll_to": "coupon-1"}},
         ],
     },
+    # --------------------------------------------------------------------------------
+    # Industrial funnel templates (systeme.io-style: opt-in / webinar / launch / etc.)
+    # --------------------------------------------------------------------------------
+    {
+        "id": "lead_magnet",
+        "name": "Lead Magnet Opt-in",
+        "aesthetic": "conversion-optimized single-column opt-in for a free ebook / checklist / cheatsheet",
+        "theme": {"bg": "#0B0F1A", "fg": "#FFFFFF", "muted": "#94A3B8", "accent": "#3B82F6",
+                  "font_display": "Cabinet Grotesk", "font_body": "Inter"},
+        "blocks": [
+            {"type": "logo_bar", "props": {"label": "As featured in",
+                                             "logos": ["Forbes", "TechCrunch", "Wired", "Fast Company", "Inc."]}},
+            {"type": "hero", "props": {"eyebrow": "Free · Instant access",
+                                        "headline": "The 7-step growth playbook top founders use.",
+                                        "subline": "Enter your email and we'll send the PDF to your inbox in 30 seconds.",
+                                        "cta_label": "Send me the playbook", "cta_scroll_to": "optin-1"}},
+            {"type": "optin", "props": {"headline": "Where should we send it?",
+                                          "sub": "No spam. Unsubscribe anytime.",
+                                          "cta_label": "Send it now",
+                                          "fields": [{"key": "email", "label": "Email address", "required": True}],
+                                          "lead_tag": "leadmagnet"}, "anchor": "optin-1"},
+            {"type": "stats", "props": {"items": [
+                {"value": "12,400+", "label": "Founders enrolled"},
+                {"value": "4.9/5", "label": "Average rating"},
+                {"value": "30 sec", "label": "To first insight"},
+            ]}},
+            {"type": "testimonial", "props": {"title": "What readers are saying",
+                                                "items": [
+                                                    {"quote": "Read it in one sitting — implemented 3 things the same day.",
+                                                     "author": "Jordan T.", "role": "Founder, Kettle", "rating": 5},
+                                                    {"quote": "Refreshingly practical. No fluff.",
+                                                     "author": "Aisha K.", "role": "Growth Lead", "rating": 5},
+                                                    {"quote": "This is what every startup needs before series A.",
+                                                     "author": "Miguel V.", "role": "Angel investor", "rating": 5},
+                                                ]}},
+            {"type": "guarantee", "props": {"title": "100% Free. Forever.",
+                                              "text": "No credit card required. Unsubscribe with one click.",
+                                              "icon": "shield"}},
+        ],
+    },
+    {
+        "id": "webinar_registration",
+        "name": "Webinar Registration",
+        "aesthetic": "high-conversion date-locked registration page with countdown + host bio",
+        "theme": {"bg": "#0A0E1A", "fg": "#FFFFFF", "muted": "#A1A1AA", "accent": "#F97316",
+                  "font_display": "Cabinet Grotesk", "font_body": "Inter"},
+        "blocks": [
+            {"type": "hero", "props": {"eyebrow": "Live · Thursday 2pm ET",
+                                        "headline": "The 45-minute masterclass founders wait months to attend.",
+                                        "subline": "Learn the exact playbook we use to book 40+ demos a week — with zero paid ads.",
+                                        "cta_label": "Save my seat", "cta_scroll_to": "optin-1"}},
+            {"type": "countdown", "props": {"label": "Registration closes in", "duration_hours": 48}},
+            {"type": "optin", "props": {"headline": "Reserve your spot — free",
+                                          "sub": "You'll get a confirmation email + a calendar invite.",
+                                          "cta_label": "Register now",
+                                          "fields": [
+                                              {"key": "first_name", "label": "First name", "required": True},
+                                              {"key": "email", "label": "Work email", "required": True},
+                                          ],
+                                          "lead_tag": "webinar"}, "anchor": "optin-1"},
+            {"type": "features", "props": {"title": "What you'll walk away with",
+                                             "items": [
+                                                {"title": "The 3-message cold sequence", "text": "Verbatim scripts you can send tonight."},
+                                                {"title": "How to disqualify in 2 minutes", "text": "Stop wasting cycles on bad-fit leads."},
+                                                {"title": "The $0 CRM stack", "text": "Free tools that outperform paid ones."},
+                                             ]}},
+            {"type": "testimonial", "props": {"title": "From past attendees",
+                                                "items": [
+                                                    {"quote": "Booked 6 demos the week after this session. Wild ROI on 45 minutes.",
+                                                     "author": "Priya K.", "role": "Founder, Loop", "rating": 5},
+                                                    {"quote": "The Q&A alone was worth attending.",
+                                                     "author": "Nadia R.", "role": "Sales lead", "rating": 5},
+                                                ]}},
+            {"type": "guarantee", "props": {"title": "Can't make it live?",
+                                              "text": "Register anyway — we'll send you the replay.",
+                                              "icon": "clock"}},
+        ],
+    },
+    {
+        "id": "product_launch",
+        "name": "Product Launch (Long-form sales)",
+        "aesthetic": "long-form sales page with pricing table, order bump, guarantee, FAQ, and upsell teaser",
+        "theme": {"bg": "#0A0A0A", "fg": "#FFFFFF", "muted": "#A1A1AA", "accent": "#CCFF00",
+                  "font_display": "Cabinet Grotesk", "font_body": "Inter"},
+        "blocks": [
+            {"type": "logo_bar", "props": {"label": "Trusted by teams at",
+                                             "logos": ["Stripe", "Notion", "Vercel", "Linear", "Ramp"]}},
+            {"type": "hero", "props": {"eyebrow": "Now available",
+                                        "headline": "The tool your competitors don't want you to find.",
+                                        "subline": "Everything you need to launch a store in 5 minutes — with a 30-day money-back guarantee.",
+                                        "cta_label": "See pricing", "cta_scroll_to": "pricing-1"}},
+            {"type": "video", "props": {"url": "", "poster_url": "", "autoplay": False}},
+            {"type": "stats", "props": {"items": [
+                {"value": "27,000+", "label": "Active customers"},
+                {"value": "99.98%", "label": "Uptime"},
+                {"value": "$2.4B", "label": "Processed"},
+            ]}},
+            {"type": "features", "props": {"title": "Everything included",
+                                             "items": [
+                                                {"title": "Unlimited coupons", "text": "Never hit a cap. Ever."},
+                                                {"title": "AI Copilot", "text": "Optimizes offers hourly."},
+                                                {"title": "White-label", "text": "Your domain, your brand."},
+                                                {"title": "24/7 support", "text": "Real humans, avg. 4-min reply."},
+                                                {"title": "Global payments", "text": "100+ methods worldwide."},
+                                                {"title": "SOC 2 Type II", "text": "Enterprise-grade security."},
+                                             ]}},
+            {"type": "pricing_table", "props": {"title": "Simple, honest pricing",
+                                                  "tiers": [
+                                                      {"name": "Basic", "price": 49, "period": "mo",
+                                                       "features": ["Unlimited coupons", "Email + SMS", "Public API"],
+                                                       "cta_label": "Start free", "highlight": False},
+                                                      {"name": "Pro", "price": 79, "period": "mo",
+                                                       "features": ["Everything in Basic", "Custom domain", "Advanced analytics"],
+                                                       "cta_label": "Start free", "highlight": True},
+                                                  ]}, "anchor": "pricing-1"},
+            {"type": "order_bump", "props": {"title": "Add: Onboarding session",
+                                                "text": "60-min 1:1 with a specialist who sets everything up for you.",
+                                                "price": 149, "currency": "USD",
+                                                "coupon_code": ""}},
+            {"type": "testimonial", "props": {"title": "What customers say",
+                                                "items": [
+                                                    {"quote": "Paid for itself in the first week.", "author": "Sam L.", "role": "CMO", "rating": 5},
+                                                    {"quote": "Support responds in minutes, not days.", "author": "Priya K.", "role": "Founder", "rating": 5},
+                                                    {"quote": "The AI Copilot alone is worth 10x the price.", "author": "Miguel V.", "role": "Head of Growth", "rating": 5},
+                                                ]}},
+            {"type": "guarantee", "props": {"title": "30-day money-back guarantee",
+                                              "text": "If it's not right for your business, we'll refund every cent — no questions asked.",
+                                              "icon": "shield"}},
+            {"type": "faq", "props": {"items": [
+                {"q": "Do I need a card to start?", "a": "No — first 3 days are free with no card required."},
+                {"q": "Can I cancel anytime?", "a": "One-click cancel from your dashboard. No lock-ins."},
+                {"q": "Do you offer refunds?", "a": "Yes — 30-day money-back, no questions asked."},
+                {"q": "What payment methods do you support?", "a": "Cards, Apple Pay, Google Pay, Klarna, Afterpay, SEPA, iDEAL, and more."},
+            ]}},
+            {"type": "upsell", "props": {"headline": "Wait — one more thing.",
+                                           "text": "Add annual billing and save 2 months. Same everything, less spend.",
+                                           "cta_label": "Switch to annual",
+                                           "price": 790, "currency": "USD"}},
+            {"type": "cta", "props": {"headline": "Ready to launch?",
+                                        "cta_label": "Get started", "cta_scroll_to": "pricing-1"}},
+        ],
+    },
+    {
+        "id": "application_funnel",
+        "name": "Application / Booking Funnel",
+        "aesthetic": "high-ticket qualification page — application form + scheduling teaser",
+        "theme": {"bg": "#0F0F0F", "fg": "#FFFFFF", "muted": "#A1A1AA", "accent": "#EAB308",
+                  "font_display": "Playfair Display", "font_body": "Inter"},
+        "blocks": [
+            {"type": "hero", "props": {"eyebrow": "By application only",
+                                        "headline": "Ready to grow past $10K/mo?",
+                                        "subline": "We work with a limited number of founders each quarter. Apply below.",
+                                        "cta_label": "Apply now", "cta_scroll_to": "optin-1"}},
+            {"type": "features", "props": {"title": "Who this is for",
+                                             "items": [
+                                                {"title": "You've hit $3K+ MRR", "text": "Product-market fit is close but not consistent."},
+                                                {"title": "You need a system", "text": "Not more advice — a repeatable process."},
+                                                {"title": "You'll do the work", "text": "Willing to execute daily for 90 days."},
+                                             ]}},
+            {"type": "optin", "props": {"headline": "Apply for a strategy call",
+                                          "sub": "Takes about 90 seconds. We reply within 24 hours.",
+                                          "cta_label": "Submit application",
+                                          "fields": [
+                                              {"key": "first_name", "label": "First name", "required": True},
+                                              {"key": "email", "label": "Best email", "required": True},
+                                              {"key": "company", "label": "Company / product", "required": False},
+                                              {"key": "mrr", "label": "Current MRR", "required": False},
+                                              {"key": "goal", "label": "What's your main goal?", "type": "textarea", "required": False},
+                                          ],
+                                          "lead_tag": "application"}, "anchor": "optin-1"},
+            {"type": "testimonial", "props": {"title": "From past clients",
+                                                "items": [
+                                                    {"quote": "Went from $8K to $47K MRR in 6 months.", "author": "Rina S.", "role": "Founder, Beam", "rating": 5},
+                                                    {"quote": "Best money I've spent on my business.", "author": "Ahmed K.", "role": "CEO, Loop", "rating": 5},
+                                                ]}},
+            {"type": "guarantee", "props": {"title": "Selective, honest fit",
+                                              "text": "If we're not a match, we'll tell you on the call and point you elsewhere.",
+                                              "icon": "handshake"}},
+        ],
+    },
+    {
+        "id": "thankyou",
+        "name": "Thank You / Confirmation",
+        "aesthetic": "post-purchase or post-optin confirmation with next-step upsell",
+        "theme": {"bg": "#0A0A0A", "fg": "#FFFFFF", "muted": "#A1A1AA", "accent": "#22C55E",
+                  "font_display": "Cabinet Grotesk", "font_body": "Inter"},
+        "blocks": [
+            {"type": "hero", "props": {"eyebrow": "✓ You're in",
+                                        "headline": "Check your inbox in the next 2 minutes.",
+                                        "subline": "We've sent you a confirmation with next steps. While you wait — here's one more thing.",
+                                        "cta_label": "See the upsell", "cta_scroll_to": "upsell-1"}},
+            {"type": "upsell", "props": {"headline": "Only shown once: 60% off our flagship course.",
+                                           "text": "Founders who take this course convert 3.4× more leads on average.",
+                                           "cta_label": "Yes, add it to my order",
+                                           "price": 197, "currency": "USD"}, "anchor": "upsell-1"},
+            {"type": "guarantee", "props": {"title": "Anything not right?",
+                                              "text": "Reply to the confirmation email and we'll fix it within an hour.",
+                                              "icon": "shield"}},
+        ],
+    },
 ]
 
 
@@ -484,6 +684,149 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
                     c = await db.coupons.find_one({"code": code, "workspace_id": workspace_id},
                                                     {"_id": 0, "workspace_id": 0})
                     if c: block["props"]["coupon"] = c
+            elif block["type"] == "testimonial":
+                props = block.get("props") or {}
+                # If the merchant linked to real reviews, pull the latest approved
+                # reviews from the reviews collection (workspace-scoped).
+                if props.get("source") == "reviews":
+                    q = {"workspace_id": workspace_id, "is_deleted": {"$ne": True},
+                         "approved": True}
+                    if props.get("product_id"): q["product_id"] = props["product_id"]
+                    limit = int(props.get("limit") or 6)
+                    reviews = await db.reviews.find(q,
+                        {"_id": 0, "workspace_id": 0, "created_by": 0,
+                         "is_deleted": 0, "approved": 0}).sort("created_at", -1).to_list(limit)
+                    props["items"] = [{
+                        "quote": r["quote"],
+                        "author": r["customer_name"],
+                        "role": r.get("role") or ("Verified buyer" if r.get("verified") else None),
+                        "avatar_url": r.get("avatar_url"),
+                        "rating": r.get("rating", 5),
+                    } for r in reviews]
+                    block["props"] = props
         # drop workspace_id from response (not part of public payload)
         d.pop("workspace_id", None)
         return d
+
+    class FunnelEvent(BaseModel):
+        event: str  # view | buy_now_click | coupon_copy | cta_click | optin_submit
+        block_id: Optional[str] = None
+        block_type: Optional[str] = None
+        meta: Optional[dict] = None
+
+    class OptinSubmit(BaseModel):
+        block_id: Optional[str] = None
+        fields: dict
+        lead_tag: Optional[str] = None
+        source_url: Optional[str] = None
+
+    @api.post("/public/f/{slug}/optin")
+    async def submit_optin(slug: str, body: OptinSubmit, request: Request = None):
+        """Capture a lead from an opt-in block. Deduped by email per funnel."""
+        f = await db.funnels.find_one({"slug": slug, "is_deleted": {"$ne": True}},
+                                        {"id": 1, "workspace_id": 1, "name": 1})
+        if not f: raise HTTPException(404, "Funnel not found")
+        email = (body.fields.get("email") or "").strip().lower()
+        if not email or "@" not in email:
+            raise HTTPException(400, "A valid email is required")
+        # Upsert by (workspace_id, email, funnel_id) so re-submits don't create dupes.
+        existing = await db.funnel_leads.find_one({
+            "workspace_id": f["workspace_id"], "email": email, "funnel_id": f["id"]})
+        ua = ""
+        ip = ""
+        if request is not None:
+            ua = (request.headers.get("user-agent") or "")[:200]
+            ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                    or (request.client.host if request.client else ""))[:64]
+        doc = {
+            "workspace_id": f["workspace_id"], "funnel_id": f["id"], "funnel_name": f["name"],
+            "slug": slug, "email": email, "fields": body.fields,
+            "lead_tag": body.lead_tag or "", "block_id": body.block_id,
+            "source_url": body.source_url or "", "ua": ua, "ip": ip,
+        }
+        if existing:
+            await db.funnel_leads.update_one({"id": existing["id"]},
+                {"$set": {**doc, "updated_at": now_iso()},
+                 "$inc": {"submits": 1}})
+            lead_id = existing["id"]
+        else:
+            doc["id"] = str(uuid.uuid4())
+            doc["created_at"] = now_iso()
+            doc["submits"] = 1
+            await db.funnel_leads.insert_one(doc)
+            lead_id = doc["id"]
+        # Also emit an analytics event so it shows in the funnel dashboard.
+        await db.funnel_events.insert_one({
+            "id": str(uuid.uuid4()), "funnel_id": f["id"], "workspace_id": f["workspace_id"],
+            "slug": slug, "event": "optin_submit", "block_id": body.block_id,
+            "block_type": "optin", "meta": {"email": email, "lead_tag": body.lead_tag or ""},
+            "ua": ua, "ip": ip, "created_at": now_iso()})
+        return {"ok": True, "lead_id": lead_id}
+
+    @api.get("/funnels/{fid}/leads")
+    async def funnel_leads(fid: str, user: dict = Depends(get_current_user)):
+        f = await db.funnels.find_one({"id": fid, "workspace_id": user["workspace_id"],
+                                         "is_deleted": {"$ne": True}}, {"id": 1})
+        if not f: raise HTTPException(404, "Not found")
+        docs = await db.funnel_leads.find(
+            {"funnel_id": fid, "workspace_id": user["workspace_id"]},
+            {"_id": 0, "workspace_id": 0, "ua": 0, "ip": 0}).sort("created_at", -1).to_list(500)
+        return docs
+
+    @api.post("/public/f/{slug}/track")
+    async def track_funnel_event(slug: str, body: FunnelEvent, request: Request = None):
+        """Public analytics event ingester — fired from PublicFunnel client-side."""
+        ev = (body.event or "").strip().lower()
+        if ev not in ("view", "buy_now_click", "coupon_copy", "cta_click", "optin_submit"):
+            raise HTTPException(400, "Unknown event")
+        f = await db.funnels.find_one({"slug": slug, "is_deleted": {"$ne": True}},
+                                        {"id": 1, "workspace_id": 1})
+        if not f: return {"ok": False}
+        ua = ""
+        ip = ""
+        if request is not None:
+            ua = (request.headers.get("user-agent") or "")[:200]
+            ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                    or (request.client.host if request.client else ""))[:64]
+        await db.funnel_events.insert_one({
+            "id": str(uuid.uuid4()),
+            "funnel_id": f["id"],
+            "workspace_id": f["workspace_id"],
+            "slug": slug,
+            "event": ev,
+            "block_id": body.block_id,
+            "block_type": body.block_type,
+            "meta": body.meta or {},
+            "ua": ua, "ip": ip,
+            "created_at": now_iso(),
+        })
+        return {"ok": True}
+
+    @api.get("/funnels/{fid}/analytics")
+    async def funnel_analytics(fid: str, user: dict = Depends(get_current_user)):
+        f = await db.funnels.find_one(
+            {"id": fid, "workspace_id": user["workspace_id"], "is_deleted": {"$ne": True}},
+            {"_id": 0, "id": 1, "slug": 1, "name": 1, "views": 1})
+        if not f: raise HTTPException(404, "Not found")
+        pipeline = [
+            {"$match": {"funnel_id": fid, "workspace_id": user["workspace_id"]}},
+            {"$group": {"_id": "$event", "count": {"$sum": 1}}},
+        ]
+        agg = {r["_id"]: r["count"] async for r in db.funnel_events.aggregate(pipeline)}
+        views = agg.get("view", 0) or int(f.get("views") or 0)
+        buy_clicks = agg.get("buy_now_click", 0)
+        coupon_copies = agg.get("coupon_copy", 0)
+        cta_clicks = agg.get("cta_click", 0)
+        optin_submits = agg.get("optin_submit", 0)
+        conv = round((buy_clicks / views) * 100, 2) if views else 0.0
+        optin_conv = round((optin_submits / views) * 100, 2) if views else 0.0
+        return {
+            "funnel_id": fid, "slug": f["slug"], "name": f["name"],
+            "views": views,
+            "buy_now_clicks": buy_clicks,
+            "coupon_copies": coupon_copies,
+            "cta_clicks": cta_clicks,
+            "optin_submits": optin_submits,
+            "buy_now_conversion_pct": conv,
+            "optin_conversion_pct": optin_conv,
+        }

@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { Copy, Check, Share2, Loader2, ExternalLink } from "lucide-react";
+import { getContrastText } from "@/lib/contrast";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -30,8 +31,12 @@ export default function PublicCoupon() {
       .catch(() => setErr("This offer is no longer available."));
   }, [code, ref]);
 
-  const bg = useMemo(() => c?.brand?.primary_color || "#005CEE", [c]);
-  const accent = useMemo(() => c?.brand?.secondary_color || "#CCFF00", [c]);
+  // Prefer per-coupon design overrides; fall back to workspace brand.
+  const design = c?.design || {};
+  const bg = useMemo(() => design.accent || c?.brand?.primary_color || "#005CEE", [c, design.accent]);
+  const accent = useMemo(() => design.badge_bg || design.accent || c?.brand?.secondary_color || "#CCFF00", [c, design.accent, design.badge_bg]);
+  const cardBg = design.bg || null;
+  const cardFg = design.fg || null;
 
   if (err) {
     return (
@@ -88,7 +93,7 @@ export default function PublicCoupon() {
       <div className="w-full max-w-[520px]" data-testid="public-coupon-card">
         <div className="text-center mb-6">
           <div className="inline-block text-[11px] tracking-[0.14em] uppercase font-bold px-3 py-1 rounded-full"
-               style={{ background: accent, color: "#0A0A0A" }} data-testid="public-brand-name">
+               style={{ background: accent, color: getContrastText(accent) }} data-testid="public-brand-name">
             {c.brand?.name || "PromoOS"}
           </div>
           {ref && (
@@ -98,13 +103,15 @@ export default function PublicCoupon() {
           )}
         </div>
 
-        <div className="rounded-2xl overflow-hidden border border-[#27272A] bg-gradient-to-b from-[#141416] to-[#0A0A0A]">
+        <div className="rounded-2xl overflow-hidden border border-[#27272A]"
+             style={cardBg ? { background: cardBg, color: cardFg || undefined }
+                            : { background: "linear-gradient(to bottom, #141416, #0A0A0A)" }}>
           {c.image_url ? (
             <img src={c.image_url} alt="" className="w-full h-56 object-cover" />
           ) : (
             <div className="w-full h-40 flex items-center justify-center"
                  style={{ background: `linear-gradient(135deg, ${bg}, ${accent})` }}>
-              <div className="text-5xl font-black text-white/90 tracking-tight">
+              <div className="text-5xl font-black tracking-tight" style={{ color: getContrastText(accent) }}>
                 {c.discount_value}{c.type === "fixed" ? "" : "%"} OFF
               </div>
             </div>
@@ -121,7 +128,7 @@ export default function PublicCoupon() {
                 data-testid="public-copy-btn"
                 onClick={copyCode}
                 className="px-4 py-3 rounded-lg font-bold text-sm"
-                style={{ background: accent, color: "#0A0A0A" }}
+                style={{ background: accent, color: getContrastText(accent) }}
               >
                 {copied ? <Check className="w-4 h-4" /> : <><Copy className="w-4 h-4 inline mr-1" />Copy</>}
               </button>
@@ -141,10 +148,10 @@ export default function PublicCoupon() {
                   data-testid="public-redeem-btn"
                   onClick={testRedeem}
                   disabled={redeeming}
-                  className="px-4 py-2 rounded-lg font-bold text-sm text-white disabled:opacity-50"
-                  style={{ background: bg }}
+                  className="px-4 py-2 rounded-lg font-bold text-sm disabled:opacity-50"
+                  style={{ background: bg, color: getContrastText(bg) }}
                 >
-                  {redeeming ? <Loader2 className="w-4 h-4 spin" /> : c.cta}
+                  {redeeming ? <Loader2 className="w-4 h-4 spin" /> : (c.cta || "Claim Offer")}
                 </button>
               </div>
             )}
@@ -192,8 +199,8 @@ export default function PublicCoupon() {
               <button
                 data-testid="referral-generate-btn"
                 onClick={generateShareLink}
-                className="px-4 py-2 rounded-lg font-bold text-sm text-white"
-                style={{ background: bg }}
+                className="px-4 py-2 rounded-lg font-bold text-sm"
+                style={{ background: bg, color: getContrastText(bg) }}
               >
                 Get link
               </button>

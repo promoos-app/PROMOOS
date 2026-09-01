@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 14 — full verification of the 5-item batch (footer Admin Portal, per-section colors, Reviews collection, on-brand countdown, storefront analytics) + coupon Custom Design. Backend: new pytest suite /app/backend/tests/test_iter14_batch5.py = 22/22 PASS (reviews CRUD + approved filter + soft delete + validation + cross-tenant patch blocked + public reviews payload strips workspace_id/approved; testimonial 'source=reviews' hydration on a fresh published storefront funnel returns author/quote/role/avatar_url/rating; analytics track for view/buy_now_click/coupon_copy/cta_click increments exactly, unknown event -> 400, unauth -> 403, cross-tenant read -> 404, conversion pct math correct; coupon design persists on POST/PUT, returned by GET /api/coupons/{id} and by GET /api/public/coupons/{code} for active coupons). Frontend: superadmin sees and can click footer-admin-portal -> /admin loads with Users tab; owner still gets footer-admin-login -> /login?admin=1. /reviews page: add dialog creates review, card renders, approve toggle flips Approved<->Draft, delete removes it, stats (TOTAL/APPROVED/AVG RATING) update. Funnel editor: funnel-analytics-panel renders VIEWS/BUY-NOW CLICKS/COUPON COPIES/BUY-NOW CONV., block-bg-color-<id> + block-accent-color-<id> present on ALL 8 blocks, block-countdown-picker is datetime-local showing local value (no ISO Z) with a live 'UTC: ...' preview that updates on change, testimonial mode toggle switches to 'Linked reviews'. Public renderer: per-block bg honored (coupon block rgb(11,29,42), testimonial block rgb(34,17,51)), linked reviews render with author+role+stars, coupon_copy and buy_now_click events land in analytics. 3 real defects found (1 data corruption, 1 public-page runtime crash, 1 analytics double-count) plus pre-existing 500 on /api/public/wallet.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "PUT /api/coupons/{cid} + seed coupon VIPELITJRIXE", "issue": "DATA CORRUPTION: the seeded coupon is now name='Design Test', type='percentage', discount_value=0.0, headline/description/terms/cta all blank. Root cause: PUT /api/coupons/{cid} is a FULL replace built from CouponIn defaults, so the partial update used to attach the design object wiped every other field. Visible impact: /f/qa-storefront-live now shows '$49.00' next to strike-through '$49.00 USD' (no discount) and /c/VIPELITJRIXE shows '0% OFF'; iteration-13 regression tests test_iter13_hydration::test_product_block_coupon_hydrated and ::test_discounted_price_math now FAIL.", "priority": "CRITICAL"},
+      {"endpoint": "GET /api/public/wallet/{email}", "issue": "500 Internal Server Error — KeyError: 'state' at server.py:1553 (gift_cards list-comp uses g['state'] instead of g.get('state')). Reproduce: GET /api/public/wallet/alice@example.com. Pre-existing, breaks test_iter4_features::TestPublicWallet.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "DELETE /api/reviews/{rid}", "issue": "Not idempotent — deleting an already soft-deleted review returns 200 instead of 404 because the filter omits the is_deleted guard (reviews.py:87)."},
+      {"endpoint": "GET /api/journeys", "issue": "Response leaks workspace_id on every journey document (server.py:1584) — other list endpoints strip it."},
+      {"endpoint": "OPTIONS /api/* (preflight)", "issue": "Preflight is answered by the edge/ingress with 'access-control-allow-origin: *' and NO 'access-control-allow-credentials', so backend_test.py::test_cors_uses_explicit_origin_with_credentials fails. FastAPI CORSMiddleware config itself is correct (allow_origin_regex='.*' + allow_credentials=True). Environment-level, pre-existing."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "PublicFunnel.js CouponBlock", "issue": "Clicking 'TAP TO COPY' on a public funnel coupon block throws an unhandled promise rejection ('Failed to execute writeText on Clipboard: Write permission denied') which renders the full-screen red 'Uncaught runtime errors' overlay over the storefront. navigator.clipboard.writeText(c.code) has no .catch()/fallback (PublicCoupon.js does it correctly). Also no 'Copied' visual feedback.", "selector": "[data-testid^=\"funnel-block-coupon\"] button:has-text('TAP TO COPY')", "priority": "HIGH"},
+      {"component": "PublicFunnel.js view tracking", "issue": "ANALYTICS DOUBLE-COUNT: trackFunnelEvent(slug,'view') is called inside the data-fetch useEffect with no ref guard, so React StrictMode fires it twice per page load (verified: 2 page loads -> 4 views, and 2 track POSTs per load in the network log). Every 'views' number and therefore buy_now_conversion_pct is ~2x off. Add a useRef(false) guard.", "selector": "[data-testid=\"public-funnel\"]", "priority": "HIGH"},
+      {"component": "PublicCoupon.js redeem button", "issue": "Button label is {c.cta} with no fallback — when a coupon has an empty cta the button renders as a solid colour block with no text (currently visible on /c/VIPELITJRIXE).", "selector": "[data-testid=\"public-redeem-btn\"]", "priority": "MEDIUM"},
+      {"component": "PublicFunnelBlocks ProductBlock", "issue": "When the attached coupon has discount_value=0 the block still renders a strike-through original price identical to the current price ('$49.00  $49.00 USD'). Suppress the strike-through when the computed discount is 0.", "selector": "[data-testid=\"funnel-block-product\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Funnel editor — countdown block", "issues": ["The 'UTC: 2026-12-24 18:30' helper line uses #71717A at 10px on #141414 — contrast well below 4.5:1, hard to read."]},
+      {"screen": "Public funnel — testimonial block with custom bg", "issues": ["The reviewer role text ('Verified buyer') keeps a fixed low-opacity grey, which nearly disappears on a custom dark bg (#221133). Derive it from the block fg/accent."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter14_batch5.py",
+    "/app/test_reports/pytest/iter14_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Restore the seeded coupon VIPELITJRIXE (type='vip', discount_value=20, name/headline/description/cta/terms) so /f/qa-storefront-live shows $39.20 again, AND change coupon update to partial-update semantics (model_dump(exclude_unset=True) or a CouponPatch model) so attaching a design never wipes other fields.",
+    "HIGH: Wrap CouponBlock copy() clipboard write in try/catch with a textarea fallback + 'Copied' state so the public storefront never shows the runtime-error overlay.",
+    "HIGH: Guard the funnel 'view' event with a useRef so it fires once per mount — current analytics views are double-counted.",
+    "HIGH: Fix GET /api/public/wallet/{email} 500 (use g.get('state')) — server.py:1553.",
+    "MEDIUM: Fallback label for PublicCoupon redeem button when cta is empty; hide strike-through price when discount is 0.",
+    "MINOR: Add is_deleted guard to DELETE /api/reviews/{rid} (404 on second delete); strip workspace_id from GET /api/journeys."
+  ],
+  "critical_code_review_comments": [
+    "PUT /api/coupons/{cid} accepts a full CouponIn and writes every field unconditionally — any client that sends a subset silently blanks the rest. This already corrupted seed data. Use exclude_unset or a dedicated patch model.",
+    "reviews.py update_review builds `updates` with a filter that keeps None only for role/avatar_url/product_id — the intent is unclear and it means a client can never null out other optional fields. Prefer model_dump(exclude_unset=True) directly.",
+    "PublicFunnel.js: analytics side-effect is coupled to the fetch effect; move it to its own effect with a ref guard and consider deduping views server-side by ip+ua within a short window.",
+    "funnel_analytics falls back to `int(f.get('views'))` when the aggregate has 0 view events — mixing two counters can produce views < buy_now_clicks and a >100% conversion rate."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter14_batch5.py"],
+  "success_rate": {"backend": "100% (22/22 new iter14 tests); regression suite 156/166 with 9 pre-existing/collateral failures (2 caused by the VIPELITJRIXE corruption)", "frontend": "~85% — all 8 P0 UI items present and functional; 4 UI defects found (clipboard crash, double view count, missing cta label, 0% strike-through)"},
+  "seed_data_creation": "Created and then deleted: TEST_* reviews, TEST_ hydration/analytics/copytrack funnels, TESTUIDSGN1/2 + TESTD* coupons. Also purged older TEST_-prefixed coupon leftovers from previous iterations. Seed data (VIPELITJRIXE coupon, qa-storefront-live funnel, Aisha K. review) left intact — note VIPELITJRIXE fields are still corrupted and need restoring by the main agent.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "superadmin@promoos.com / sZpRBNpLKypsQDURBQNqMIzE (role=superadmin, sees footer-admin-portal); admin@promoos.com / admin123 (role=owner, sees footer-admin-login)",
+  "context_for_next_testing_agent": "Run `pytest /app/backend/tests/test_iter14_batch5.py` for the batch-5 regression (22 tests, all green). Notes: (1) POST /api/funnels then PUT blocks then POST /api/funnels/{id}/publish — PUT does NOT accept a 'state' field, and PUT /api/coupons is a full replace so always resend the whole payload. (2) Playwright cannot drive input[type=color] with synthetic dispatchEvent on React controlled inputs — use locator.fill('#rrggbb') on the color input (works) or the adjacent hex text Input. (3) sendBeacon bodies are Blobs so request.post_data is None; assert tracking via GET /api/funnels/{fid}/analytics instead. (4) Container TZ is UTC so the countdown local-vs-UTC difference cannot be observed in-browser; implementation was code-reviewed and is correct. (5) After the main agent restores VIPELITJRIXE, re-run test_iter13_hydration.py — its 2 failures should clear.",
+  "flaky_tests": ["test_iter3_features::TestExperiments::test_promote_auto_picks_highest_rate — failed in the full-suite parallel run, passed on isolated re-run (~50% under xdist)."],
+  "rca_of_the_issue": "VIPELITJRIXE corruption: PUT /api/coupons/{cid} in server.py builds its $set from a full CouponIn instance, so fields absent from the request body take Pydantic defaults ('' / 0.0 / 'percentage') and overwrite stored values. When the design object was attached with a partial body, name/type/discount_value/headline/description/terms/cta were all reset. Mitigation: switch to exclude_unset patch semantics and re-seed the coupon. Clipboard crash: PublicFunnelBlocks CouponBlock calls navigator.clipboard.writeText without a rejection handler; in iframes/insecure contexts or when permission is denied the rejection is unhandled and CRA's error overlay covers the storefront. Analytics double-count: view event emitted from the fetch useEffect, double-invoked by React StrictMode."
+}

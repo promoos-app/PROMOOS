@@ -136,6 +136,14 @@ class CouponRules(BaseModel):
     referral_credit_pct: float = 10
 
 
+class CouponDesign(BaseModel):
+    bg: Optional[str] = ""
+    accent: Optional[str] = ""
+    fg: Optional[str] = ""
+    badge_bg: Optional[str] = ""
+    badge_fg: Optional[str] = ""
+
+
 class CouponIn(BaseModel):
     name: str
     type: str = "percentage"
@@ -148,6 +156,7 @@ class CouponIn(BaseModel):
     state: str = "draft"
     rules: CouponRules = Field(default_factory=CouponRules)
     image_url: Optional[str] = None
+    design: Optional[CouponDesign] = Field(default_factory=CouponDesign)
 
 
 class StateIn(BaseModel):
@@ -322,6 +331,7 @@ async def create_coupon(body: CouponIn, user: dict = Depends(get_current_user)):
         "code": code, "codes": [], "headline": body.headline, "description": body.description,
         "terms": body.terms, "cta": body.cta or "Claim Offer", "state": body.state,
         "rules": body.rules.model_dump(), "image_url": body.image_url or "",
+        "design": (body.design.model_dump() if body.design else {}),
         "qr_code": gen_qr(code),
         "stats": {"impressions": 0, "clicks": 0, "redemptions": 0, "revenue": 0.0},
         "created_at": now_iso(),
@@ -339,18 +349,30 @@ async def get_coupon(cid: str, user: dict = Depends(get_current_user)):
 
 
 @api.put("/coupons/{cid}")
-async def update_coupon(cid: str, body: CouponIn, user: dict = Depends(get_current_user)):
+async def update_coupon(cid: str, body: dict, user: dict = Depends(get_current_user)):
     require_writer(user)
     c = await db.coupons.find_one({"id": cid, "workspace_id": user["workspace_id"]})
     if not c:
         raise HTTPException(404, "Coupon not found")
-    code = (body.code or c["code"]).upper()
-    upd = {"name": body.name, "type": body.type, "discount_value": body.discount_value,
-           "code": code, "headline": body.headline, "description": body.description,
-           "terms": body.terms, "cta": body.cta, "state": body.state,
-           "rules": body.rules.model_dump(), "image_url": body.image_url or c.get("image_url", "")}
-    if code != c["code"]:
-        upd["qr_code"] = gen_qr(code)
+    # Partial update: validate against CouponIn but only $set fields the client actually sent.
+    allowed = {"name", "type", "discount_value", "code", "headline", "description",
+               "terms", "cta", "state", "rules", "image_url", "design"}
+    upd = {}
+    for k in allowed:
+        if k in body and body[k] is not None:
+            upd[k] = body[k]
+    if "code" in upd:
+        new_code = (upd["code"] or c["code"]).upper()
+        upd["code"] = new_code
+        if new_code != c["code"]:
+            upd["qr_code"] = gen_qr(new_code)
+    if "rules" in upd and isinstance(upd["rules"], dict):
+        # Preserve pydantic validation on nested rules if provided
+        upd["rules"] = CouponRules(**upd["rules"]).model_dump()
+    if "design" in upd and isinstance(upd["design"], dict):
+        upd["design"] = CouponDesign(**upd["design"]).model_dump()
+    if not upd:
+        return await db.coupons.find_one({"id": cid}, {"_id": 0})
     await db.coupons.update_one({"id": cid}, {"$set": upd})
     return await db.coupons.find_one({"id": cid}, {"_id": 0})
 
@@ -613,6 +635,7 @@ def _coupon_public_payload(c: dict, ws: dict) -> dict:
         "description": c.get("description", ""), "terms": c.get("terms", ""),
         "cta": c.get("cta", "Claim Offer"), "state": c["state"],
         "image_url": c.get("image_url", ""), "qr_code": c.get("qr_code", ""),
+        "design": c.get("design") or {},
         "referral": c.get("rules", {}).get("referral_enabled", False),
         "referral_credit_pct": c.get("rules", {}).get("referral_credit_pct", 10),
         "brand": {
@@ -1538,8 +1561,8 @@ async def public_wallet(customer_token: str, workspace_id: Optional[str] = None)
             ws_name = ws.get("name", "")
     return {
         "customer": customer, "workspace_name": ws_name,
-        "gift_cards": [{"code": g["code"], "amount": g["amount"], "balance": g["balance"],
-                        "state": g["state"]} for g in gcs],
+        "gift_cards": [{"code": g.get("code"), "amount": g.get("amount"), "balance": g.get("balance"),
+                        "state": g.get("state")} for g in gcs],
         "store_credits_total": round(sum(c.get("balance", 0) for c in credits), 2),
         "store_credits": credits,
         "loyalty": ml or None,
@@ -1569,7 +1592,8 @@ async def create_journey(body: JourneyIn, user: dict = Depends(get_current_user)
 
 @api.get("/journeys")
 async def list_journeys(user: dict = Depends(get_current_user)):
-    docs = await db.journeys.find({"workspace_id": user["workspace_id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    docs = await db.journeys.find({"workspace_id": user["workspace_id"]},
+                                    {"_id": 0, "workspace_id": 0}).sort("created_at", -1).to_list(200)
     return docs
 
 
@@ -2364,6 +2388,7 @@ from routers.admin import register as register_admin
 from routers.payments_alt import register as register_payments_alt
 from routers.pos import register as register_pos
 from routers.iter14 import register as register_iter14
+from routers.reviews import register as register_reviews
 extras_ctx = register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso,
                           get_current_user, require_writer, _admin_log)
 register_giftcards(api, db, EMERGENT_LLM_KEY, now_iso, get_current_user, require_writer)
@@ -2376,6 +2401,7 @@ register_pos(api, db, PUBLIC_APP_URL, now_iso, get_current_user,
              encrypt_str, decrypt_str, _hmac_ok, _apply_from_pos)
 register_iter14(api, db, now_iso, get_current_user, require_writer,
                 hash_password, verify_password, PUBLIC_APP_URL)
+register_reviews(api, db, get_current_user, require_writer)
 
 app.include_router(api)
 

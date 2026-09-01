@@ -1,0 +1,32 @@
+[
+  {
+    "label": "white",
+    "code": "SAVE8IDJWX",
+    "accent": "#FFFFFF",
+    "expected": "#0A0A0A"
+  },
+  {
+    "label": "black",
+    "code": "SAVEUSVK54",
+    "accent": "#0A0A0A",
+    "expected": "#FFFFFF"
+  },
+  {
+    "label": "lime",
+    "code": "SAVEYNT3WP",
+    "accent": "#CCFF00",
+    "expected": "#0A0A0A"
+  },
+  {
+    "label": "orange",
+    "code": "SAVEV43INF",
+    "accent": "#F97316",
+    "expected": null
+  },
+  {
+    "label": "brandonly",
+    "code": "SAVEZNC2ES",
+    "accent": null,
+    "expected": null
+  }
+]

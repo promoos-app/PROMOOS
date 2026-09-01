@@ -18,6 +18,7 @@ const empty = {
   name: "", type: "percentage", discount_value: 25, code: "",
   headline: "", description: "", terms: "", cta: "Claim Offer", state: "draft",
   image_url: "",
+  design: { bg: "", accent: "", fg: "", badge_bg: "", badge_fg: "" },
   rules: { min_cart: 0, scope: "all", scope_value: "", usage_limit: 0, per_customer_limit: 1, stackable: false, start_date: null, end_date: null, referral_enabled: false, referral_credit_pct: 10 },
 };
 
@@ -42,6 +43,7 @@ export default function CouponEditor() {
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const setRule = (k, v) => setForm((f) => ({ ...f, rules: { ...f.rules, [k]: v } }));
+  const setDesign = (k, v) => setForm((f) => ({ ...f, design: { ...(f.design || {}), [k]: v } }));
 
   const runAICopy = async () => {
     if (!prompt.trim()) { toast.error("Describe your promotion first"); return; }
@@ -250,6 +252,36 @@ export default function CouponEditor() {
               )}
             </div>
           </div>
+
+          {/* Custom design — per-coupon color overrides */}
+          <div className="surface rounded-lg p-5 space-y-3" data-testid="coupon-design-panel">
+            <h3 className="font-display font-bold">Custom Design</h3>
+            <div className="text-xs text-[#71717A]">Optional. Tint every section of this coupon — card background, accent, text, and badge. Applies everywhere this coupon is embedded.</div>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {[
+                ["bg", "Card BG"],
+                ["accent", "Accent"],
+                ["fg", "Text"],
+                ["badge_bg", "Badge BG"],
+                ["badge_fg", "Badge Text"],
+              ].map(([k, label]) => (
+                <div key={k}>
+                  <Label className="text-[10px] text-[#71717A] uppercase tracking-widest">{label}</Label>
+                  <div className="flex items-center gap-1 mt-1">
+                    <input type="color" value={form.design?.[k] || "#0A0A0A"}
+                      onChange={(e) => setDesign(k, e.target.value)}
+                      data-testid={`coupon-design-${k}`}
+                      className="h-9 w-10 rounded bg-[#0A0A0A] border border-[#27272A] cursor-pointer" />
+                    <Input value={form.design?.[k] || ""} onChange={(e) => setDesign(k, e.target.value)}
+                      placeholder="—" className="bg-[#0A0A0A] border-[#27272A] text-white h-9 text-xs font-mono" />
+                    {form.design?.[k] ? (
+                      <button onClick={() => setDesign(k, "")} className="text-[9px] text-[#71717A] hover:text-red-400 px-1">×</button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* RIGHT: live preview */}
@@ -257,7 +289,14 @@ export default function CouponEditor() {
           <h3 className="font-display font-bold text-lg">Live Preview</h3>
 
           {/* Coupon card */}
-          <div data-testid="preview-card" className="rounded-xl overflow-hidden border border-[#27272A] bg-gradient-to-br from-[#141414] to-[#0A0A0A]">
+          <div data-testid="preview-card" className="rounded-xl overflow-hidden border border-[#27272A]"
+            style={{
+              background: form.design?.bg || undefined,
+              color: form.design?.fg || undefined,
+            }}>
+            {!form.design?.bg && (
+              <div className="absolute inset-0 pointer-events-none rounded-xl bg-gradient-to-br from-[#141414] to-[#0A0A0A]" style={{ zIndex: -1 }} />
+            )}
             {form.image_url ? (
               <img src={form.image_url} alt="promo" className="w-full h-44 object-cover" />
             ) : (
@@ -265,15 +304,32 @@ export default function CouponEditor() {
                 <ImageIcon className="w-8 h-8" />
               </div>
             )}
-            <div className="p-6">
-              <div className="inline-block px-2 py-0.5 rounded bg-[#CCFF00] text-[#0A0A0A] text-xs font-bold mb-3">{discountText(form)}</div>
-              <h2 className="font-display font-extrabold text-2xl leading-tight mb-2">{form.headline || "Your headline appears here"}</h2>
-              <p className="text-sm text-[#A1A1AA] mb-4">{form.description || "Your promotional description will show here as you type or generate it with AI."}</p>
+            <div className="p-6" style={form.design?.bg ? { background: form.design.bg } : undefined}>
+              <div className="inline-block px-2 py-0.5 rounded text-xs font-bold mb-3"
+                style={{
+                  background: form.design?.badge_bg || "#CCFF00",
+                  color: form.design?.badge_fg || "#0A0A0A",
+                }}>{discountText(form)}</div>
+              <h2 className="font-display font-extrabold text-2xl leading-tight mb-2"
+                style={form.design?.fg ? { color: form.design.fg } : undefined}>
+                {form.headline || "Your headline appears here"}
+              </h2>
+              <p className="text-sm mb-4"
+                style={{ color: form.design?.fg ? `${form.design.fg}CC` : "#A1A1AA" }}>
+                {form.description || "Your promotional description will show here as you type or generate it with AI."}
+              </p>
               <div className="flex items-center justify-between">
-                <span className="font-mono text-sm bg-[#0A0A0A] border border-dashed border-[#CCFF00]/50 px-3 py-1.5 rounded">{form.code || "CODE"}</span>
-                <span className="btn-primary px-4 py-1.5 rounded-md text-sm font-medium">{form.cta || "Claim Offer"}</span>
+                <span className="font-mono text-sm bg-[#0A0A0A] border border-dashed px-3 py-1.5 rounded"
+                  style={{ borderColor: `${form.design?.accent || "#CCFF00"}80` }}>
+                  {form.code || "CODE"}
+                </span>
+                <span className="px-4 py-1.5 rounded-md text-sm font-medium"
+                  style={{
+                    background: form.design?.accent || "#CCFF00",
+                    color: form.design?.bg || "#0A0A0A",
+                  }}>{form.cta || "Claim Offer"}</span>
               </div>
-              {form.terms && <p className="text-[10px] text-[#52525B] mt-4">{form.terms}</p>}
+              {form.terms && <p className="text-[10px] mt-4" style={{ color: form.design?.fg ? `${form.design.fg}66` : "#52525B" }}>{form.terms}</p>}
             </div>
           </div>
 

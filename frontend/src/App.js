@@ -23,6 +23,7 @@ import DesignStudio from "@/pages/DesignStudio";
 import Integrations from "@/pages/Integrations";
 import Admin from "@/pages/Admin";
 import CouponLibrary from "@/pages/CouponLibrary";
+import Reviews from "@/pages/Reviews";
 import { PrivacyPolicy, TermsOfUse } from "@/pages/Legal";
 import Pricing from "@/pages/Pricing";
 import { BillingSuccess, BillingCancel } from "@/pages/BillingResult";
@@ -99,6 +100,7 @@ function App() {
             <Route path="integrations" element={<Integrations />} />
             <Route path="admin" element={<Admin />} />
             <Route path="library" element={<CouponLibrary />} />
+            <Route path="reviews" element={<Reviews />} />
           </Route>
         </Routes>
       </BrowserRouter>

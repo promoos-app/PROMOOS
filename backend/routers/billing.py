@@ -115,14 +115,18 @@ def register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso, get_curr
     STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 
     # Plan catalog: 3-day trial for both plans, "unlimited" tier gating handled in app.
+    # `payment_link` is a hosted Stripe Payment Link (public URL) — merchants who don't want to
+    # wire full webhook automation can subscribe instantly via the hosted checkout.
     PLANS = [
         {"lookup_key": "basic_monthly", "name": "Basic", "amount_cents": 4900, "currency": "usd",
          "interval": "month", "trial_days": 3,
+         "payment_link": "https://buy.stripe.com/5kQ28qcDSfMK3ni5MD2kw0f",
          "features": ["Unlimited coupons","Unlimited gift cards","AI Copilot","Email + SMS + WhatsApp",
                       "Loyalty program","Referral engine","5 widget variants","POS connectors",
                       "Public REST API","Admin portal"]},
         {"lookup_key": "pro_monthly", "name": "Pro", "amount_cents": 7900, "currency": "usd",
          "interval": "month", "trial_days": 3,
+         "payment_link": "https://buy.stripe.com/eVqfZg33igQO9LG5MD2kw0e",
          "features": ["Everything in Basic","Priority AI compute","Unlimited API keys",
                       "Custom domain publishing","Funnel Builder","Multi-workspace",
                       "Advanced analytics + exports","Dedicated support"]},
@@ -134,6 +138,7 @@ def register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso, get_curr
         return {"plans": [
             {"lookup_key": p["lookup_key"], "name": p["name"], "price": p["amount_cents"] / 100,
              "currency": p["currency"], "interval": p["interval"], "trial_days": p["trial_days"],
+             "payment_link": p.get("payment_link", ""),
              "features": p["features"]} for p in PLANS
         ], "publishable_key": os.environ.get("STRIPE_PUBLISHABLE_KEY", "")}
 

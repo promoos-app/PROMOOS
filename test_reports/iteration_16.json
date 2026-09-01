@@ -1,0 +1,83 @@
+{
+  "summary": "Iteration 16 focused verification of the 2 HIGH-priority fixes. FIX #2 (9 industrial block property editors) is fully verified PASS: all 18 required data-testids render on funnel qa-industrial-all, values edit + Save + refresh persist, invalid JSON in the stats/tiers textareas does not crash the editor. FIX #1 (contrast) is PARTIAL: the white-on-white / black-on-black collapse is genuinely fixed (accent #FFFFFF -> #0A0A0A text 19.8:1, accent #0A0A0A -> #FFFFFF 19.8:1, lime #CCFF00 -> dark 16.85:1, storefront hero/buy CTAs 15.8:1 & 16.85:1), BUT the helper's luminance threshold of 0.55 is wrong for WCAG: mid-tone brand colours still get WHITE text with a sub-4.5:1 ratio. Measured live on /c/VIPELITJRIXE: copy + redeem buttons = rgb(255,255,255) on rgb(249,115,22) = 2.80:1 (requirement in the review request was >=4.5:1; dark text would have given 7.06:1). Additionally a MISSED spot was found: the public-brand-name badge in PublicCoupon.js still hardcodes color:'#0A0A0A' over the accent background and is literally INVISIBLE (ratio 1.00) for the workspace's own default brand secondary #0A0A0A. Backend: 12/12 pytest pass incl. funnel leads 200/404/404-soft-deleted regression, VIPELITJRIXE active @20%, /api/public/wallet no 500.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "PublicCoupon.js (brand badge, line ~95-98)",
+        "issue": "INVISIBLE TEXT — badge uses style={{background: accent, color: '#0A0A0A'}} with hardcoded dark text. With the workspace's actual default brand secondary_color #0A0A0A (and any dark per-coupon design.badge_bg/accent) the measured contrast is 1.00:1 — the brand name is completely unreadable. Reproduced live on a brand-default coupon and on an accent=#0A0A0A coupon. getContrastText(accent) was applied to the 3 buttons but not to this badge.",
+        "selector": "[data-testid=\"public-brand-name\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "lib/contrast.js getContrastText (luminance > 0.55 threshold)",
+        "issue": "Threshold is not the WCAG crossover. Measured/verified matrix: #F97316 -> white 2.80:1 (dark would be 7.06), #22C55E -> white 2.28:1 (dark 8.69), #EAB308 -> white 1.92:1 (dark 10.32), #00BFA5 -> white 2.33:1 (dark 8.48), #FF0000/#7F7F7F -> white 4.00:1 (dark ~4.95), #6366F1 -> white 4.47:1. Any accent with relative luminance between ~0.179 and 0.55 gets the LOWER-contrast foreground. Requirement (a) of this review (orange button >= 4.5:1) therefore FAILS at 2.80:1. Fix: switch on luminance > 0.179 (the WCAG white/black crossover), or better, compute both ratios and return whichever is higher.",
+        "selector": "[data-testid=\"public-copy-btn\"], [data-testid=\"public-redeem-btn\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "PublicCoupon.js discount placeholder (line ~113-121)",
+        "issue": "When there is no image_url the '<n>% OFF' text is text-white/90 on a linear-gradient(135deg, bg, accent). With brand bg=#FFFFFF the left half of the gradient is white, so the text is unreadable there (see screenshot iter16_coupon_lime.jpg). Not covered by the fix.",
+        "selector": "public-coupon-card gradient placeholder",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "PublicFunnel.js hero CTA",
+        "issue": "Hero 'Shop now' anchor has no data-testid (only the product 'Buy now' has funnel-buy-now-btn), so the primary storefront CTA cannot be targeted deterministically in tests.",
+        "selector": "a (hero CTA) — missing data-testid",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/f/qa-storefront-live hero",
+        "issues": [
+          "Hero 'Shop now' button background resolves to rgb(54,27,27) — a very dark maroon on a #0A0A0A page; the label contrast is fine (15.8:1) but the button itself has almost no affordance against the background.",
+          "Eyebrow 'NEW DROP · LIMITED STOCK' is dark red on near-black — visually illegible in the screenshot."
+        ]
+      },
+      {
+        "screen": "Funnel editor (/funnels/{id}/edit)",
+        "issues": [
+          "divider block card renders only a hint text and no data-testid, so it cannot be asserted (the review listed divider among the 9 added editors).",
+          "React hydration warning in console on the editor: <span> injected as a child of <option> at Funnels.js:524 (coupon select). Noise only, but present on every editor load."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter16_contrast_editor.py",
+    "/app/backend/tests/iter16_cleanup.py",
+    "/app/test_reports/contrast_check.mjs"
+  ],
+  "action_items": [
+    "contrast.js: change the threshold from luminance > 0.55 to the WCAG crossover (> 0.179), or return max-contrast of white/#0A0A0A by computing both ratios. This makes #F97316 (VIPELITJRIXE) go from 2.80:1 to 7.06:1 and satisfies requirement (a).",
+    "PublicCoupon.js line ~96: replace the hardcoded color:'#0A0A0A' on [data-testid=public-brand-name] with getContrastText(accent) — currently 1.00:1 / invisible for the default workspace brand.",
+    "PublicCoupon.js gradient discount placeholder: derive the text colour from the gradient's lighter stop instead of text-white/90.",
+    "Add a data-testid to the PublicFunnel hero CTA anchor and to the divider block editor card.",
+    "Optional: getContrastText(accent, theme.bg) callers in PublicFunnel*/Industrial pass the page background as the fallback foreground — if the accent ever fails to parse the label becomes bg-on-bg. Prefer theme.fg as the fallback.",
+    "Lint: Funnels.js has 1 react/no-unescaped-entities (line 400) and 6 empty catch blocks (406/429/453/492/575/599) around JSON.parse — silently discarding malformed JSON gives the merchant no feedback."
+  ],
+  "critical_code_review_comments": [
+    "getContrastText picks the wrong foreground for the whole mid-luminance band (0.179–0.55); a 'contrast helper' that returns a 2.8:1 pair defeats the purpose of the fix. Prefer explicit ratio comparison over a magic threshold.",
+    "The fix was applied per-call-site, so any brand-coloured surface not touched (brand badge, gradient placeholder) still regresses. Consider a small <BrandButton>/<BrandChip> wrapper so contrast is enforced in one place.",
+    "Funnels.js is 665 lines with a very long block-type if-chain; extract the per-block property editors into a BlockPropsEditor module before it grows further.",
+    "funnel_leads correctly guards is_deleted and projects out _id/ip/ua — verified 200/404/404."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter16_contrast_editor.py (new)",
+    "/app/backend/tests/iter16_cleanup.py (new)",
+    "/app/test_reports/contrast_check.mjs (new)"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "FIX#2 100% (18/18 editors + persistence); FIX#1 ~60% (extremes fixed, mid-tone WCAG target missed, 1 missed element invisible)"},
+  "seed_data_creation": "Created 5 TEST_contrast_* coupons (accents #FFFFFF/#0A0A0A/#CCFF00/#F97316/brand-default) to probe contrast on /c/{code}; all deleted afterwards by iter16_cleanup.py. Funnel qa-industrial-all optin lead_tag and spacer height were changed for the persistence test and restored to qaleadmagnet/48; logo_bar label was intentionally left as 'Trusted by leaders at' per the review request.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin@promoos.com / admin123 (owner); superadmin@promoos.com / sZpRBNpLKypsQDURBQNqMIzE",
+  "context_for_next_testing_agent": "Re-run `pytest /app/backend/tests/test_iter16_contrast_editor.py` — it re-seeds the contrast probe coupons and writes their codes to /app/test_reports/iter16_seed.json; then run /app/backend/tests/iter16_cleanup.py to remove them. To verify the contrast fix, load /c/{code} and read getComputedStyle on [data-testid=public-copy-btn], public-redeem-btn AND public-brand-name, computing the WCAG ratio in-page (pattern in this iteration's Playwright script) — do not just assert 'is white'. Expected after fix: #F97316 -> dark text 7.06:1, and public-brand-name never 1.00:1. FIX #2 (block editors) is fully verified and needs no retest.",
+  "rca_of_the_issue": "contrast.js returns '#0A0A0A' only when relative luminance > 0.55. The mathematical crossover where black beats white is L = 0.179 (sqrt(1.05*0.05)-0.05). Everything in 0.179 < L <= 0.55 — which includes most saturated brand oranges/greens/yellows/teals, and specifically the #F97316 accent on VIPELITJRIXE — is therefore given white text at 1.92–4.47:1, below the 4.5:1 AA target this fix was supposed to guarantee. Separately, the fix was applied only to the 3 button call-sites in PublicCoupon.js; the brand badge on the same page still hardcodes dark text and collapses to a 1.00:1 black-on-black when the accent/brand secondary is #0A0A0A (the current workspace default), i.e. the original class of defect is still reachable on the same page."
+}

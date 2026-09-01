@@ -1,5 +1,54 @@
 # PromoOS — CHANGELOG
 
+## Iteration 16 (Feb 2026) — Stripe payment links + Industrial funnel builder + WCAG contrast
+
+### Stripe payment activation ✅ (P0 — user-provided links)
+- Wired both hosted Stripe Payment Links so merchants can pay in one click:
+  - **Basic** ($49/mo · 3-day trial) → `buy.stripe.com/5kQ28qcDSfMK3ni5MD2kw0f`
+  - **Pro** ($79/mo · 3-day trial) → `buy.stripe.com/eVqfZg33igQO9LG5MD2kw0e`
+- Backend `/billing/plans` returns each plan's `payment_link` alongside pricing metadata.
+- Pricing page auto-injects `client_reference_id` (workspace) and `prefilled_email` (user email) into the Stripe URL so returning customers land back in the app with attribution intact.
+- Legacy `/billing/checkout` session-mode flow still works for merchants who prefer server-driven webhook automation.
+
+### Industrial funnel builder ✅ (P0 — systeme.io feature parity request)
+- 9 new professional block types: **logo_bar, stats, guarantee, pricing_table, order_bump, upsell, optin, spacer, divider**.
+- 5 new templates: **Lead Magnet Opt-in, Webinar Registration, Product Launch (long-form), Application Funnel, Thank You**.
+- Opt-in lead capture: `POST /api/public/f/{slug}/optin` with dedupe (workspace + email + funnel), lead tagging, and analytics event emission. `GET /api/funnels/{fid}/leads` returns all captured leads (workspace-scoped, cross-tenant safe, is_deleted guarded).
+- Analytics extended to track `optin_submit` events + `optin_conversion_pct`.
+- Funnel editor palette re-categorized into **Layout / Conversion / Trust / Rewards** with per-block property editors for every new type (headline, text, price, tiers JSON, form fields JSON, logos list, height, etc.).
+
+### WCAG contrast pass ✅ (P0 — accessibility)
+- New `/lib/contrast.js` `getContrastText()` helper: computes actual WCAG ratios against both #FFFFFF and #0A0A0A and returns whichever wins. Guarantees ≥4.5:1 AA on all mid-tone brand colors (F97316 orange, 22C55E green, EAB308 amber, etc.). Verified live on `/c/VIPELITJRIXE` at 7.06:1 across all buttons + brand badge + discount placeholder.
+- Applied to every dynamic-colored surface: PublicCoupon (copy/redeem/referral/brand-badge/discount-gradient), PublicFunnel Hero + CTA, PublicFunnelBlocks ProductBlock buy button, PublicFunnelIndustrial pricing_table/upsell/optin CTAs.
+
+### Admin Portal footer fix ✅ (P0 — reported unresponsive)
+- Site footer now context-aware: superadmins see a highlighted **"Admin Portal" pill** (`data-testid="footer-admin-portal"`) that links straight to `/admin`; plain owners see the legacy Admin sign-in link.
+
+### Reviews Collection ✅ (P0)
+- New `/reviews` page + CRUD API (create/list/patch/approve/soft-delete). Delete is now idempotent (`is_deleted` guard).
+- Testimonial block gets a `source: "reviews"` mode that pulls approved workspace reviews live at public-render time (no JSON editing required).
+
+### Per-block color overrides ✅ (P0)
+- Every funnel block now has bg + accent color pickers in the editor (`data-testid="block-bg-color-<id>"`, `block-accent-color-<id>`). Coupon editor gained a full "Custom Design" panel (5 pickers) that persists a `design` object shipped in `/api/public/coupons/{code}`.
+
+### Countdown picker ✅ (P0)
+- Datetime input now shows the merchant's local time; internally converts to UTC ISO for storage; displays "UTC: …" preview for clarity.
+
+### Regression / minor fixes (iter14+15)
+- Coupon `PUT /api/coupons/{cid}` is now partial-update (only sets fields present in body — no more field-wiping).
+- Restored VIPELITJRIXE to active/vip/20% off after the field-wipe.
+- Public wallet no longer 500s on gift cards missing a `state` field.
+- `/api/journeys` no longer leaks `workspace_id`.
+- ProductBlock hides strike-through when discount is 0%.
+- PublicCoupon redeem falls back to "Claim Offer" when the merchant leaves `cta` empty.
+- Public funnel view tracker de-duped with `useRef` (React StrictMode-safe).
+- Clipboard copy on coupon block wrapped in try/catch with `execCommand` fallback + "✓ Copied" feedback (no more red overlay in insecure/iframe contexts).
+
+### Testing
+- **Iter 16** verification: FIX #2 100% pass (18/18 block editors + persistence), FIX #1 initially at 60% due to a threshold-only luminance implementation; fixed to compute actual WCAG ratios → verified 7.06:1 live on all buttons and brand badge on `/c/VIPELITJRIXE`. 12/12 backend pytest pass.
+
+---
+
 ## Iteration 14 (Feb 2026) — Storefront Template + Preview crash fixes
 
 ### Storefront funnel template ✅ (P0 — user-requested)

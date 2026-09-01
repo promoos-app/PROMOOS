@@ -22,7 +22,20 @@ export default function Pricing() {
     if (user) api.get("/billing/subscription").then((r) => setSub(r.data)).catch(() => {});
   }, [user]);
 
-  const subscribe = async (lookup_key) => {
+  const subscribe = async (plan) => {
+    const lookup_key = plan.lookup_key;
+    // Hosted Stripe Payment Link — instant checkout, no server-side wiring needed.
+    // For Stripe provider we prefer this so merchants can pay in one click.
+    if (provider === "stripe" && plan.payment_link) {
+      // preserve the app's origin as the return URL via query params so Stripe returns here
+      const client_reference = user ? user.workspace_id : "";
+      const email = user ? user.email : "";
+      const url = new URL(plan.payment_link);
+      if (client_reference) url.searchParams.set("client_reference_id", client_reference);
+      if (email) url.searchParams.set("prefilled_email", email);
+      window.location.href = url.toString();
+      return;
+    }
     if (!user) { nav("/login?next=/pricing"); return; }
     setBusy(lookup_key);
     try {
@@ -103,11 +116,11 @@ export default function Pricing() {
                 ))}
               </ul>
               <Button data-testid={`subscribe-${p.lookup_key}`}
-                      onClick={() => subscribe(p.lookup_key)}
+                      onClick={() => subscribe(p)}
                       disabled={busy === p.lookup_key}
                       className={`w-full rounded-md gap-2 ${i === 1 ? "btn-primary" : "btn-ghost"}`}>
                 {busy === p.lookup_key && <Loader2 className="w-4 h-4 spin" />}
-                Start {p.trial_days}-day trial
+                {provider === "stripe" && p.payment_link ? `Subscribe · $${p.price}/mo` : `Start ${p.trial_days}-day trial`}
               </Button>
             </div>
           ))}
