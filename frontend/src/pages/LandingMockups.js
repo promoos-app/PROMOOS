@@ -17,7 +17,8 @@ export function DashboardMockup() {
         {/* Sidebar */}
         <div className="bg-[#0A0A0A] border-r border-[#27272A] p-3 text-[10px] space-y-1">
           <div className="flex items-center gap-1.5 mb-3">
-            <img src="/promoos-logo.jpg" alt="PromoOS" className="h-4 w-auto object-contain rounded" />
+            <img src="/promoos-mark.png" alt="PromoOS" className="h-4 w-auto object-contain" />
+            <span className="font-display font-bold text-white text-xs">PromoOS</span>
           </div>
           {["Dashboard","Coupons","Gift Cards","Funnels","QR Studio","Analytics","Integrations"].map((l,i) => (
             <div key={l} className={`px-2 py-1 rounded ${i===0?"bg-[#CCFF00]/10 text-[#CCFF00]":"text-[#A1A1AA]"}`}>{l}</div>

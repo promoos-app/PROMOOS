@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { apiError } from "@/lib/api";
 import { toast } from "sonner";
@@ -111,6 +111,14 @@ export default function Login() {
             className="mt-5 text-sm text-[#A1A1AA] hover:text-white transition-colors">
             {mode === "login" ? "Need an account? Create one" : "Already have an account? Sign in"}
           </button>
+          {mode === "login" && (
+            <div className="mt-2">
+              <Link to="/forgot-password" data-testid="forgot-password-link"
+                className="text-xs text-[#71717A] hover:text-[#CCFF00] transition-colors">
+                Forgot password?
+              </Link>
+            </div>
+          )}
         </div>
       </div>
       </div>

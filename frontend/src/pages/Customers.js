@@ -90,11 +90,37 @@ export default function Customers() {
         </div>
       )}
 
+  const [selectedIds, setSelectedIds] = useState([]);
+  const toggleSel = (id) => setSelectedIds((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+  const toggleAll = () => setSelectedIds(selectedIds.length === filtered.length ? [] : filtered.map((c) => c.customer));
+  const bulkDelete = async () => {
+    if (!selectedIds.length) return;
+    if (!window.confirm(`Delete ${selectedIds.length} customers?`)) return;
+    try {
+      await api.post("/customers/bulk-delete", { ids: selectedIds });
+      setSelectedIds([]);
+      const { data } = await api.get("/customers"); setData(data);
+      toast.success("Deleted");
+    } catch (e) { toast.error(apiError(e)); }
+  };
+
       <div className="surface rounded-lg overflow-hidden">
+        {selectedIds.length > 0 && (
+          <div className="bg-[#CCFF00]/10 border-b border-[#CCFF00]/30 px-6 py-2 flex items-center justify-between" data-testid="bulk-actions-bar">
+            <div className="text-xs text-white">{selectedIds.length} selected</div>
+            <Button onClick={bulkDelete} data-testid="bulk-delete-btn" className="btn-ghost rounded-md text-xs gap-1">
+              Delete selected
+            </Button>
+          </div>
+        )}
         <table className="w-full text-sm" data-testid="customers-table">
           <thead className="bg-[#0A0A0A] text-[#71717A] text-xs uppercase tracking-wider">
             <tr>
-              <th className="text-left px-6 py-2">Customer</th>
+              <th className="text-left px-3 py-2 w-6">
+                <input type="checkbox" checked={selectedIds.length === filtered.length && filtered.length > 0}
+                  onChange={toggleAll} data-testid="select-all-customers" />
+              </th>
+              <th className="text-left px-3 py-2">Customer</th>
               <th className="text-left px-3 py-2">Segment</th>
               <th className="text-right px-3 py-2">Orders</th>
               <th className="text-right px-3 py-2">Spend</th>
@@ -106,7 +132,11 @@ export default function Customers() {
           <tbody>
             {filtered.slice(0, 300).map((c) => (
               <tr key={c.customer} className="border-t border-[#27272A]" data-testid={`customer-row-${c.customer}`}>
-                <td className="px-6 py-2 font-mono text-xs">{c.customer}</td>
+                <td className="px-3 py-2">
+                  <input type="checkbox" checked={selectedIds.includes(c.customer)} onChange={() => toggleSel(c.customer)}
+                    data-testid={`select-customer-${c.customer}`} />
+                </td>
+                <td className="px-3 py-2 font-mono text-xs">{c.customer}</td>
                 <td className="px-3 py-2">
                   <span className="text-xs font-bold px-2 py-0.5 rounded" style={{ background: (SEG_COLOR[c.segment] || "#71717A") + "22", color: SEG_COLOR[c.segment] || "#71717A" }}>{c.segment}</span>
                 </td>

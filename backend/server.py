@@ -2363,6 +2363,7 @@ from routers.qr import register as register_qr
 from routers.admin import register as register_admin
 from routers.payments_alt import register as register_payments_alt
 from routers.pos import register as register_pos
+from routers.iter14 import register as register_iter14
 extras_ctx = register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso,
                           get_current_user, require_writer, _admin_log)
 register_giftcards(api, db, EMERGENT_LLM_KEY, now_iso, get_current_user, require_writer)
@@ -2373,6 +2374,8 @@ register_admin(api, db, now_iso, get_current_user, require_superadmin, hash_pass
 register_payments_alt(api, db, now_iso, get_current_user)
 register_pos(api, db, PUBLIC_APP_URL, now_iso, get_current_user,
              encrypt_str, decrypt_str, _hmac_ok, _apply_from_pos)
+register_iter14(api, db, now_iso, get_current_user, require_writer,
+                hash_password, verify_password, PUBLIC_APP_URL)
 
 app.include_router(api)
 

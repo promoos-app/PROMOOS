@@ -113,8 +113,110 @@ function Block({ block, theme }) {
   }
   if (block.type === "heading") return <section className="py-8 px-6 text-center"><h2 className="text-3xl font-bold" style={{ fontFamily: font_display }}>{p.text}</h2></section>;
   if (block.type === "paragraph") return <section className="py-4 px-6"><p className="max-w-2xl mx-auto text-base opacity-80">{p.text}</p></section>;
+  if (block.type === "image") return (
+    <section className="py-8 px-6" data-testid="funnel-block-image">
+      <div className="max-w-3xl mx-auto">
+        {p.url && <img src={p.url} alt={p.alt || ""} className="w-full rounded-lg" />}
+        {p.caption && <div className="text-xs opacity-60 mt-2 text-center">{p.caption}</div>}
+      </div>
+    </section>
+  );
+  if (block.type === "video") return (
+    <section className="py-8 px-6" data-testid="funnel-block-video">
+      <div className="max-w-3xl mx-auto rounded-lg overflow-hidden">
+        {p.url && (p.url.includes("youtube.com") || p.url.includes("youtu.be") || p.url.includes("vimeo.com")
+          ? <iframe src={p.url.replace("watch?v=", "embed/")} className="w-full aspect-video" allowFullScreen title="video" />
+          : <video src={p.url} poster={p.poster_url} controls={!p.autoplay} autoPlay={p.autoplay} muted={p.autoplay} loop={p.autoplay} className="w-full" />)}
+      </div>
+    </section>
+  );
+  if (block.type === "audio") return (
+    <section className="py-8 px-6" data-testid="funnel-block-audio">
+      <div className="max-w-2xl mx-auto text-center">
+        {p.label && <div className="text-sm mb-2 opacity-75">{p.label}</div>}
+        {p.url && <audio src={p.url} controls className="w-full" />}
+      </div>
+    </section>
+  );
+  if (block.type === "countdown") return <Countdown block={block} theme={theme} />;
+  if (block.type === "product") return <ProductBlock block={block} theme={theme} />;
+  if (block.type === "row") return (
+    <section className="py-8 px-6" data-testid="funnel-block-row">
+      <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8">
+        {(p.columns || []).map((col, i) => (
+          <div key={i}>{(col.blocks || []).map((b) => <Block key={b.id || Math.random()} block={b} theme={theme} />)}</div>
+        ))}
+      </div>
+    </section>
+  );
   return null;
 }
+
+function Countdown({ block, theme }) {
+  const [t, setT] = useState({ d: 0, h: 0, m: 0, s: 0, done: false });
+  useEffect(() => {
+    const tick = () => {
+      const diff = new Date(block.props.ends_at).getTime() - Date.now();
+      if (diff <= 0) { setT({ d: 0, h: 0, m: 0, s: 0, done: true }); return; }
+      const d = Math.floor(diff / 86400000);
+      const h = Math.floor((diff % 86400000) / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setT({ d, h, m, s, done: false });
+    };
+    tick(); const id = setInterval(tick, 1000); return () => clearInterval(id);
+  }, [block.props.ends_at]);
+  return (
+    <section className="py-16 px-6 text-center" data-testid="funnel-block-countdown">
+      <div className="text-[10px] tracking-[0.3em] uppercase font-bold mb-4" style={{ color: theme.accent }}>{block.props.label || "Offer ends in"}</div>
+      {t.done ? (
+        <div className="text-4xl font-bold opacity-60">Offer ended</div>
+      ) : (
+        <div className="flex justify-center gap-4">
+          {[["Days", t.d], ["Hours", t.h], ["Minutes", t.m], ["Seconds", t.s]].map(([l, v]) => (
+            <div key={l} className="min-w-[72px]">
+              <div className="text-5xl font-bold tabular-nums" style={{ color: theme.accent, fontFamily: theme.font_display }}>{String(v).padStart(2, "0")}</div>
+              <div className="text-[10px] tracking-widest uppercase opacity-60 mt-1">{l}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProductBlock({ block, theme }) {
+  const [product, setProduct] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const pid = block.props.product_id; if (!pid) return;
+    axios.get(`${API}/api/products/${pid}`).catch(() => null); // best-effort; endpoint may 401 for public
+  }, [block.props.product_id]);
+  const buy = async () => {
+    setBusy(true);
+    try {
+      const { data } = await axios.post(`${API}/api/public/products/checkout`, {
+        product_id: block.props.product_id, origin_url: window.location.origin,
+        coupon_code: block.props.coupon_code || null,
+      });
+      window.location.href = data.checkout_url;
+    } catch (e) { alert(e?.response?.data?.detail || "Checkout failed"); setBusy(false); }
+  };
+  const p = block.props;
+  return (
+    <section className="py-16 px-6" data-testid="funnel-block-product">
+      <div className="max-w-md mx-auto rounded-2xl p-8 text-center border" style={{ borderColor: theme.accent }}>
+        <div className="text-[10px] tracking-[0.3em] uppercase font-bold mb-2" style={{ color: theme.accent }}>Featured product</div>
+        <div className="font-bold text-2xl mb-4" style={{ fontFamily: theme.font_display }}>Buy now</div>
+        {p.coupon_code && <div className="text-xs opacity-70 mb-4">With code <code className="font-mono font-bold">{p.coupon_code}</code></div>}
+        <button onClick={buy} disabled={busy}
+          className="w-full py-3 font-bold rounded-full transition hover:scale-[1.03]"
+          style={{ background: theme.accent, color: theme.bg }}>
+          {busy ? "Redirecting…" : "Buy now →"}
+        </button>
+      </div>
+    </section>
+  );
 
 export default function PublicFunnel() {
   const { slug } = useParams();

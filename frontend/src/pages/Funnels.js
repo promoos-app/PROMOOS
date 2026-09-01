@@ -165,6 +165,15 @@ export function FunnelEditor() {
       faq: { items: [{ q: "Question?", a: "Answer." }] },
       heading: { text: "Section title" },
       paragraph: { text: "Add your paragraph here." },
+      image: { url: "", alt: "", caption: "" },
+      video: { url: "", poster_url: "", autoplay: false },
+      audio: { url: "", label: "Listen" },
+      countdown: { ends_at: new Date(Date.now() + 7*24*3600*1000).toISOString(), label: "Offer ends in" },
+      product: { product_id: "", coupon_code: "" },
+      row: { columns: [
+        { blocks: [{ id: crypto.randomUUID(), type: "heading", props: { text: "Left column" } }] },
+        { blocks: [{ id: crypto.randomUUID(), type: "heading", props: { text: "Right column" } }] },
+      ]},
     };
     setFunnel((f) => ({ ...f, blocks: [...f.blocks, { id: crypto.randomUUID(), type, props: defaults[type] || {} }] }));
   };
@@ -230,6 +239,68 @@ export function FunnelEditor() {
                   <button onClick={() => removeBlock(b.id)} className="text-red-400 hover:bg-red-500/10 rounded p-1"><Trash2 className="w-3 h-3" /></button>
                 </div>
               </div>
+              {b.type === "image" && (
+                <div className="space-y-2">
+                  <Input value={b.props.url || ""} onChange={(e) => updateBlock(b.id, { url: e.target.value })} placeholder="Image URL (or upload via /api/uploads)" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <Input value={b.props.caption || ""} onChange={(e) => updateBlock(b.id, { caption: e.target.value })} placeholder="Caption (optional)" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <label className="btn-ghost inline-flex items-center gap-2 cursor-pointer rounded-md px-3 py-2 text-xs">
+                    Upload image
+                    <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                      const f = e.target.files?.[0]; if (!f) return;
+                      const fd = new FormData(); fd.append("file", f);
+                      try { const { data } = await api.post("/uploads", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                        updateBlock(b.id, { url: `${process.env.REACT_APP_BACKEND_URL}${data.url}` });
+                        toast.success("Uploaded");
+                      } catch (er) { toast.error(apiError(er)); }
+                    }} />
+                  </label>
+                </div>
+              )}
+              {b.type === "video" && (
+                <div className="space-y-2">
+                  <Input value={b.props.url || ""} onChange={(e) => updateBlock(b.id, { url: e.target.value })} placeholder="Video URL (mp4/YouTube/Vimeo)" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <Input value={b.props.poster_url || ""} onChange={(e) => updateBlock(b.id, { poster_url: e.target.value })} placeholder="Poster image URL (optional)" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <label className="text-xs text-[#A1A1AA] flex items-center gap-2">
+                    <input type="checkbox" checked={!!b.props.autoplay} onChange={(e) => updateBlock(b.id, { autoplay: e.target.checked })} /> Autoplay (muted)
+                  </label>
+                </div>
+              )}
+              {b.type === "audio" && (
+                <div className="space-y-2">
+                  <Input value={b.props.url || ""} onChange={(e) => updateBlock(b.id, { url: e.target.value })} placeholder="Audio URL (mp3/wav)" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <Input value={b.props.label || ""} onChange={(e) => updateBlock(b.id, { label: e.target.value })} placeholder="Label" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                </div>
+              )}
+              {b.type === "countdown" && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div>
+                    <Label className="text-xs text-[#A1A1AA]">Countdown ends at</Label>
+                    <Input type="datetime-local" value={(b.props.ends_at || "").slice(0, 16)}
+                      onChange={(e) => updateBlock(b.id, { ends_at: new Date(e.target.value).toISOString() })}
+                      className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-[#A1A1AA]">Label</Label>
+                    <Input value={b.props.label || ""} onChange={(e) => updateBlock(b.id, { label: e.target.value })} placeholder="Offer ends in" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  </div>
+                </div>
+              )}
+              {b.type === "product" && (
+                <div className="space-y-2">
+                  <Input value={b.props.product_id || ""} onChange={(e) => updateBlock(b.id, { product_id: e.target.value })}
+                    placeholder="Product ID (create products under /products)" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <Input value={b.props.coupon_code || ""} onChange={(e) => updateBlock(b.id, { coupon_code: e.target.value })}
+                    placeholder="Optional coupon to apply on Buy-Now" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <div className="text-[10px] text-[#71717A]">Buy-Now uses your workspace's Stripe checkout.</div>
+                </div>
+              )}
+              {b.type === "row" && (
+                <div className="text-xs text-[#71717A]">Row layout — edit inner blocks via JSON below:
+                  <textarea value={JSON.stringify(b.props.columns || [], null, 2)}
+                    onChange={(e) => { try { updateBlock(b.id, { columns: JSON.parse(e.target.value) }); } catch {} }}
+                    rows={8} className="mt-1 w-full bg-[#0A0A0A] border border-[#27272A] text-white rounded-md p-2 text-[11px] font-mono" />
+                </div>
+              )}
               {b.type === "hero" && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   <Input value={b.props.eyebrow || ""} onChange={(e) => updateBlock(b.id, { eyebrow: e.target.value })} placeholder="Eyebrow" className="bg-[#0A0A0A] border-[#27272A] text-white" />
@@ -285,7 +356,7 @@ export function FunnelEditor() {
           <div className="surface rounded-lg p-4">
             <div className="text-xs uppercase tracking-widest text-[#71717A] mb-2">Add a block</div>
             <div className="flex flex-wrap gap-2">
-              {["hero", "coupon", "giftcard", "cta", "features", "testimonial", "faq", "heading", "paragraph"].map((t) => (
+              {["hero", "coupon", "giftcard", "cta", "features", "testimonial", "faq", "heading", "paragraph", "image", "video", "audio", "countdown", "product", "row"].map((t) => (
                 <button key={t} onClick={() => addBlock(t)} data-testid={`add-block-${t}`}
                   className="btn-ghost rounded-md text-xs px-3 py-1.5 capitalize">+ {t}</button>
               ))}

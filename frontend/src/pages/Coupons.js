@@ -6,7 +6,7 @@ import { STATE_STYLES, TYPE_LABELS, discountText } from "@/lib/couponUtils";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, MoreHorizontal, Ticket, Share2, Download, Copy } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Ticket, Share2, Download, Copy, Sparkles } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
@@ -60,6 +60,10 @@ export default function Coupons() {
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
       toast.success("Downloaded");
     } catch (e) { toast.error(apiError(e)); }
+  };
+  const publish = async (cid) => {
+    try { await api.post(`/coupons/${cid}/publish`); qc.invalidateQueries({ queryKey: ["coupons"] }); toast.success("Coupon published"); }
+    catch (e) { toast.error(apiError(e)); }
   };
   const cp = (t) => { navigator.clipboard.writeText(t).catch(() => {}); toast.success("Copied"); };
 
@@ -138,6 +142,9 @@ export default function Coupons() {
                       <DropdownMenuContent align="end" className="bg-[#141414] border-[#27272A] text-white">
                         <DropdownMenuItem className="focus:bg-[#1E1E1E]" onClick={() => navigate(`/coupons/${c.id}/edit`)}>Edit</DropdownMenuItem>
                         <DropdownMenuItem className="focus:bg-[#1E1E1E]" onClick={() => navigate(`/coupons/${c.id}`)}>View & QR</DropdownMenuItem>
+                        <DropdownMenuItem data-testid={`publish-${c.id}`} className="focus:bg-[#1E1E1E]" onClick={() => publish(c.id)}>
+                          <Sparkles className="w-3.5 h-3.5 mr-2 text-[#CCFF00]" /> Publish
+                        </DropdownMenuItem>
                         <DropdownMenuItem data-testid={`share-${c.id}`} className="focus:bg-[#1E1E1E]" onClick={() => openShare(c.id)}>
                           <Share2 className="w-3.5 h-3.5 mr-2" /> Share & embed
                         </DropdownMenuItem>

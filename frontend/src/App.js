@@ -31,6 +31,7 @@ import { Funnels, FunnelEditor } from "@/pages/Funnels";
 import PublicFunnel from "@/pages/PublicFunnel";
 import QRStudio from "@/pages/QRStudio";
 import Landing from "@/pages/Landing";
+import { ForgotPassword, ResetPassword } from "@/pages/ResetPassword";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -66,6 +67,8 @@ function App() {
         <Toaster theme="dark" position="top-right" />
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/c/:code" element={<PublicCoupon />} />
           <Route path="/f/:slug" element={<PublicFunnel />} />
           <Route path="/wallet/:token" element={<Wallet />} />

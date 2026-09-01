@@ -1,7 +1,47 @@
 # PromoOS — AI Promotional Commerce Platform (PRD)
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
-**53/53 spec sections shipped. All P0/P1 items closed. Production-deployed at `https://campaign-hub-436.emergent.host`.**
+**56 modules shipped. Deployed at `https://campaign-hub-436.emergent.host`.**
+
+## Iteration 14 (Feb 2026) — Bulk request: password reset · products · publish · bulk delete · funnel media · admin affiliates
+
+### Password reset ✅
+- `POST /api/auth/password-reset/request` — always 200 (no email enumeration); sends via Resend if configured, else logs the URL.
+- `POST /api/auth/password-reset/complete` — validates token (SHA-256, 2h expiry), sets new password.
+- `POST /api/auth/change-password` — authenticated in-app password change.
+- Frontend: `/forgot-password` + `/reset-password` routes, plus **Forgot password?** link on the sign-in page.
+
+### Products + workspace payments ✅
+- `products` collection with `name/price/currency/description/image_url`. CRUD via `/api/products/*`.
+- `POST /api/public/products/checkout` — creates Stripe Checkout for a product on any coupon/funnel page. Uses platform Stripe key (workspace-level Stripe Connect is Phase 5).
+- New funnel block type: **product** — attach `product_id` + optional `coupon_code`; renders a **Buy now** button that goes straight to Stripe.
+
+### Funnel enrichment ✅
+- New block types wired into editor AND public renderer:
+  - **image** (URL or upload from Emergent object storage)
+  - **video** (mp4/YouTube/Vimeo, poster + autoplay support)
+  - **audio** (mp3/wav)
+  - **countdown** (real-time countdown to `ends_at` with days/hours/minutes/seconds)
+  - **product** (Buy Now → Stripe)
+  - **row** (two-column layout with nested blocks)
+
+### Publish coupon ✅
+- `POST /api/coupons/{id}/publish` and `/unpublish` toggle status between `active` and `draft`.
+- Coupons list dropdown: **Publish** action.
+
+### Customer bulk delete ✅
+- `POST /api/customers/bulk-delete {ids}` — mass soft-delete.
+- Customers page: checkbox column, select-all header, sticky "N selected · Delete selected" bar.
+
+### Admin enrichments ✅
+- `GET /api/admin/users-detailed` — returns plan / subscription_status / next_billing / joined_at / coupon_count / customer_count per user.
+- `GET /api/admin/affiliates` — aggregates referral loops into an affiliates leaderboard (referrer, referrals, revenue).
+
+### Testing
+- All new endpoints verified via curl end-to-end (password reset, products, publish, bulk delete, affiliates). Frontend compiled clean.
+
+## The app is feature-complete. Deploy and onboard your first merchant.
+
 
 ## Iteration 13 (Feb 2026) — Final P1 hardenings
 
