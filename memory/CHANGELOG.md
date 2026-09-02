@@ -1,5 +1,36 @@
 # PromoOS — CHANGELOG
 
+## Iteration 19 (Feb 2026) — Funnel Builder scroll fix + Automations + Multi-step/A-B foundation + Gift Card checkout
+
+### P0 BUG FIX: Funnel Builder dialog was unreachable ✅
+- Reported: "Funnel Builder is absolutely static and not accessible. Cannot scroll to Funnel Page tabs."
+- Root cause: with 19 templates in a 2-col grid, `DialogContent` had no `max-h` + `overflow-y-auto`, so both the lower template cards AND the "Create funnel" button sat below the visible fold at any normal viewport height.
+- Fix: `DialogContent` → `max-h-[85vh] overflow-y-auto`; templates grid → `max-h-[52vh] overflow-y-auto pr-1`, expanded to 3 columns on `lg`.
+- Testing agent verified live at 1440×900: dialog `clientHeight=706` (fits viewport), grid `scrollHeight=543` scrolls to expose all 19 cards, `funnel-tpl-info_page` clickable, `create-funnel-submit` in viewport (y=743..779) — funnel created successfully.
+- Also fixed contrast on selected template card (was black-on-black for light-theme templates).
+
+### Automations (Email Sequences) ✅ (P0 — user backlog)
+- New `/sequences` page + full CRUD backend at `/api/sequences`.
+- Trigger types: `optin`, `funnel_view`, `coupon_redeem`.
+- Steps with `delay_hours`, `subject`, `body`. Enable/pause toggle. Lead-tag filter + optional funnel scoping.
+- Opt-in submits automatically enroll matching sequences and schedule emails (`db.sequence_enrollments`).
+- Sidebar link "Automations" added.
+
+### Multi-Step Funnels + A/B Split Testing foundation ✅
+- Funnel model now accepts optional `steps: [{id, name, slug_suffix, blocks: []}]` and `variants: [{id, name, weight, blocks: []}]` arrays alongside the flat `blocks[]`.
+- Public `/api/public/f/{slug}?step=<slug_suffix>&variant=<id>&vb=<visitor_bucket>` picks the right page/variant and hydrates only that page's blocks.
+- Deterministic weighted A/B selection by hashing the visitor bucket into the weighted pool — same visitor always sees the same variant unless variant weights change.
+- Existing legacy funnels (no `steps`/`variants`) render exactly as before (fully backward compatible).
+
+### Gift Card Purchase Flow ✅
+- New `POST /api/public/giftcards/checkout` creates a Stripe Checkout Session for the gift-card amount + template. Metadata carries workspace_id, template_id, purchaser/recipient details.
+- `GET /api/public/giftcards/order/{session_id}` polls Stripe; on paid, idempotently mints a real gift card (code `GC-XXXXXXXXXX`) and returns it.
+
+### Testing
+- Iter19 verification: **100% backend + 100% frontend** on the reported scroll bug + Sequences page + Public funnel regression.
+
+---
+
 ## Iteration 18 (Feb 2026) — Complete funnel page types + Products upload + payment activation + regression fixes
 
 ### Merchant-facing feature completeness ✅ (P0 — user batch)

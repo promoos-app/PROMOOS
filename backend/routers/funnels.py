@@ -544,6 +544,8 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
         theme: Optional[dict] = None
         seo: Optional[dict] = None
         slug: Optional[str] = None
+        steps: Optional[List[dict]] = None
+        variants: Optional[List[dict]] = None
 
     class DomainSet(BaseModel):
         domain: str
@@ -643,6 +645,33 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
         if body.blocks is not None:
             upd["blocks"] = [{"id": b.id or str(uuid.uuid4()), "type": b.type,
                               "props": b.props, "anchor": b.anchor} for b in body.blocks]
+        if body.steps is not None:
+            # Ensure every step has id + slug_suffix + blocks; auto-assign missing ids.
+            steps_clean = []
+            for s in body.steps:
+                sid = s.get("id") or str(uuid.uuid4())
+                suffix = _slugify(s.get("slug_suffix") or s.get("name") or f"step-{len(steps_clean)+1}")
+                blks = []
+                for b in (s.get("blocks") or []):
+                    blks.append({"id": b.get("id") or str(uuid.uuid4()),
+                                 "type": b.get("type"), "props": b.get("props") or {},
+                                 "anchor": b.get("anchor")})
+                steps_clean.append({"id": sid, "name": s.get("name") or "Untitled step",
+                                    "slug_suffix": suffix, "blocks": blks})
+            upd["steps"] = steps_clean
+        if body.variants is not None:
+            variants_clean = []
+            for v in body.variants:
+                vid = v.get("id") or str(uuid.uuid4())
+                weight = max(0, int(v.get("weight") or 1))
+                blks = []
+                for b in (v.get("blocks") or []):
+                    blks.append({"id": b.get("id") or str(uuid.uuid4()),
+                                 "type": b.get("type"), "props": b.get("props") or {},
+                                 "anchor": b.get("anchor")})
+                variants_clean.append({"id": vid, "name": v.get("name") or f"Variant {len(variants_clean)+1}",
+                                       "weight": weight, "blocks": blks})
+            upd["variants"] = variants_clean
         r = await db.funnels.update_one(
             {"id": fid, "workspace_id": user["workspace_id"]}, {"$set": upd})
         if r.matched_count == 0: raise HTTPException(404, "Not found")
@@ -801,24 +830,13 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
         return {"verified": verified,
                 "note": "DNS propagation can take up to 48h. Retry after adding the TXT record." if not verified else "Domain verified! SSL will be provisioned within a few minutes."}
 
-    @api.get("/public/f/{slug}")
-    async def public_funnel(slug: str):
-        d = await db.funnels.find_one(
-            {"slug": slug, "published": True, "is_deleted": {"$ne": True}},
-            {"_id": 0, "created_by": 0})
-        if not d: raise HTTPException(404, "Funnel not found or unpublished")
-        # increment view count (fire-and-forget best-effort)
-        try:
-            await db.funnels.update_one({"slug": slug}, {"$inc": {"views": 1}})
-        except Exception:
-            pass
-        # hydrate coupon/gift-card blocks with real data (workspace-scoped for tenant isolation)
-        workspace_id = d.get("workspace_id")
-        for block in d.get("blocks", []):
+    async def _hydrate_blocks(blocks, workspace_id):
+        """Hydrate coupon/giftcard/product/testimonial blocks with real workspace-scoped data.
+        Extracted so multi-step funnels can hydrate each step's blocks independently."""
+        for block in blocks:
             if block["type"] == "coupon":
                 code = (block.get("props") or {}).get("coupon_code")
                 if code:
-                    # Scope coupon lookup to the funnel's own workspace to prevent cross-tenant leaks.
                     c = await db.coupons.find_one({"code": code, "workspace_id": workspace_id},
                                                     {"_id": 0, "workspace_id": 0})
                     if c: block["props"]["coupon"] = c
@@ -842,24 +860,71 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
                     if c: block["props"]["coupon"] = c
             elif block["type"] == "testimonial":
                 props = block.get("props") or {}
-                # If the merchant linked to real reviews, pull the latest approved
-                # reviews from the reviews collection (workspace-scoped).
                 if props.get("source") == "reviews":
-                    q = {"workspace_id": workspace_id, "is_deleted": {"$ne": True},
-                         "approved": True}
+                    q = {"workspace_id": workspace_id, "is_deleted": {"$ne": True}, "approved": True}
                     if props.get("product_id"): q["product_id"] = props["product_id"]
                     limit = int(props.get("limit") or 6)
                     reviews = await db.reviews.find(q,
                         {"_id": 0, "workspace_id": 0, "created_by": 0,
                          "is_deleted": 0, "approved": 0}).sort("created_at", -1).to_list(limit)
-                    props["items"] = [{
-                        "quote": r["quote"],
-                        "author": r["customer_name"],
+                    props["items"] = [{"quote": r["quote"], "author": r["customer_name"],
                         "role": r.get("role") or ("Verified buyer" if r.get("verified") else None),
-                        "avatar_url": r.get("avatar_url"),
-                        "rating": r.get("rating", 5),
+                        "avatar_url": r.get("avatar_url"), "rating": r.get("rating", 5),
                     } for r in reviews]
                     block["props"] = props
+
+    def _pick_variant(variants, visitor_bucket):
+        """Deterministic A/B pick: hash visitor_bucket into a weighted variant."""
+        if not variants: return None
+        total = sum(max(0, int(v.get("weight", 1) or 1)) for v in variants) or len(variants)
+        # simple hash-based bucket to number in [0, total)
+        h = 0
+        for ch in (visitor_bucket or "seed"):
+            h = (h * 131 + ord(ch)) & 0xFFFFFFFF
+        pick = h % total
+        acc = 0
+        for v in variants:
+            acc += max(1, int(v.get("weight", 1) or 1))
+            if pick < acc: return v
+        return variants[-1]
+
+    @api.get("/public/f/{slug}")
+    async def public_funnel(slug: str, step: Optional[str] = None,
+                              variant: Optional[str] = None, vb: Optional[str] = None):
+        d = await db.funnels.find_one(
+            {"slug": slug, "published": True, "is_deleted": {"$ne": True}},
+            {"_id": 0, "created_by": 0})
+        if not d: raise HTTPException(404, "Funnel not found or unpublished")
+        try:
+            await db.funnels.update_one({"slug": slug}, {"$inc": {"views": 1}})
+        except Exception:
+            pass
+        workspace_id = d.get("workspace_id")
+        # ------- Multi-step navigation -------
+        steps = d.get("steps") or []
+        active_step = None
+        if steps:
+            active_step = next((s for s in steps if s.get("slug_suffix") == step), None) if step else steps[0]
+            if not active_step: raise HTTPException(404, "Step not found")
+            d["blocks"] = active_step.get("blocks") or []
+            d["active_step"] = {"id": active_step.get("id"), "name": active_step.get("name"),
+                                 "slug_suffix": active_step.get("slug_suffix", "")}
+            d["steps_meta"] = [{"id": s.get("id"), "name": s.get("name"),
+                                 "slug_suffix": s.get("slug_suffix", "")} for s in steps]
+        # ------- A/B variant selection -------
+        variants = d.get("variants") or []
+        if variants:
+            chosen = None
+            if variant:
+                chosen = next((v for v in variants if v.get("id") == variant), None)
+            if not chosen:
+                chosen = _pick_variant(variants, vb or slug)
+            if chosen:
+                d["blocks"] = chosen.get("blocks") or d.get("blocks", [])
+                d["active_variant"] = {"id": chosen.get("id"), "name": chosen.get("name")}
+                d["variants_meta"] = [{"id": v.get("id"), "name": v.get("name"),
+                                          "weight": v.get("weight", 1)} for v in variants]
+        await _hydrate_blocks(d.get("blocks", []), workspace_id)
         # drop workspace_id from response (not part of public payload)
         d.pop("workspace_id", None)
         return d
@@ -917,6 +982,13 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
             "slug": slug, "event": "optin_submit", "block_id": body.block_id,
             "block_type": "optin", "meta": {"email": email, "lead_tag": body.lead_tag or ""},
             "ua": ua, "ip": ip, "created_at": now_iso()})
+        # Enroll in any matching automation sequences (opt-in trigger).
+        try:
+            enroll = getattr(getattr(api, "state", None), "enroll_sequence_on_optin", None)
+            if enroll:
+                await enroll(f["workspace_id"], f["id"], body.lead_tag or "", email)
+        except Exception:
+            pass
         return {"ok": True, "lead_id": lead_id}
 
     @api.get("/funnels/{fid}/leads")

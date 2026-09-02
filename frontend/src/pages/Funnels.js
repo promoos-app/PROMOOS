@@ -67,7 +67,7 @@ export function Funnels() {
           <DialogTrigger asChild>
             <Button data-testid="new-funnel-btn" className="btn-primary rounded-md gap-2"><Plus className="w-4 h-4" /> New funnel</Button>
           </DialogTrigger>
-          <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-lg">
+          <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="new-funnel-dialog">
             <DialogHeader><DialogTitle>Start from a template</DialogTitle></DialogHeader>
             <div className="space-y-3">
               <div>
@@ -75,14 +75,19 @@ export function Funnels() {
                 <Input data-testid="new-funnel-name" value={name} onChange={(e) => setName(e.target.value)} className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" placeholder="Black Friday 2026" />
               </div>
               <div>
-                <Label className="text-xs text-[#A1A1AA]">Template</Label>
-                <div className="grid grid-cols-2 gap-2 mt-1" data-testid="funnel-templates-grid">
+                <Label className="text-xs text-[#A1A1AA]">Template ({templates.length} available)</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 mt-1 max-h-[52vh] overflow-y-auto pr-1" data-testid="funnel-templates-grid">
                   {templates.map((t) => (
                     <button key={t.id} onClick={() => setTplId(t.id)} data-testid={`funnel-tpl-${t.id}`}
-                      className={`rounded-md p-3 text-left border ${tplId === t.id ? "border-[#CCFF00] bg-[#0A0A0A]" : "border-[#27272A] hover:border-[#3f3f46]"}`}
-                      style={{ background: tplId === t.id ? "#0A0A0A" : t.theme.bg, color: t.theme.fg }}>
-                      <div className="text-xs uppercase tracking-widest opacity-60 mb-1" style={{ color: t.theme.accent }}>{t.aesthetic.split(",")[0]}</div>
-                      <div className="font-bold" style={{ fontFamily: t.theme.font_display }}>{t.name}</div>
+                      className={`rounded-md p-3 text-left border transition ${tplId === t.id ? "border-[#CCFF00] ring-1 ring-[#CCFF00]" : "border-[#27272A] hover:border-[#3f3f46]"}`}
+                      style={{
+                        background: tplId === t.id ? "#0A0A0A" : t.theme.bg,
+                        // When selected, force white text over the dark selection background so
+                        // light-theme templates (e.g. info_page with fg=#0A0A0A) stay readable.
+                        color: tplId === t.id ? "#FFFFFF" : t.theme.fg,
+                      }}>
+                      <div className="text-[10px] uppercase tracking-widest opacity-60 mb-1 truncate" style={{ color: t.theme.accent }}>{(t.aesthetic || "").split(",")[0]}</div>
+                      <div className="font-bold text-sm" style={{ fontFamily: t.theme.font_display }}>{t.name}</div>
                     </button>
                   ))}
                 </div>

@@ -2429,6 +2429,8 @@ register_pos(api, db, PUBLIC_APP_URL, now_iso, get_current_user,
 register_iter14(api, db, now_iso, get_current_user, require_writer,
                 hash_password, verify_password, PUBLIC_APP_URL)
 register_reviews(api, db, get_current_user, require_writer)
+from routers.iter19 import register as register_iter19
+register_iter19(api, db, get_current_user, require_writer, PUBLIC_APP_URL, now_iso)
 
 app.include_router(api)
 

@@ -1,0 +1,36 @@
+{
+  "summary": "Focused verification of the P0 'Funnel Builder static / cannot scroll' fix, the new Sequences (Automations) page, sequences CRUD backend, and light regression on the public funnel. All 5 requested items PASS. Backend: 4/4 pytest tests pass (19 templates, sequences POST/GET/PUT/DELETE with persistence checks, auth guard, public funnel). Frontend at 1440x900: New-funnel dialog exposes all 19 template cards inside an overflow-y-auto grid (scrollHeight 543 > clientHeight 468, scrollTop moved to 75), the bottom card funnel-tpl-info_page scrolled into view and was clicked with a NORMAL click (no force), and create-funnel-submit was fully inside the 900px viewport (y=743..779) and successfully created a funnel that opened the editor. Sequences page loads via the sidebar 'Automations' link, form dialog opens (Switch + Textarea imports resolve, zero console errors), sequence 'Welcome test' saved and card rendered, delete works. Public funnel /f/qa-storefront-live renders (5298 chars, no error boundary). One NEW minor design bug found: the SELECTED template card in the new-funnel dialog becomes unreadable (computed color rgb(10,10,10) on background rgb(10,10,10)).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Funnels.js — new-funnel template card (selected state)",
+        "issue": "When a template is selected, background is forced to #0A0A0A but the inline `color: t.theme.fg` is NOT overridden, so light-theme templates (e.g. info_page, fg=#0A0A0A) render invisible text on the dark selected background. Measured: unselected bg rgb(255,255,255)/color rgb(10,10,10); selected bg rgb(10,10,10)/color rgb(10,10,10) -> contrast ratio 1:1. The user cannot read which template they just picked.",
+        "selector": "[data-testid=\"funnel-tpl-info_page\"]",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter19_sequences.py",
+    "/app/test_reports/pytest/iter19.xml"
+  ],
+  "action_items": [
+    "Funnels.js line ~83: also override text colour when a card is selected (e.g. `color: tplId === t.id ? '#FFFFFF' : t.theme.fg`) so the selected template name/aesthetic label stays readable. This is the only outstanding issue."
+  ],
+  "critical_code_review_comments": [
+    "Funnels.js is 665 lines and mixes the list page + full block editor; it is close to the 700-line split threshold — consider extracting FunnelEditor into its own module before the next feature batch.",
+    "Funnels.js selected-card style computes background conditionally but not foreground — same class of bug will reappear for any new light-fg template.",
+    "Sequences.js SequenceForm has no loading/disabled state on sequence-save-btn during the async POST/PUT; double-click can create duplicate sequences (Funnels.js correctly uses a `busy` flag — mirror that here)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter19_sequences.py"],
+  "success_rate": { "backend": "100%", "frontend": "100% (all P0 flows pass; 1 cosmetic contrast bug)" },
+  "seed_data_creation": "Created and then deleted: funnel 'QA Scroll Test Funnel', sequence 'Welcome test', and TEST_ sequences via API. No residual test data — /funnels shows only the two pre-existing QA funnels and /sequences shows 0 cards.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@promoos.com / admin123 (owner) — worked; note login redirects to '/' not '/dashboard'.",
+  "context_for_next_testing_agent": "Login lands on '/' (Dashboard rendered at root), so do NOT wait_for_url('**/dashboard**'). Public funnel endpoint is GET /api/public/f/{slug} (not /api/public/funnels/{slug}). Sequences CRUD lives in /app/backend/routers/iter19.py and returns clean docs with no _id. Regression suite for this round: /app/backend/tests/test_iter19_sequences.py. The funnel-dialog scroll fix (max-h-[85vh] on DialogContent + max-h-[52vh] on the grid) is verified working at 1440x900 — re-verify only if those classes change.",
+  "rca_of_the_issue": "Original P0: DialogContent had no max-height/overflow, so with 19 template cards in a 2-column grid the dialog grew past the viewport and the 'Create funnel' button was rendered below the fold with no scroll container — the dialog appeared frozen/static. The fix (DialogContent max-h-[85vh] overflow-y-auto + inner grid max-h-[52vh] overflow-y-auto, 3-col on lg) is confirmed effective: dialog clientHeight 706 < 900 viewport so no dialog-level scroll is even needed, and the inner grid scrolls (543/468) to expose all 19 cards. Remaining minor bug is an unrelated inline-style contrast oversight on the selected card."
+}

@@ -25,6 +25,7 @@ import Admin from "@/pages/Admin";
 import CouponLibrary from "@/pages/CouponLibrary";
 import Reviews from "@/pages/Reviews";
 import Products from "@/pages/Products";
+import Sequences from "@/pages/Sequences";
 import { PrivacyPolicy, TermsOfUse } from "@/pages/Legal";
 import Pricing from "@/pages/Pricing";
 import { BillingSuccess, BillingCancel } from "@/pages/BillingResult";
@@ -103,6 +104,7 @@ function App() {
             <Route path="library" element={<CouponLibrary />} />
             <Route path="reviews" element={<Reviews />} />
             <Route path="products" element={<Products />} />
+            <Route path="sequences" element={<Sequences />} />
           </Route>
         </Routes>
       </BrowserRouter>
