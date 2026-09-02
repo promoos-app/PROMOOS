@@ -156,10 +156,14 @@ export function FunnelEditor() {
   const [products, setProducts] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [analytics, setAnalytics] = useState(null);
+  const [variantAnalytics, setVariantAnalytics] = useState(null);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [domain, setDomain] = useState("");
   const [verification, setVerification] = useState(null);
+  // Multi-step editor: which "surface" is the merchant editing right now?
+  // "main" = the flat blocks[], "step:<id>" = one of funnel.steps, "variant:<id>" = A/B variant.
+  const [surface, setSurface] = useState("main");
 
   useEffect(() => {
     api.get(`/funnels/${id}`).then((r) => { setFunnel(r.data); setDomain(r.data.custom_domain || ""); }).catch((e) => toast.error(apiError(e)));
@@ -167,18 +171,91 @@ export function FunnelEditor() {
     api.get("/products").then((r) => setProducts(r.data)).catch(() => {});
     api.get("/reviews?approved=true").then((r) => setReviews(r.data)).catch(() => setReviews([]));
     api.get(`/funnels/${id}/analytics`).then((r) => setAnalytics(r.data)).catch(() => {});
+    api.get(`/funnels/${id}/variants-analytics`).then((r) => setVariantAnalytics(r.data)).catch(() => {});
   }, [id]);
 
   if (!funnel) return <div className="text-[#71717A]">Loading…</div>;
 
-  const updateBlock = (bid, patch) => {
-    setFunnel((f) => ({ ...f, blocks: f.blocks.map((b) => b.id === bid ? { ...b, props: { ...b.props, ...patch } } : b) }));
+  // Read/write the currently-editing "surface" — main blocks, a step's blocks, or a variant's blocks.
+  const currentBlocks = () => {
+    if (surface.startsWith("step:")) {
+      const sid = surface.slice(5);
+      const s = (funnel.steps || []).find((x) => x.id === sid);
+      return s ? (s.blocks || []) : [];
+    }
+    if (surface.startsWith("variant:")) {
+      const vid = surface.slice(8);
+      const v = (funnel.variants || []).find((x) => x.id === vid);
+      return v ? (v.blocks || []) : [];
+    }
+    return funnel.blocks || [];
   };
-  const removeBlock = (bid) => setFunnel((f) => ({ ...f, blocks: f.blocks.filter((b) => b.id !== bid) }));
+  const setCurrentBlocks = (newBlocks) => {
+    if (surface.startsWith("step:")) {
+      const sid = surface.slice(5);
+      setFunnel((f) => ({ ...f, steps: (f.steps || []).map((s) => s.id === sid ? { ...s, blocks: newBlocks } : s) }));
+    } else if (surface.startsWith("variant:")) {
+      const vid = surface.slice(8);
+      setFunnel((f) => ({ ...f, variants: (f.variants || []).map((v) => v.id === vid ? { ...v, blocks: newBlocks } : v) }));
+    } else {
+      setFunnel((f) => ({ ...f, blocks: newBlocks }));
+    }
+  };
+
+  const updateBlock = (bid, patch) => {
+    setCurrentBlocks(currentBlocks().map((b) => b.id === bid ? { ...b, props: { ...b.props, ...patch } } : b));
+  };
+  const removeBlock = (bid) => setCurrentBlocks(currentBlocks().filter((b) => b.id !== bid));
   const moveBlock = (idx, dir) => {
-    const b = [...funnel.blocks]; const j = idx + dir;
+    const b = [...currentBlocks()]; const j = idx + dir;
     if (j < 0 || j >= b.length) return;
-    [b[idx], b[j]] = [b[j], b[idx]]; setFunnel({ ...funnel, blocks: b });
+    [b[idx], b[j]] = [b[j], b[idx]]; setCurrentBlocks(b);
+  };
+
+  const addStep = () => {
+    const newStep = { id: crypto.randomUUID(), name: `Step ${(funnel.steps || []).length + 1}`,
+                      slug_suffix: `step-${(funnel.steps || []).length + 1}`,
+                      blocks: [{ id: crypto.randomUUID(), type: "heading", props: { text: "New page" } }] };
+    setFunnel((f) => ({ ...f, steps: [...(f.steps || []), newStep] }));
+    setSurface(`step:${newStep.id}`);
+  };
+  const renameStep = (sid, name) => setFunnel((f) => ({
+    ...f, steps: (f.steps || []).map((s) => s.id === sid ? { ...s, name, slug_suffix: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") } : s)
+  }));
+  const removeStep = (sid) => {
+    if (!window.confirm("Remove this step and its blocks?")) return;
+    setFunnel((f) => ({ ...f, steps: (f.steps || []).filter((s) => s.id !== sid) }));
+    if (surface === `step:${sid}`) setSurface("main");
+  };
+  const moveStep = (idx, dir) => {
+    const s = [...(funnel.steps || [])]; const j = idx + dir;
+    if (j < 0 || j >= s.length) return;
+    [s[idx], s[j]] = [s[j], s[idx]];
+    setFunnel({ ...funnel, steps: s });
+  };
+  const addVariant = () => {
+    const cloneBlocks = JSON.parse(JSON.stringify(funnel.blocks || []));
+    for (const b of cloneBlocks) b.id = crypto.randomUUID();
+    const newV = { id: crypto.randomUUID(),
+                   name: `Variant ${String.fromCharCode(65 + (funnel.variants || []).length)}`,
+                   weight: 1, blocks: cloneBlocks };
+    setFunnel((f) => ({ ...f, variants: [...(f.variants || []), newV] }));
+    setSurface(`variant:${newV.id}`);
+  };
+  const removeVariant = (vid) => {
+    if (!window.confirm("Remove this variant?")) return;
+    setFunnel((f) => ({ ...f, variants: (f.variants || []).filter((v) => v.id !== vid) }));
+    if (surface === `variant:${vid}`) setSurface("main");
+  };
+  const promoteVariant = async (vid) => {
+    if (!window.confirm("Promote this variant to the main page and remove all variants?")) return;
+    try {
+      await api.post(`/funnels/${id}/promote-variant?variant_id=${vid}`);
+      toast.success("Variant promoted");
+      const { data } = await api.get(`/funnels/${id}`);
+      setFunnel(data); setSurface("main");
+      api.get(`/funnels/${id}/variants-analytics`).then((r) => setVariantAnalytics(r.data));
+    } catch (e) { toast.error(apiError(e)); }
   };
   const addBlock = (type) => {
     const defaults = {

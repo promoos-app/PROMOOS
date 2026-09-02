@@ -2572,6 +2572,13 @@ async def startup():
             pass
         await seed()
         asyncio.create_task(journey_worker())
+        # Sequence delivery worker — polls scheduled emails every minute and sends via Resend.
+        try:
+            seq_loop = getattr(getattr(api, "state", None), "sequence_delivery_loop", None)
+            if seq_loop:
+                asyncio.create_task(seq_loop())
+        except Exception as e:
+            logger.warning(f"Sequence loop not started: {e}")
     except Exception as e:
         logger.error(f"Seed error: {e}")
 

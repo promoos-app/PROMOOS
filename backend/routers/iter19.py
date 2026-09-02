@@ -102,9 +102,79 @@ def register(api, db, get_current_user, require_writer, PUBLIC_APP_URL: str, now
             })
             await db.sequences.update_one({"id": s["id"]}, {"$inc": {"stats.enrolled": 1}})
 
-    # Expose helper for the funnel router to call.
+    # ---- Sequence delivery worker ----
+    async def deliver_due_sequence_emails():
+        """Poll for scheduled sequence emails whose send_at <= now and send via Resend.
+        Idempotent — marks each step with status=sent + resend_id + sent_at."""
+        try:
+            import resend
+        except ImportError:
+            return
+        resend_key = os.environ.get("RESEND_API_KEY", "")
+        sender = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+        if not resend_key: return
+        resend.api_key = resend_key
+        now_iso_str = _iso()
+        # Find enrollments with at least one due scheduled step.
+        cursor = db.sequence_enrollments.find(
+            {"status": "active", "schedule.status": "scheduled",
+             "schedule.send_at": {"$lte": now_iso_str}})
+        async for enr in cursor:
+            changed = False
+            for step in enr.get("schedule", []):
+                if step.get("status") != "scheduled": continue
+                if step.get("send_at", "9999") > now_iso_str: continue
+                try:
+                    import asyncio
+                    result = await asyncio.to_thread(resend.Emails.send, {
+                        "from": sender, "to": enr["email"],
+                        "subject": step.get("subject", "(no subject)"),
+                        "html": step.get("body", ""),
+                    })
+                    step["status"] = "sent"
+                    step["resend_id"] = (result or {}).get("id") if isinstance(result, dict) else None
+                    step["sent_at"] = _iso()
+                    await db.sequences.update_one({"id": enr["sequence_id"]},
+                                                    {"$inc": {"stats.delivered": 1}})
+                    changed = True
+                except Exception as e:
+                    step["status"] = "failed"
+                    step["error"] = str(e)[:200]
+                    step["failed_at"] = _iso()
+                    changed = True
+            if changed:
+                # Auto-complete when all steps sent/failed.
+                if all(s.get("status") in ("sent", "failed") for s in enr.get("schedule", [])):
+                    await db.sequence_enrollments.update_one({"id": enr["id"]},
+                        {"$set": {"schedule": enr["schedule"], "status": "completed",
+                                  "completed_at": _iso()}})
+                else:
+                    await db.sequence_enrollments.update_one({"id": enr["id"]},
+                        {"$set": {"schedule": enr["schedule"]}})
+
+    async def _sequence_delivery_loop():
+        import asyncio
+        while True:
+            try:
+                await deliver_due_sequence_emails()
+            except Exception:
+                pass
+            await asyncio.sleep(60)  # every minute
+
+    @api.post("/sequences/deliver-now")
+    async def trigger_delivery(user: dict = Depends(get_current_user)):
+        """Manual delivery kick — useful for testing without waiting on the loop."""
+        require_writer(user)
+        await deliver_due_sequence_emails()
+        return {"ok": True}
+
+    # Kick off the background loop on startup.
     api.state = getattr(api, "state", type("_", (), {})())
     api.state.enroll_sequence_on_optin = enroll_sequence_on_optin
+    api.state.deliver_due_sequence_emails = deliver_due_sequence_emails
+    # Register startup task — FastAPI's add_event_handler works on the app, not the router,
+    # so callers can wire this in via server.py.
+    api.state.sequence_delivery_loop = _sequence_delivery_loop
 
     # =========================================================================
     # GIFT CARD PURCHASE FLOW (public Stripe checkout)

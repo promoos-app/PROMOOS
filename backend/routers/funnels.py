@@ -926,6 +926,9 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
                                           "weight": v.get("weight", 1)} for v in variants]
         await _hydrate_blocks(d.get("blocks", []), workspace_id)
         # drop workspace_id from response (not part of public payload)
+        # Expose a non-sensitive workspace id echo so client-side flows like the
+        # gift-card checkout know which workspace to attribute the sale to.
+        d["public_workspace_id"] = workspace_id
         d.pop("workspace_id", None)
         return d
 
@@ -933,6 +936,8 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
         event: str  # view | buy_now_click | coupon_copy | cta_click | optin_submit
         block_id: Optional[str] = None
         block_type: Optional[str] = None
+        variant_id: Optional[str] = None
+        step_id: Optional[str] = None
         meta: Optional[dict] = None
 
     class OptinSubmit(BaseModel):
@@ -1024,11 +1029,68 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
             "event": ev,
             "block_id": body.block_id,
             "block_type": body.block_type,
+            "variant_id": body.variant_id,
+            "step_id": body.step_id,
             "meta": body.meta or {},
             "ua": ua, "ip": ip,
             "created_at": now_iso(),
         })
         return {"ok": True}
+
+    @api.get("/funnels/{fid}/variants-analytics")
+    async def variant_analytics(fid: str, user: dict = Depends(get_current_user)):
+        """Per-variant conversion metrics for A/B split funnels."""
+        f = await db.funnels.find_one(
+            {"id": fid, "workspace_id": user["workspace_id"], "is_deleted": {"$ne": True}},
+            {"_id": 0, "id": 1, "slug": 1, "name": 1, "variants": 1})
+        if not f: raise HTTPException(404, "Not found")
+        variants = f.get("variants") or []
+        if not variants:
+            return {"variants": [], "note": "No variants configured for this funnel."}
+        # Aggregate events grouped by (variant_id, event).
+        pipeline = [
+            {"$match": {"funnel_id": fid, "workspace_id": user["workspace_id"]}},
+            {"$group": {"_id": {"variant": "$variant_id", "event": "$event"}, "count": {"$sum": 1}}},
+        ]
+        agg = {}
+        async for r in db.funnel_events.aggregate(pipeline):
+            vid = r["_id"].get("variant") or ""
+            agg.setdefault(vid, {})[r["_id"]["event"]] = r["count"]
+        rows = []
+        best_conv = -1
+        best_id = None
+        for v in variants:
+            m = agg.get(v["id"], {})
+            views = m.get("view", 0)
+            buys = m.get("buy_now_click", 0)
+            optins = m.get("optin_submit", 0)
+            copies = m.get("coupon_copy", 0)
+            ctas = m.get("cta_click", 0)
+            # Primary conversion = buys if any exist, otherwise optins.
+            primary = buys if buys else optins
+            conv = round((primary / views) * 100, 2) if views else 0.0
+            rows.append({"id": v["id"], "name": v["name"], "weight": v.get("weight", 1),
+                         "views": views, "buy_now_clicks": buys, "optin_submits": optins,
+                         "coupon_copies": copies, "cta_clicks": ctas,
+                         "conversion_pct": conv})
+            if views >= 20 and conv > best_conv:
+                best_conv = conv; best_id = v["id"]
+        return {"variants": rows, "winning_variant_id": best_id,
+                "note": None if best_id else "Need ≥20 views per variant before declaring a winner."}
+
+    @api.post("/funnels/{fid}/promote-variant")
+    async def promote_variant(fid: str, variant_id: str,
+                                user: dict = Depends(get_current_user)):
+        require_writer(user)
+        f = await db.funnels.find_one({"id": fid, "workspace_id": user["workspace_id"]})
+        if not f: raise HTTPException(404, "Not found")
+        v = next((x for x in (f.get("variants") or []) if x.get("id") == variant_id), None)
+        if not v: raise HTTPException(404, "Variant not found")
+        # Promote variant's blocks to main blocks, then clear variants.
+        await db.funnels.update_one({"id": fid},
+            {"$set": {"blocks": v.get("blocks") or [], "variants": [],
+                      "promoted_variant": {"id": variant_id, "name": v.get("name"), "at": now_iso()}}})
+        return {"ok": True, "promoted": v.get("name")}
 
     @api.get("/funnels/{fid}/analytics")
     async def funnel_analytics(fid: str, user: dict = Depends(get_current_user)):

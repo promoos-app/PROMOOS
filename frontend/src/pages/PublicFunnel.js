@@ -76,20 +76,69 @@ function CouponBlock({ block, theme, slug }) {
   );
 }
 
-function GiftCardBlock({ block, theme }) {
+function GiftCardBlock({ block, theme, funnel }) {
   const p = block.props || {};
   const t = p.template;
+  const [email, setEmail] = useState("");
+  const [amt, setAmt] = useState(p.amount || 50);
+  const [busy, setBusy] = useState(false);
   if (!t) return <section className="py-16 px-6 text-center opacity-60">Gift card preview unavailable.</section>;
   const bg = { background: t.background.value };
+  const buy = async () => {
+    if (!email || !email.includes("@")) { alert("Enter a valid email"); return; }
+    if (!amt || amt <= 0) { alert("Enter a valid amount"); return; }
+    if (!funnel || !funnel.active_variant?.id && !funnel.blocks) { /* funnel shape guard */ }
+    setBusy(true);
+    try {
+      const wsid = (funnel && funnel.public_workspace_id) || "";
+      const { data } = await axios.post(`${API}/api/public/giftcards/checkout`, {
+        workspace_id: wsid,
+        template_id: t.id || p.template_id,
+        amount: Number(amt),
+        currency: p.currency || "USD",
+        purchaser_email: email,
+        recipient_email: p.recipient_email || null,
+        recipient_name: p.recipient_name || null,
+        message: p.message || null,
+        origin_url: window.location.origin,
+      });
+      window.location.href = data.checkout_url;
+    } catch (e) {
+      alert((e && e.response && e.response.data && e.response.data.detail) || "Checkout failed");
+      setBusy(false);
+    }
+  };
   return (
     <section id={block.anchor} className="py-16 px-6" data-testid="funnel-block-giftcard">
-      <div className="max-w-md mx-auto rounded-2xl overflow-hidden shadow-2xl" style={{ ...bg, color: t.text_color, fontFamily: t.font, aspectRatio: "1.6/1" }}>
-        <div className="p-6 h-full flex flex-col justify-between">
-          <div className="text-[10px] tracking-[0.3em] uppercase opacity-70" style={{ color: t.accent }}>Gift Card · ${p.amount} {p.currency}</div>
-          <div>
-            <div className="text-2xl font-bold">{t.headline}</div>
-            <div className="text-sm opacity-80 mt-1">{t.subline}</div>
+      <div className="max-w-md mx-auto space-y-4">
+        <div className="rounded-2xl overflow-hidden shadow-2xl" style={{ ...bg, color: t.text_color, fontFamily: t.font, aspectRatio: "1.6/1" }}>
+          <div className="p-6 h-full flex flex-col justify-between">
+            <div className="text-[10px] tracking-[0.3em] uppercase opacity-70" style={{ color: t.accent }}>Gift Card · ${amt} {p.currency || "USD"}</div>
+            <div>
+              <div className="text-2xl font-bold">{t.headline}</div>
+              <div className="text-sm opacity-80 mt-1">{t.subline}</div>
+            </div>
           </div>
+        </div>
+        {/* Buy this gift card */}
+        <div className="rounded-2xl p-4 space-y-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <div className="grid grid-cols-2 gap-2">
+            <input type="number" min="5" value={amt} onChange={(e) => setAmt(e.target.value)}
+              placeholder="Amount" data-testid="giftcard-amount-input"
+              className="w-full px-3 py-2 rounded-md text-sm outline-none"
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: theme.fg }} />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              placeholder="Your email" data-testid="giftcard-email-input"
+              className="w-full px-3 py-2 rounded-md text-sm outline-none"
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: theme.fg }} />
+          </div>
+          <button onClick={buy} disabled={busy}
+            data-testid="giftcard-buy-btn"
+            className="w-full py-3 font-bold rounded-full transition hover:scale-[1.02] disabled:opacity-50"
+            style={{ background: theme.accent, color: getContrastText(theme.accent, theme.bg) }}>
+            {busy ? "Redirecting..." : `Buy this gift card · $${amt}`}
+          </button>
+          <div className="text-[10px] opacity-50 text-center">Secure checkout via Stripe.</div>
         </div>
       </div>
     </section>
@@ -268,10 +317,10 @@ const REGISTRY = {
   divider: Divider,
 };
 
-function Block({ block, theme, slug }) {
+function Block({ block, theme, slug, funnel }) {
   const Comp = REGISTRY[block.type];
   if (!Comp) return null;
-  return <Comp block={block} theme={theme} slug={slug} />;
+  return <Comp block={block} theme={theme} slug={slug} funnel={funnel} />;
 }
 
 export default function PublicFunnel() {
@@ -279,24 +328,64 @@ export default function PublicFunnel() {
   const [funnel, setFunnel] = useState(null);
   const [err, setErr] = useState(null);
   const viewFired = useRef(false);
+  // Read ?step= and (optionally) A/B ?variant= from the URL and pass to the API.
+  const [stepParam, setStepParam] = useState(() =>
+    typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("step") || "" : "");
   useEffect(() => {
-    axios.get(`${API}/api/public/f/${slug}`).then((r) => {
+    // Persist a stable visitor bucket so A/B tests are deterministic per browser.
+    let vb = null;
+    try {
+      vb = localStorage.getItem("promoos_vb");
+      if (!vb) {
+        vb = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        localStorage.setItem("promoos_vb", vb);
+      }
+    } catch (e) { /* private-mode */ }
+    const qs = new URLSearchParams();
+    if (stepParam) qs.set("step", stepParam);
+    if (vb) qs.set("vb", vb);
+    const variant = new URLSearchParams(window.location.search).get("variant");
+    if (variant) qs.set("variant", variant);
+    axios.get(`${API}/api/public/f/${slug}${qs.toString() ? "?" + qs.toString() : ""}`).then((r) => {
       setFunnel(r.data);
       if (!viewFired.current) {
         viewFired.current = true;
-        trackFunnelEvent(slug, "view");
+        trackFunnelEvent(slug, "view", {
+          variant_id: r.data?.active_variant?.id || null,
+          step_id: r.data?.active_step?.id || null,
+        });
       }
     }).catch((e) => setErr((e && e.response && e.response.data && e.response.data.detail) || "Not found"));
-  }, [slug]);
+  }, [slug, stepParam]);
 
   if (err) return <div className="min-h-screen bg-black text-white flex items-center justify-center"><div className="text-center"><div className="font-bold text-2xl mb-2">Funnel not found</div><div className="text-sm opacity-60">{err}</div></div></div>;
   if (!funnel) return <div className="min-h-screen bg-black text-white flex items-center justify-center opacity-60">Loading…</div>;
 
   const theme = funnel.theme || {};
+  const stepsMeta = funnel.steps_meta || [];
+  const activeStepId = funnel.active_step?.id;
+
   return (
     <div style={{ background: theme.bg, color: theme.fg, fontFamily: theme.font_body, minHeight: "100vh" }} data-testid="public-funnel">
       <title>{funnel.seo?.title || funnel.name}</title>
-      {funnel.blocks.map((b) => <Block key={b.id} block={b} theme={theme} slug={slug} />)}
+      {stepsMeta.length > 1 ? (
+        <nav className="sticky top-0 z-10 px-6 py-3 flex items-center justify-center gap-2 flex-wrap"
+          style={{ background: `${theme.bg}f0`, borderBottom: "1px solid rgba(255,255,255,0.08)", backdropFilter: "blur(12px)" }}
+          data-testid="funnel-step-nav">
+          {stepsMeta.map((s, i) => (
+            <button key={s.id} onClick={() => setStepParam(s.slug_suffix || "")}
+              data-testid={`funnel-step-${s.slug_suffix || s.id}`}
+              className="text-xs px-3 py-1.5 rounded-full transition"
+              style={{
+                background: s.id === activeStepId ? theme.accent : "rgba(255,255,255,0.06)",
+                color: s.id === activeStepId ? getContrastText(theme.accent, theme.bg) : theme.fg,
+              }}>
+              <span className="opacity-60 mr-1">{i + 1}.</span>{s.name}
+            </button>
+          ))}
+        </nav>
+      ) : null}
+      {funnel.blocks.map((b) => <Block key={b.id} block={b} theme={theme} slug={slug} funnel={funnel} />)}
       <footer className="py-8 text-center text-[10px] tracking-widest uppercase opacity-40">
         Powered by PromoOS
       </footer>
