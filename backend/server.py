@@ -157,6 +157,7 @@ class CouponIn(BaseModel):
     rules: CouponRules = Field(default_factory=CouponRules)
     image_url: Optional[str] = None
     design: Optional[CouponDesign] = Field(default_factory=CouponDesign)
+    payment_link: Optional[str] = ""
 
 
 class StateIn(BaseModel):
@@ -332,6 +333,7 @@ async def create_coupon(body: CouponIn, user: dict = Depends(get_current_user)):
         "terms": body.terms, "cta": body.cta or "Claim Offer", "state": body.state,
         "rules": body.rules.model_dump(), "image_url": body.image_url or "",
         "design": (body.design.model_dump() if body.design else {}),
+        "payment_link": body.payment_link or "",
         "qr_code": gen_qr(code),
         "stats": {"impressions": 0, "clicks": 0, "redemptions": 0, "revenue": 0.0},
         "created_at": now_iso(),
@@ -356,7 +358,7 @@ async def update_coupon(cid: str, body: dict, user: dict = Depends(get_current_u
         raise HTTPException(404, "Coupon not found")
     # Partial update: validate against CouponIn but only $set fields the client actually sent.
     allowed = {"name", "type", "discount_value", "code", "headline", "description",
-               "terms", "cta", "state", "rules", "image_url", "design"}
+               "terms", "cta", "state", "rules", "image_url", "design", "payment_link"}
     upd = {}
     for k in allowed:
         if k in body and body[k] is not None:
@@ -406,6 +408,30 @@ async def bulk_codes(cid: str, body: BulkIn, user: dict = Depends(get_current_us
     codes = [rand_code(c["code"][:4] + "-") for _ in range(min(body.count, 500))]
     await db.coupons.update_one({"id": cid}, {"$push": {"codes": {"$each": codes}}})
     return {"generated": len(codes), "codes": codes}
+
+
+@api.get("/coupons/{cid}/codes")
+async def list_bulk_codes(cid: str, user: dict = Depends(get_current_user)):
+    c = await db.coupons.find_one({"id": cid, "workspace_id": user["workspace_id"]},
+                                     {"_id": 0, "codes": 1, "code": 1})
+    if not c:
+        raise HTTPException(404, "Coupon not found")
+    return {"parent_code": c.get("code"), "codes": c.get("codes") or []}
+
+
+class DeleteBulkIn(BaseModel):
+    codes: List[str]
+
+
+@api.post("/coupons/{cid}/codes/delete")
+async def delete_bulk_codes(cid: str, body: DeleteBulkIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    r = await db.coupons.update_one(
+        {"id": cid, "workspace_id": user["workspace_id"]},
+        {"$pull": {"codes": {"$in": body.codes}}})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Coupon not found")
+    return {"deleted": len(body.codes)}
 
 
 @api.post("/coupons/validate")
@@ -636,6 +662,7 @@ def _coupon_public_payload(c: dict, ws: dict) -> dict:
         "cta": c.get("cta", "Claim Offer"), "state": c["state"],
         "image_url": c.get("image_url", ""), "qr_code": c.get("qr_code", ""),
         "design": c.get("design") or {},
+        "payment_link": c.get("payment_link", ""),
         "referral": c.get("rules", {}).get("referral_enabled", False),
         "referral_credit_pct": c.get("rules", {}).get("referral_credit_pct", 10),
         "brand": {

@@ -12,13 +12,157 @@ import { Switch } from "@/components/ui/switch";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Sparkles, Wand2, ArrowLeft, Loader2, Image as ImageIcon } from "lucide-react";
+import { Sparkles, Wand2, ArrowLeft, Loader2, Image as ImageIcon, Copy as CopyIcon, Trash2, Download } from "lucide-react";
+
+// -------------------------------------------------------------------------
+// Bulk unique codes — generate a batch of derived codes for a coupon, select
+// them individually, copy/delete/export in bulk. Fixes user report "Bulk Codes
+// are not selecting and applying correctly."
+// -------------------------------------------------------------------------
+function BulkCodesPanel({ cid, parentCode }) {
+  const [codes, setCodes] = useState([]);
+  const [selected, setSelected] = useState(() => new Set());
+  const [count, setCount] = useState(10);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get(`/coupons/${cid}/codes`);
+      setCodes(data.codes || []);
+    } catch (e) { toast.error(apiError(e)); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { if (cid) load(); }, [cid]);
+
+  const toggle = (code) => {
+    setSelected((s) => {
+      const next = new Set(s);
+      next.has(code) ? next.delete(code) : next.add(code);
+      return next;
+    });
+  };
+  const toggleAll = () => {
+    setSelected((s) => (s.size === codes.length ? new Set() : new Set(codes)));
+  };
+  const generate = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/coupons/${cid}/bulk-codes`, { count: Number(count) });
+      toast.success(`Generated ${data.generated} unique codes`);
+      load();
+    } catch (e) { toast.error(apiError(e)); }
+    finally { setBusy(false); }
+  };
+  const copySelected = async () => {
+    const list = Array.from(selected);
+    if (!list.length) { toast.error("Select codes first"); return; }
+    try {
+      await navigator.clipboard.writeText(list.join("\n"));
+      toast.success(`Copied ${list.length} codes to clipboard`);
+    } catch { toast.error("Clipboard blocked — try Download CSV"); }
+  };
+  const downloadCsv = () => {
+    const list = selected.size ? Array.from(selected) : codes;
+    if (!list.length) { toast.error("Nothing to export"); return; }
+    const csv = "code\n" + list.join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `${parentCode || "codes"}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const deleteSelected = async () => {
+    const list = Array.from(selected);
+    if (!list.length) { toast.error("Select codes first"); return; }
+    if (!window.confirm(`Delete ${list.length} codes? This cannot be undone.`)) return;
+    setBusy(true);
+    try {
+      await api.post(`/coupons/${cid}/codes/delete`, { codes: list });
+      toast.success(`Deleted ${list.length} codes`);
+      setSelected(new Set());
+      load();
+    } catch (e) { toast.error(apiError(e)); }
+    finally { setBusy(false); }
+  };
+
+  const allSelected = selected.size > 0 && selected.size === codes.length;
+
+  return (
+    <div className="surface rounded-lg p-5 space-y-3" data-testid="coupon-bulk-codes-panel">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-display font-bold">Bulk unique codes</h3>
+          <div className="text-xs text-[#71717A]">One-time-use codes derived from <code className="font-mono">{parentCode || "PARENT"}-*</code>. Each recipient gets their own.</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Input type="number" min="1" max="500" value={count}
+            onChange={(e) => setCount(e.target.value)}
+            className="w-20 bg-[#0A0A0A] border-[#27272A] text-white h-9"
+            data-testid="bulk-codes-count" />
+          <Button data-testid="bulk-codes-generate" onClick={generate} disabled={busy}
+            className="btn-primary rounded-md gap-1 h-9">
+            {busy ? <Loader2 className="w-3 h-3 spin" /> : <Sparkles className="w-3 h-3" />}
+            Generate
+          </Button>
+        </div>
+      </div>
+      {codes.length > 0 && (
+        <>
+          <div className="flex items-center justify-between text-xs">
+            <label className="flex items-center gap-2 text-[#A1A1AA] cursor-pointer">
+              <input type="checkbox" checked={allSelected} onChange={toggleAll}
+                data-testid="bulk-codes-select-all" />
+              <span>{selected.size} of {codes.length} selected</span>
+            </label>
+            <div className="flex items-center gap-1">
+              <button onClick={copySelected} disabled={!selected.size}
+                data-testid="bulk-codes-copy"
+                className="btn-ghost rounded-md text-[11px] px-2 py-1 disabled:opacity-40 flex items-center gap-1">
+                <CopyIcon className="w-3 h-3" /> Copy
+              </button>
+              <button onClick={downloadCsv}
+                data-testid="bulk-codes-export"
+                className="btn-ghost rounded-md text-[11px] px-2 py-1 flex items-center gap-1">
+                <Download className="w-3 h-3" /> CSV
+              </button>
+              <button onClick={deleteSelected} disabled={!selected.size || busy}
+                data-testid="bulk-codes-delete"
+                className="btn-ghost rounded-md text-[11px] px-2 py-1 disabled:opacity-40 text-red-400 flex items-center gap-1">
+                <Trash2 className="w-3 h-3" /> Delete
+              </button>
+            </div>
+          </div>
+          <div className="max-h-72 overflow-y-auto rounded-md border border-[#27272A] bg-[#0A0A0A] divide-y divide-[#1a1a1c]">
+            {codes.map((code) => (
+              <label key={code} className="flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-white/[0.03] cursor-pointer"
+                data-testid={`bulk-code-row-${code}`}>
+                <input type="checkbox" checked={selected.has(code)}
+                  onChange={() => toggle(code)}
+                  data-testid={`bulk-code-check-${code}`} />
+                <span className="flex-1">{code}</span>
+                <button onClick={(e) => { e.preventDefault(); navigator.clipboard.writeText(code); toast.success("Copied"); }}
+                  className="text-[10px] text-[#71717A] hover:text-white uppercase tracking-widest">copy</button>
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+      {loading && <div className="text-xs text-[#71717A]">Loading codes…</div>}
+      {!loading && codes.length === 0 && (
+        <div className="text-xs text-[#71717A] text-center py-4">No unique codes yet. Generate a batch above.</div>
+      )}
+    </div>
+  );
+}
 
 const empty = {
   name: "", type: "percentage", discount_value: 25, code: "",
   headline: "", description: "", terms: "", cta: "Claim Offer", state: "draft",
   image_url: "",
   design: { bg: "", accent: "", fg: "", badge_bg: "", badge_fg: "" },
+  payment_link: "",
+  codes: [],
   rules: { min_cart: 0, scope: "all", scope_value: "", usage_limit: 0, per_customer_limit: 1, stackable: false, start_date: null, end_date: null, referral_enabled: false, referral_credit_pct: 10 },
 };
 
@@ -282,6 +426,28 @@ export default function CouponEditor() {
               ))}
             </div>
           </div>
+
+          {/* Payment Link — attach a Stripe hosted checkout so customers can buy with this discount */}
+          <div className="surface rounded-lg p-5 space-y-3" data-testid="coupon-payment-panel">
+            <h3 className="font-display font-bold">Stripe Payment Link</h3>
+            <div className="text-xs text-[#71717A]">Paste a Stripe hosted <a href="https://dashboard.stripe.com/payment-links" target="_blank" rel="noreferrer" className="text-[#CCFF00] underline">Payment Link</a> and this coupon will show a "Buy now" button on the public page. Configure the discount inside your Stripe Payment Link so the price applied at checkout matches this coupon.</div>
+            <Input value={form.payment_link || ""}
+              onChange={(e) => set("payment_link", e.target.value)}
+              placeholder="https://buy.stripe.com/…"
+              className="bg-[#0A0A0A] border-[#27272A] text-white font-mono text-xs"
+              data-testid="coupon-payment-link" />
+            {form.payment_link ? (
+              <div className="text-[10px] text-[#22C55E]">✓ Ready — customers can now pay with this coupon.</div>
+            ) : null}
+          </div>
+
+          {/* Bulk unique codes — generate a batch of unique codes derived from the parent code */}
+          {id ? <BulkCodesPanel cid={id} parentCode={form.code} /> : (
+            <div className="surface rounded-lg p-5 space-y-2" data-testid="coupon-bulk-codes-placeholder">
+              <h3 className="font-display font-bold">Bulk unique codes</h3>
+              <div className="text-xs text-[#71717A]">Save this coupon first, then generate bulk unique codes here.</div>
+            </div>
+          )}
         </div>
 
         {/* RIGHT: live preview */}

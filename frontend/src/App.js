@@ -24,6 +24,7 @@ import Integrations from "@/pages/Integrations";
 import Admin from "@/pages/Admin";
 import CouponLibrary from "@/pages/CouponLibrary";
 import Reviews from "@/pages/Reviews";
+import Products from "@/pages/Products";
 import { PrivacyPolicy, TermsOfUse } from "@/pages/Legal";
 import Pricing from "@/pages/Pricing";
 import { BillingSuccess, BillingCancel } from "@/pages/BillingResult";
@@ -101,6 +102,7 @@ function App() {
             <Route path="admin" element={<Admin />} />
             <Route path="library" element={<CouponLibrary />} />
             <Route path="reviews" element={<Reviews />} />
+            <Route path="products" element={<Products />} />
           </Route>
         </Routes>
       </BrowserRouter>

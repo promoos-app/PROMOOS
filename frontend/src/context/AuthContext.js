@@ -21,11 +21,13 @@ export function AuthProvider({ children }) {
     const { data } = await api.post("/auth/login", { email, password });
     localStorage.setItem("promoos_token", data.token);
     setUser(data.user);
+    return data;
   };
   const register = async (payload) => {
     const { data } = await api.post("/auth/register", payload);
     localStorage.setItem("promoos_token", data.token);
     setUser(data.user);
+    return data;
   };
   const logout = () => { localStorage.removeItem("promoos_token"); setUser(null); };
 

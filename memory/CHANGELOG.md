@@ -1,5 +1,30 @@
 # PromoOS — CHANGELOG
 
+## Iteration 18 (Feb 2026) — Complete funnel page types + Products upload + payment activation + regression fixes
+
+### Merchant-facing feature completeness ✅ (P0 — user batch)
+- **7 new funnel templates** to complete systeme.io parity — Sales Page, Order Form, Downsell, Inline Form, Popup Form, Link in Bio, Info Page. Combined with prior work the platform now ships **19 professional templates** covering the full launch/optin/webinar/sales/checkout/thank-you lifecycle.
+- **Products page** at `/products` with full image upload via Emergent Object Storage (POST `/api/uploads`). Merchants can now upload product PNG/JPEG/WebP (≤5MB), set price/currency/stripe_price_id, and use products in Funnel product blocks. Sidebar link added.
+- **Bulk unique codes** in the Coupon editor: `BulkCodesPanel` component with generate (count 1–500), select-all, per-row checkboxes, copy to clipboard, CSV export, and bulk delete. Backed by `POST /api/coupons/{cid}/bulk-codes`, `GET /api/coupons/{cid}/codes`, `POST /api/coupons/{cid}/codes/delete`.
+- **Coupon Stripe payment link**: `payment_link` field on the coupon model → `/c/{code}` gains a prominent "Buy now with this discount" anchor when set (with `client_reference_id={code}` for reconciliation). Merchants sell + receive payments without leaving the platform.
+- **X (Twitter) share fixed**: shares now use `https://x.com/intent/post` with URL-encoded params (was `twitter.com/intent/tweet` with raw text — silently failed on quotes/emojis). All 8 share platforms URL-encoded.
+
+### Coupon discount now actually applied at Stripe checkout ✅ (P0 — reported revenue-loss defect)
+- `POST /api/public/products/checkout` now computes the discount for the passed `coupon_code`, applies it to Stripe `line_item.unit_amount`, and records `original_amount`, `applied_discount`, `final_amount` on the order + Stripe metadata. Verified live: `VIPELITJRIXE` on $49 hoodie → **Stripe session amount_total = 3920 cents ($39.20)**.
+- Coupon `publish/unpublish` endpoints now write both `state` and `status` (canonical + legacy). Publishing a coupon immediately makes it visible on `GET /api/public/coupons/{code}`.
+
+### Auth flow polish ✅
+- `/login?admin=1` routes superadmins straight to `/admin` on success; owners are told they need superadmin access. `?next=` query param supported. Login fields no longer prefill test credentials (production hygiene).
+- `AuthContext.login/register` now return the user object so callers can inspect role.
+
+### Products image URL contract fixed
+- Frontend was double-prefixing `/api` on uploaded image URLs. `Products.js` now composes `${REACT_APP_BACKEND_URL}${data.url}`.
+
+### Testing
+- Iter18 verification: **100% backend (14/14 new + 7/7 auth playbook regression)**, **100% frontend Playwright**. Stripe session `line_item.unit_amount` verified end-to-end via `stripe.checkout.Session.retrieve`.
+
+---
+
 ## Iteration 16 (Feb 2026) — Stripe payment links + Industrial funnel builder + WCAG contrast
 
 ### Stripe payment activation ✅ (P0 — user-provided links)

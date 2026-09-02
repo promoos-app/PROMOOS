@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { apiError } from "@/lib/api";
 import { toast } from "sonner";
@@ -12,17 +12,28 @@ import Footer from "@/components/Footer";
 export default function Login() {
   const { login, register } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const qs = new URLSearchParams(location.search);
+  const wantsAdmin = qs.get("admin") === "1";
+  const nextParam = qs.get("next") || "";
   const [mode, setMode] = useState("login");
-  const [form, setForm] = useState({ name: "", email: "admin@promoos.com", password: "admin123", workspace_name: "" });
+  const [form, setForm] = useState({ name: "", email: "", password: "", workspace_name: "" });
   const [loading, setLoading] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-      if (mode === "login") await login(form.email, form.password);
-      else await register(form);
-      navigate("/");
+      const authed = mode === "login" ? await login(form.email, form.password) : await register(form);
+      // Route: explicit ?next= wins, then ?admin=1 for superadmins, else dashboard.
+      let dest = "/";
+      if (nextParam) dest = nextParam;
+      else if (wantsAdmin) {
+        const u = (authed && authed.user) || authed;
+        if (u && u.role === "superadmin") dest = "/admin";
+        else toast.error("You need superadmin access to reach the Admin Portal.");
+      }
+      navigate(dest);
     } catch (err) {
       toast.error(apiError(err, "Authentication failed"));
     } finally {

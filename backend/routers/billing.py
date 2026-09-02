@@ -427,19 +427,29 @@ def register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso, get_curr
             origin = f"{proto}://{host}"
         code = c["code"]
         landing_url = f"{origin}/c/{code}"
+        # URL-encode all dynamic values so headlines with quotes/spaces/emoji
+        # don't produce broken share intents (X in particular fails silently
+        # on unencoded quote characters).
+        from urllib.parse import quote
+        headline = c.get("headline") or c.get("name") or "Save on your next order"
+        name_ = c.get("name") or "Special offer"
+        e_url = quote(landing_url, safe="")
+        e_text = quote(headline, safe="")
+        e_subj = quote(f"Special offer from {name_}", safe="")
         return {
-            "code": code,
+            "code": code, "cid": cid,
             "landing_url": landing_url,
             "embed_snippets": {v: f'<script src="{origin}/api/embed/coupon.js?variant={v}" data-promoos-code="{code}" async></script>'
                                 for v in ("inline","popup","bar","wheel","wallet")},
             "share_links": {
-                "email": f"mailto:?subject=Special%20offer%20from%20{c.get('name','')}&body={landing_url}",
-                "twitter": f"https://twitter.com/intent/tweet?url={landing_url}&text={c.get('headline','Save on your next order')}",
-                "facebook": f"https://www.facebook.com/sharer/sharer.php?u={landing_url}",
-                "linkedin": f"https://www.linkedin.com/sharing/share-offsite/?url={landing_url}",
-                "whatsapp": f"https://wa.me/?text={c.get('headline','')}%20{landing_url}",
-                "telegram": f"https://t.me/share/url?url={landing_url}&text={c.get('headline','')}",
-                "pinterest": f"https://pinterest.com/pin/create/button/?url={landing_url}&description={c.get('headline','')}",
+                "email": f"mailto:?subject={e_subj}&body={e_url}",
+                "twitter": f"https://x.com/intent/post?url={e_url}&text={e_text}",
+                "facebook": f"https://www.facebook.com/sharer/sharer.php?u={e_url}",
+                "linkedin": f"https://www.linkedin.com/sharing/share-offsite/?url={e_url}",
+                "whatsapp": f"https://wa.me/?text={e_text}%20{e_url}",
+                "telegram": f"https://t.me/share/url?url={e_url}&text={e_text}",
+                "pinterest": f"https://pinterest.com/pin/create/button/?url={e_url}&description={e_text}",
+                "reddit": f"https://reddit.com/submit?url={e_url}&title={e_text}",
             },
         }
 

@@ -134,6 +134,30 @@ export default function PublicCoupon() {
               </button>
             </div>
 
+            {c.state === "active" && c.payment_link ? (
+              <div className="mt-4">
+                <a
+                  data-testid="public-buy-with-coupon-btn"
+                  href={(() => {
+                    try {
+                      const u = new URL(c.payment_link);
+                      // Pass the coupon code as client_reference_id so Stripe surfaces it
+                      // in the dashboard + webhook and merchants can reconcile which
+                      // sale used which code.
+                      u.searchParams.set("client_reference_id", c.code);
+                      return u.toString();
+                    } catch { return c.payment_link; }
+                  })()}
+                  target="_top" rel="noopener"
+                  className="block w-full text-center px-6 py-3 rounded-lg font-bold text-base"
+                  style={{ background: bg, color: getContrastText(bg) }}
+                >
+                  {c.cta || "Buy now with this discount"} →
+                </a>
+                <div className="text-[10px] text-center text-[#71717A] mt-1.5">Secure checkout via Stripe</div>
+              </div>
+            ) : null}
+
             {c.state === "active" && (
               <div className="mt-4 flex items-center gap-2">
                 <input
@@ -151,7 +175,7 @@ export default function PublicCoupon() {
                   className="px-4 py-2 rounded-lg font-bold text-sm disabled:opacity-50"
                   style={{ background: bg, color: getContrastText(bg) }}
                 >
-                  {redeeming ? <Loader2 className="w-4 h-4 spin" /> : (c.cta || "Claim Offer")}
+                  {redeeming ? <Loader2 className="w-4 h-4 spin" /> : (c.payment_link ? "Test savings" : (c.cta || "Claim Offer"))}
                 </button>
               </div>
             )}

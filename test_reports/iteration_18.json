@@ -1,0 +1,27 @@
+{
+  "summary": "Verified all 4 defects flagged in iter17 are FIXED. Backend: 14/14 new pytest cases pass (upload URL contract, coupon discount at Stripe checkout incl. Stripe session line_item verification, publish/unpublish state+status sync, regression spot-checks). Frontend Playwright: Products upload preview + saved card render with single /api prefix; /login?admin=1 routes superadmin to /admin, owner stays on / with 'need superadmin' toast; login fields no longer prefilled; vanilla /login lands on / for both roles. Auth playbook regression (test_iter12_auth_playbook.py) 7/7 pass. No new defects found.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Products dialog", "issues": ["React a11y console warning: 'Missing `Description` or `aria-describedby={undefined}` for {DialogContent}' — add DialogDescription to product-form-dialog (cosmetic/a11y only)"]},
+      {"screen": "Dashboard", "issues": ["Recharts console warning: 'The width(-1) and height(-1) of chart should be greater than 0' fires on first paint before container measures — add minWidth/minHeight to ResponsiveContainer (cosmetic)"]},
+      {"screen": "Products list", "issues": ["Seeded 'Signature Hoodie' product has no image_url so its card shows the placeholder icon — consider seeding an image (data, not code)"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter18_fixes.py", "/app/test_reports/pytest/iter18.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "iter14.public_product_checkout maps a fixed allow-list of coupon type strings to percentage math; any new coupon type added to the 23-type library that is not in that list will silently apply 0 discount. Prefer deriving percent-vs-fixed from a single canonical field on the coupon document.",
+    "Publish/unpublish now writes both `state` and `status`; the dual-field design remains a latent bug source. Consider migrating legacy `status` readers and dropping the field."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter18_fixes.py", "/app/test_reports/iteration_18.json"],
+  "success_rate": { "backend": "100% (14/14 new + 7/7 auth playbook)", "frontend": "100% (all targeted flows passed)" },
+  "seed_data_creation": "Temporary only, all cleaned up: coupons TESTDRAFT18 / TESTFIXED18 / TESTPUB18 / TESTXTENANT18, product 'TEST_iter18 Product', cross-tenant user test_iter18_other@example.com + its workspace (removed from Mongo). Verified 0 leftover TEST_iter18 docs.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Owner admin@promoos.com/admin123; Superadmin superadmin@promoos.com/sZpRBNpLKypsQDURBQNqMIzE (from /app/memory/test_credentials.md)",
+  "context_for_next_testing_agent": "Fix verification details: (1) POST /api/uploads returns url='/api/uploads/{id}' — frontend must compose ${REACT_APP_BACKEND_URL}${url} with NO extra /api. (2) Stripe session line_item amount_total was retrieved via stripe.checkout.Session.retrieve and equals final_price*100 (3920 for VIPELITJRIXE on $49 hoodie). (3) Publish sets state+status=active and public GET /api/public/coupons/{code} returns 200 immediately; unpublish → 404. (4) Funnel template count endpoint is /api/funnels/templates (returns {templates:[...19]}) — NOT /api/templates (that returns 6 design themes). Reuse /app/backend/tests/test_iter18_fixes.py as regression. Note pytest.ini already forces xdist; do not pass -n/-p no:xdist.",
+  "rca_of_the_issue": "All four iter17 root causes confirmed resolved: Products.js line 27 now uses ${backend}${data.url} (no manual /api); Login.js reads ?admin=1/?next= and inspects the returned user role from AuthContext (login/register now return data); iter14 checkout computes discount and passes int(final_price*100) into Stripe price_data.unit_amount plus records original/discount/final on the order and session metadata; publish/unpublish write both `state` and `status`."
+}

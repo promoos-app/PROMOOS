@@ -133,31 +133,68 @@ def register(api, db, now_iso, get_current_user, require_writer,
 
     @api.post("/public/products/checkout")
     async def public_product_checkout(body: BuyNowIn):
-        """Public — used by coupon/funnel Buy-Now buttons. Creates Stripe Checkout via platform Stripe."""
+        """Public — used by coupon/funnel Buy-Now buttons. Creates Stripe Checkout via platform Stripe.
+        If a coupon_code is provided AND it belongs to the same workspace as the product AND it's
+        active, the discount is applied to the line-item price at checkout so the customer actually
+        pays the discounted amount. Applied discount is recorded on the order for reconciliation.
+        """
         p = await db.products.find_one({"id": body.product_id, "is_deleted": {"$ne": True}}, {"_id": 0})
         if not p: raise HTTPException(404, "Product not found")
+        original_price = float(p["price"])
+        final_price = original_price
+        applied_coupon = None
+        applied_discount = 0.0
+        if body.coupon_code:
+            code_upper = body.coupon_code.upper()
+            c = await db.coupons.find_one({
+                "code": code_upper,
+                "workspace_id": p["workspace_id"],
+                "state": "active",
+                "is_deleted": {"$ne": True},
+            }, {"_id": 0})
+            if c:
+                ctype = (c.get("type") or "").lower()
+                dval = float(c.get("discount_value") or 0)
+                if ctype in ("fixed", "fixed_amount", "amount"):
+                    applied_discount = min(dval, original_price)
+                elif ctype in ("percentage", "percent", "%", "vip", "frequent", "regular",
+                                 "new", "at_risk", "flash", "launch", "loyalty", "welcome", "seasonal"):
+                    applied_discount = original_price * (dval / 100.0)
+                # cap non-negative
+                applied_discount = max(0.0, min(applied_discount, original_price))
+                final_price = max(0.01, original_price - applied_discount)  # Stripe requires >0
+                applied_coupon = code_upper
         try:
             import stripe
             stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
             if not stripe.api_key: raise HTTPException(501, "Stripe not configured")
+            product_data = {"name": p["name"], "description": p.get("description", "")[:500] or None}
+            if applied_coupon:
+                # Surface the discount in the customer-visible product name.
+                product_data["name"] = f'{p["name"]} — {applied_coupon} applied'
             price_data = {"currency": (p.get("currency") or "USD").lower(),
-                          "product_data": {"name": p["name"],
-                                             "description": p.get("description", "")[:500] or None},
-                          "unit_amount": int(round(float(p["price"]) * 100))}
+                          "product_data": product_data,
+                          "unit_amount": int(round(final_price * 100))}
             session = stripe.checkout.Session.create(
                 line_items=[{"price_data": price_data, "quantity": 1}],
                 mode="payment",
                 success_url=f"{body.origin_url}/thank-you?product={body.product_id}&session_id={{CHECKOUT_SESSION_ID}}",
                 cancel_url=f"{body.origin_url}",
                 metadata={"product_id": body.product_id, "workspace_id": p["workspace_id"],
-                          "coupon_code": body.coupon_code or ""})
+                          "coupon_code": applied_coupon or "",
+                          "original_amount": f"{original_price:.2f}",
+                          "applied_discount": f"{applied_discount:.2f}",
+                          "final_amount": f"{final_price:.2f}"})
             await db.product_orders.insert_one({
                 "id": str(uuid.uuid4()), "session_id": session.id,
                 "product_id": body.product_id, "workspace_id": p["workspace_id"],
-                "coupon_code": body.coupon_code, "amount": p["price"],
+                "coupon_code": applied_coupon, "original_amount": original_price,
+                "applied_discount": applied_discount, "amount": final_price,
                 "currency": p["currency"], "status": "initiated",
                 "created_at": now_iso()})
-            return {"checkout_url": session.url, "session_id": session.id}
+            return {"checkout_url": session.url, "session_id": session.id,
+                    "original_price": original_price, "final_price": final_price,
+                    "applied_discount": applied_discount, "coupon_applied": applied_coupon}
         except HTTPException:
             raise
         except Exception as e:
@@ -179,20 +216,22 @@ def register(api, db, now_iso, get_current_user, require_writer,
     @api.post("/coupons/{cid}/publish")
     async def publish_coupon(cid: str, user: dict = Depends(get_current_user)):
         require_writer(user)
+        # `state` is the canonical field the public endpoint (/api/public/coupons/{code})
+        # gates on; keep `status` in sync for legacy consumers.
         r = await db.coupons.update_one(
             {"id": cid, "workspace_id": user["workspace_id"]},
-            {"$set": {"status": "active", "published_at": now_iso()}})
+            {"$set": {"state": "active", "status": "active", "published_at": now_iso()}})
         if r.matched_count == 0: raise HTTPException(404, "Not found")
-        return {"ok": True, "status": "active"}
+        return {"ok": True, "state": "active", "status": "active"}
 
     @api.post("/coupons/{cid}/unpublish")
     async def unpublish_coupon(cid: str, user: dict = Depends(get_current_user)):
         require_writer(user)
         r = await db.coupons.update_one(
             {"id": cid, "workspace_id": user["workspace_id"]},
-            {"$set": {"status": "draft"}})
+            {"$set": {"state": "draft", "status": "draft"}})
         if r.matched_count == 0: raise HTTPException(404, "Not found")
-        return {"ok": True, "status": "draft"}
+        return {"ok": True, "state": "draft", "status": "draft"}
 
     # ---------- Admin enrichment ----------
     @api.get("/admin/users-detailed")
