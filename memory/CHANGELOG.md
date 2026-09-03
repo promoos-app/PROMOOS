@@ -1,4 +1,47 @@
+## Feb 2026 — Hotfix: Gift Card AI Image (Cloudflare 502)
+- **Bug**: `/api/giftcards/regenerate` with `field: "image_bg"` returned Cloudflare 502 (invalid/incomplete upstream response). Local backend showed `HTTPException(502): emergentintegrations not installed: No module named 'emergentintegrations.llm.googleai'`.
+- **Root cause**: `routers/giftcards.py` imported the removed `GeminiImageGeneration` class + `gemini-2.5-flash-image` model. In the installed `emergentintegrations 0.2.0`, the `googleai` submodule does not exist.
+- **Fix**: Switched to the canonical multimodal pattern used by `/api/ai/image`: `LlmChat.with_model("gemini", "gemini-3.1-flash-image-preview").with_params(modalities=["image", "text"])` + `send_message_multimodal_response(...)`. Returns proper `data:{mime_type};base64,{data}` URL.
+- **Verified**: HTTP 200, ~750KB image, ~11s response, no more 502.
+- **File**: `/app/backend/routers/giftcards.py` (lines ~222–248).
+
+
 # PromoOS — CHANGELOG
+
+## Iteration 21 (Feb 2026) — Multi-Step Editor UI + A/B Dashboard + Footer block + Currency dropdown + Coupon graphics
+
+### Multi-Step Funnel Editor UI ✅ (P0 — user request)
+- `Funnels.js` FunnelEditor gained a **surface tab bar** (`data-testid="funnel-surface-tabs"`) with tabs for the main page + each step + each A/B variant. Merchants can click to switch which surface they're editing; `currentBlocks()`/`setCurrentBlocks()` route all block edits (add/move/remove/property changes) to the active surface.
+- Steps CRUD: `tab-add-step` (renames auto-slug), `tab-step-name-<id>`, `tab-step-remove-<id>`, up/down reorder buttons.
+- Save persists `steps[]` + `variants[]` to `PUT /api/funnels/{id}`.
+- Public `/f/{slug}` sticky top nav (`funnel-step-nav`) renders **Main + all steps** so the merchant's main page stays reachable after adding steps (fix from testing iter21).
+
+### A/B Test Dashboard ✅ (P0)
+- `tab-add-variant` clones the **active surface** into a new variant (context-preserving) and switches to it. `promoteVariant` promotes the winning variant to main and clears variants.
+- Per-variant analytics panel (`funnel-variants-analytics`) shows conversion % per variant + Winner badge (`variant-winning-badge`) once any variant has ≥20 views. Backend `/api/funnels/{fid}/variants-analytics` aggregates events by `variant_id`.
+- Variant selection is scoped to the main surface — never overrides step blocks (precedence fix from iter21).
+
+### Funnel Footer Block ✅ (P0)
+- New `footer` block type with fields: brand, address, phone, email, privacy_url, terms_url, cookies_url, copyright_extra. Public renders a 3-column footer with unsubscribe capture (`footer-unsub-email` + `footer-unsub-btn` → tracks event `cta_click block_type=footer_unsubscribe`). Auto-injects year.
+
+### 40-currency Product dropdown ✅ (P0)
+- `product-currency-select` covers USD/EUR/GBP/CAD/AUD/JPY/CHF/INR/AED/SAR/SGD/HKD/MXN/BRL/ZAR/NGN/KES/PLN/CZK/HUF/TRY/RUB/THB/IDR/PHP/MYR/VND/KRW/CNY/TWD/ILS/EGP/ARS/CLP/COP/PEN/NOK/DKK/SEK/NZD.
+- New `fmtMoney(amount, currency)` helper renders proper symbols/positions per currency (€29.50, £29.50, ¥4900 for zero-decimal, ₹29.50, etc.). Applied to Products page + PublicFunnel product block.
+
+### Coupon Custom Design: Background Graphics ✅ (P0)
+- `coupon-design-bg_image` URL input on the Custom Design panel + 4 preset preview buttons (Confetti / Neon / Marble / Sunset). Backend `CouponDesign.bg_image` field persists and returns in `/api/public/coupons/{code}`.
+
+### Sequence Delivery via Resend ✅ (P0 — from iter19 backlog)
+- `iter19.py` gained `deliver_due_sequence_emails()` + a 60s background loop (started from `server.py` startup). Each due schedule step sends via Resend, marks `sent`/`failed` with `resend_id`, and completes the enrollment when all steps land.
+- Manual trigger: `POST /api/sequences/deliver-now` (auth required).
+
+### Gift Card Buy Button ✅ (P0 — from iter19 backlog)
+- `PublicFunnel` GiftCardBlock now renders an amount + email form under the card with `giftcard-buy-btn` → hits `POST /api/public/giftcards/checkout`. Success page polling at `/api/public/giftcards/order/{session_id}` mints the code idempotently.
+
+### Testing
+- **Iter20**: 5/5 P0 items 100% + 3 targeted follow-ups. **Iter21**: 11/11 backend + 3/3 frontend fixes verified. Currency localization, main-page reachability, variant clone context — all confirmed. Precedence bug fixed post-verification.
+
+---
 
 ## Iteration 19 (Feb 2026) — Funnel Builder scroll fix + Automations + Multi-step/A-B foundation + Gift Card checkout
 

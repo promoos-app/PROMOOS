@@ -232,3 +232,69 @@ export function Divider({ block, theme }) {
     </div>
   );
 }
+
+export function FooterBlock({ block, theme, slug }) {
+  const p = block.props || {};
+  const [busy, setBusy] = useState(false);
+  const [email, setEmail] = useState("");
+  const [done, setDone] = useState(false);
+  const unsub = async (e) => {
+    e && e.preventDefault && e.preventDefault();
+    if (!email || !email.includes("@")) return;
+    setBusy(true);
+    try {
+      await axios.post(`${API}/api/public/f/${slug}/track`, {
+        event: "cta_click", block_id: block.id, block_type: "footer_unsubscribe",
+        meta: { unsubscribe_email: email },
+      });
+      setDone(true);
+    } catch (err) { /* silent */ }
+    finally { setBusy(false); }
+  };
+  const year = new Date().getFullYear();
+  return (
+    <footer className="mt-12 border-t px-6 py-10"
+      data-testid="funnel-block-footer"
+      style={{ borderColor: "rgba(255,255,255,0.08)", background: p.bg || "rgba(0,0,0,0.2)" }}>
+      <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8 text-[12px]">
+        <div className="space-y-2">
+          <div className="text-sm font-bold" style={{ fontFamily: theme.font_display }}>{p.brand || "PromoOS"}</div>
+          <div className="opacity-70 whitespace-pre-line">{p.address || ""}</div>
+          <div className="opacity-70">{p.phone ? <>Tel: <a href={`tel:${p.phone}`} className="hover:opacity-100">{p.phone}</a></> : null}</div>
+          <div className="opacity-70">{p.email ? <>Email: <a href={`mailto:${p.email}`} className="hover:opacity-100">{p.email}</a></> : null}</div>
+        </div>
+        <div className="space-y-2">
+          <div className="text-[10px] uppercase tracking-widest opacity-60">Legal</div>
+          {p.privacy_url ? <div><a href={p.privacy_url} target="_blank" rel="noreferrer" className="hover:underline opacity-80">Privacy Policy</a></div> : null}
+          {p.terms_url ? <div><a href={p.terms_url} target="_blank" rel="noreferrer" className="hover:underline opacity-80">Terms of Use</a></div> : null}
+          {p.cookies_url ? <div><a href={p.cookies_url} target="_blank" rel="noreferrer" className="hover:underline opacity-80">Cookie Policy</a></div> : null}
+        </div>
+        <div className="space-y-2">
+          <div className="text-[10px] uppercase tracking-widest opacity-60">Unsubscribe</div>
+          {done ? (
+            <div className="text-[11px]" data-testid="footer-unsub-success">✓ You've been unsubscribed.</div>
+          ) : (
+            <form onSubmit={unsub} className="flex items-center gap-2">
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                placeholder="your@email.com"
+                data-testid="footer-unsub-email"
+                className="flex-1 px-2 py-1.5 text-xs rounded"
+                style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: theme.fg }} />
+              <button type="submit" disabled={busy}
+                data-testid="footer-unsub-btn"
+                className="text-[10px] uppercase tracking-widest px-3 py-1.5 rounded font-bold disabled:opacity-50"
+                style={{ background: theme.accent, color: getContrastText(theme.accent, theme.bg) }}>
+                {busy ? "…" : "Unsubscribe"}
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+      <div className="max-w-5xl mx-auto mt-8 pt-6 border-t flex flex-wrap items-center justify-between gap-2 text-[10px] opacity-60"
+        style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+        <div>© {year} {p.brand || "PromoOS"}. All rights reserved.</div>
+        <div>{p.copyright_extra || ""}</div>
+      </div>
+    </footer>
+  );
+}

@@ -142,6 +142,7 @@ class CouponDesign(BaseModel):
     fg: Optional[str] = ""
     badge_bg: Optional[str] = ""
     badge_fg: Optional[str] = ""
+    bg_image: Optional[str] = ""
 
 
 class CouponIn(BaseModel):

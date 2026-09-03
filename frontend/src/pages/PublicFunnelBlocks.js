@@ -64,6 +64,24 @@ export function Countdown({ block, theme }) {
   );
 }
 
+const CURRENCY_SYMBOLS = {
+  USD: "$", CAD: "$", AUD: "$", NZD: "$", SGD: "$", HKD: "$", MXN: "$", BRL: "R$", ARS: "$", CLP: "$", COP: "$",
+  EUR: "€", GBP: "£", JPY: "¥", CNY: "¥", CHF: "CHF ", SEK: "kr ", NOK: "kr ", DKK: "kr ",
+  INR: "₹", AED: "د.إ ", SAR: "﷼ ", ILS: "₪", TRY: "₺", RUB: "₽",
+  KRW: "₩", TWD: "NT$", THB: "฿", IDR: "Rp ", PHP: "₱", MYR: "RM ", VND: "₫",
+  ZAR: "R", NGN: "₦", KES: "KSh ", EGP: "E£", PLN: "zł ", CZK: "Kč ", HUF: "Ft ",
+};
+
+// Public-facing helper: return "€49.00" / "$49.00" / "¥4900" based on currency code.
+export function fmtMoney(amount, currency) {
+  const code = (currency || "USD").toUpperCase();
+  const sym = CURRENCY_SYMBOLS[code];
+  const n = Number(amount || 0);
+  const zeroDecimal = ["JPY", "KRW", "VND", "IDR", "CLP", "HUF"].includes(code);
+  const value = zeroDecimal ? Math.round(n).toLocaleString() : n.toFixed(2);
+  return sym ? `${sym}${value}` : `${code} ${value}`;
+}
+
 function computeDiscounted(price, coupon) {
   if (!price || !coupon) return null;
   const val = coupon.discount_value != null ? coupon.discount_value
@@ -134,13 +152,13 @@ export function ProductBlock({ block, theme, slug }) {
           ) : null}
           {price != null && discounted != null ? (
             <div className="flex items-baseline gap-3 mb-5">
-              <span className="text-3xl font-bold" style={{ color: c.accent }}>${discounted.toFixed(2)}</span>
-              <span className="text-lg opacity-50 line-through">${price.toFixed(2)} {currency}</span>
+              <span className="text-3xl font-bold" style={{ color: c.accent }}>{fmtMoney(discounted, currency)}</span>
+              <span className="text-lg opacity-50 line-through">{fmtMoney(price, currency)}</span>
             </div>
           ) : null}
           {price != null && discounted == null ? (
             <div className="flex items-baseline gap-3 mb-5">
-              <span className="text-3xl font-bold" style={{ color: c.accent }}>${price.toFixed(2)} {currency}</span>
+              <span className="text-3xl font-bold" style={{ color: c.accent }}>{fmtMoney(price, currency)}</span>
             </div>
           ) : null}
           {p.coupon_code ? (

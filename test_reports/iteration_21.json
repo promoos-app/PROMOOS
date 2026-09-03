@@ -1,0 +1,36 @@
+{
+  "summary": "Iter21 focused verification of the 3 follow-up fixes (currency symbol localization, main page in step nav, A/B clone context) + light regression. Backend: 11/11 pytest passed (/app/backend/tests/test_iter21_fixes.py). Frontend: verified public funnel renders '€29.50' for EUR product, funnel-step-nav shows 3 buttons (Main/Upsell/Thanks) with main reachable, and addVariant clones the ACTIVE step surface (not main blocks) — verified through the editor UI and persisted funnel state. All 3 fixes CONFIRMED WORKING.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/public/f/{slug}", "issue": "Variant selection runs AFTER step selection and unconditionally overwrites d['blocks'] with the chosen variant's blocks. So on a funnel that has BOTH steps and variants, requesting ?step=<suffix> returns the variant blocks instead of the step blocks (step content unreachable). Not part of the 3 fixes; latent precedence bug — consider scoping variants to the main surface only."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter21_fixes.py",
+    "/app/test_reports/iter21_seed.py"
+  ],
+  "action_items": [
+    "Optional: fix step-vs-variant precedence in public_funnel so ?step= is not overridden by A/B variant blocks (see backend minor issue)."
+  ],
+  "critical_code_review_comments": [
+    "public_funnel: variant block override should be gated on the active surface being 'main' (active_step.id == 'main') to avoid clobbering step blocks.",
+    "fmtMoney lives in PublicFunnelBlocks.js but is imported by Products.js — consider moving to a shared /lib/money.js to avoid page->page imports."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter21_fixes.py (new)",
+    "/app/test_reports/iter21_seed.py (new)"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (all 3 fixes + regression checks passed)"},
+  "seed_data_creation": "Created and then DELETED: funnels test-iter21-ui / test-iter21-ab and product 'TEST_EUR Widget' (EUR 29.5). No residual test data.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@promoos.com / admin123 (owner)",
+  "context_for_next_testing_agent": "FIX#1 (fmtMoney 40-currency symbol map, zero-decimal JPY/KRW/VND/IDR/CLP/HUF), FIX#2 (synthetic 'main' entry in steps_meta, active_step={id:'main'} when ?step unset, ?step=main alias works, unknown step -> 404), FIX#3 (addVariant clones currentBlocks()) are all verified. Note addStep injects a default 'heading' block ('New page'), so a step-cloned variant legitimately has 2 heading blocks. Regression re-verified: currency select (40 options, GBP selectable), Products cards use fmtMoney, coupons list loads with VIPELITJRIXE active, variants-analytics endpoint 200. Remaining known gap: step vs variant precedence in GET /api/public/f/{slug}.",
+  "rca_of_the_issue": "N/A — all three reported defects are fixed. The only new finding is a precedence bug: in public_funnel the A/B variant branch executes after the step branch and unconditionally reassigns d['blocks'], so variant blocks win over an explicitly requested step."
+}

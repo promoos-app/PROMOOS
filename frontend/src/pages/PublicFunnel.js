@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import axios from "axios";
 import { Countdown, ProductBlock, Testimonials, blockColors, trackFunnelEvent } from "./PublicFunnelBlocks";
-import { LogoBar, Stats, Guarantee, PricingTable, OrderBump, Upsell, Optin, Spacer, Divider } from "./PublicFunnelIndustrial";
+import { LogoBar, Stats, Guarantee, PricingTable, OrderBump, Upsell, Optin, Spacer, Divider, FooterBlock } from "./PublicFunnelIndustrial";
 import { getContrastText } from "@/lib/contrast";
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -315,6 +315,7 @@ const REGISTRY = {
   optin: Optin,
   spacer: Spacer,
   divider: Divider,
+  footer: FooterBlock,
 };
 
 function Block({ block, theme, slug, funnel }) {

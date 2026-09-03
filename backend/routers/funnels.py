@@ -901,19 +901,29 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
             pass
         workspace_id = d.get("workspace_id")
         # ------- Multi-step navigation -------
+        # Main-page blocks are treated as a pseudo-step (slug_suffix=""). This keeps the
+        # merchant's main page reachable even after they add extra steps.
         steps = d.get("steps") or []
         active_step = None
         if steps:
-            active_step = next((s for s in steps if s.get("slug_suffix") == step), None) if step else steps[0]
-            if not active_step: raise HTTPException(404, "Step not found")
-            d["blocks"] = active_step.get("blocks") or []
-            d["active_step"] = {"id": active_step.get("id"), "name": active_step.get("name"),
-                                 "slug_suffix": active_step.get("slug_suffix", "")}
-            d["steps_meta"] = [{"id": s.get("id"), "name": s.get("name"),
-                                 "slug_suffix": s.get("slug_suffix", "")} for s in steps]
+            main_meta = {"id": "main", "name": "Main", "slug_suffix": ""}
+            if step is None or step == "" or step == "main":
+                d["active_step"] = main_meta
+                # keep d["blocks"] as-is (main page)
+            else:
+                active_step = next((s for s in steps if s.get("slug_suffix") == step), None)
+                if not active_step: raise HTTPException(404, "Step not found")
+                d["blocks"] = active_step.get("blocks") or []
+                d["active_step"] = {"id": active_step.get("id"), "name": active_step.get("name"),
+                                     "slug_suffix": active_step.get("slug_suffix", "")}
+            d["steps_meta"] = [main_meta] + [{"id": s.get("id"), "name": s.get("name"),
+                                                 "slug_suffix": s.get("slug_suffix", "")} for s in steps]
         # ------- A/B variant selection -------
+        # Only apply variants when the merchant is viewing the main surface — variants clobbering
+        # step blocks would render the wrong page for multi-step + A/B funnels.
         variants = d.get("variants") or []
-        if variants:
+        on_main = (not steps) or (d.get("active_step", {}).get("id") == "main")
+        if variants and on_main:
             chosen = None
             if variant:
                 chosen = next((v for v in variants if v.get("id") == variant), None)

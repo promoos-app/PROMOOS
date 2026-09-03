@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { fmtMoney } from "@/pages/PublicFunnelBlocks";
 import { Package, Plus, Trash2, Upload, Loader2, Image as ImageIcon } from "lucide-react";
 
 const EMPTY = { name: "", description: "", price: 29, currency: "USD", image_url: "", stripe_price_id: "" };
@@ -92,8 +93,17 @@ function ProductForm({ open, onOpenChange, initial, onSubmit }) {
             </div>
             <div>
               <Label className="text-xs text-[#A1A1AA]">Currency</Label>
-              <Input value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value.toUpperCase() })}
-                className="mt-1 bg-[#0A0A0A] border-[#27272A]" placeholder="USD" />
+              <select value={f.currency}
+                onChange={(e) => setF({ ...f, currency: e.target.value })}
+                data-testid="product-currency-select"
+                className="mt-1 w-full h-10 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white px-3 text-sm">
+                {["USD","EUR","GBP","CAD","AUD","NZD","JPY","CHF","SEK","NOK","DKK",
+                  "INR","AED","SAR","SGD","HKD","MXN","BRL","ZAR","NGN","KES",
+                  "PLN","CZK","HUF","TRY","RUB","THB","IDR","PHP","MYR","VND",
+                  "KRW","CNY","TWD","ILS","EGP","ARS","CLP","COP","PEN"].map((code) => (
+                  <option key={code} value={code}>{code}</option>
+                ))}
+              </select>
             </div>
           </div>
           <div>
@@ -174,7 +184,7 @@ export default function Products() {
               </div>
               <div className="p-3">
                 <div className="font-bold text-sm truncate">{p.name}</div>
-                <div className="text-xs text-[#71717A] mt-0.5">${p.price} {p.currency}</div>
+                <div className="text-xs text-[#71717A] mt-0.5">{fmtMoney(p.price, p.currency)}</div>
                 <div className="flex items-center justify-between mt-3 pt-3 border-t border-[#27272A]">
                   <button onClick={() => { setEditing(p); setOpen(true); }}
                     className="text-xs text-[#A1A1AA] hover:text-white">Edit</button>

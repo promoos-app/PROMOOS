@@ -400,7 +400,7 @@ export default function CouponEditor() {
           {/* Custom design — per-coupon color overrides */}
           <div className="surface rounded-lg p-5 space-y-3" data-testid="coupon-design-panel">
             <h3 className="font-display font-bold">Custom Design</h3>
-            <div className="text-xs text-[#71717A]">Optional. Tint every section of this coupon — card background, accent, text, and badge. Applies everywhere this coupon is embedded.</div>
+            <div className="text-xs text-[#71717A]">Optional. Tint every section of this coupon — card background, accent, text, badge, and add a graphic behind everything (photo, gradient, pattern URL, or Unsplash image).</div>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               {[
                 ["bg", "Card BG"],
@@ -424,6 +424,34 @@ export default function CouponEditor() {
                   </div>
                 </div>
               ))}
+            </div>
+            {/* Background graphic URL — a photo/pattern/gradient painted behind the coupon card. */}
+            <div className="pt-2 border-t border-[#27272A]">
+              <Label className="text-[10px] text-[#71717A] uppercase tracking-widest">Background graphic URL</Label>
+              <Input value={form.design?.bg_image || ""} onChange={(e) => setDesign("bg_image", e.target.value)}
+                placeholder="https://images.unsplash.com/photo-… or your own image URL"
+                data-testid="coupon-design-bg_image"
+                className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white text-xs font-mono" />
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+                {[
+                  { name: "Confetti", url: "https://images.unsplash.com/photo-1513151233558-d860c5398176?auto=format&fit=crop&w=1200&q=60" },
+                  { name: "Neon", url: "https://images.unsplash.com/photo-1620121692029-d088224ddc74?auto=format&fit=crop&w=1200&q=60" },
+                  { name: "Marble", url: "https://images.unsplash.com/photo-1618764400608-9e7115eede40?auto=format&fit=crop&w=1200&q=60" },
+                  { name: "Sunset", url: "https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?auto=format&fit=crop&w=1200&q=60" },
+                ].map((preset) => (
+                  <button key={preset.name} type="button"
+                    onClick={() => setDesign("bg_image", preset.url)}
+                    data-testid={`coupon-design-bg_image-preset-${preset.name}`}
+                    className="rounded-md h-14 overflow-hidden border border-[#27272A] hover:border-[#CCFF00] transition relative"
+                    style={{ backgroundImage: `url(${preset.url})`, backgroundSize: "cover", backgroundPosition: "center" }}>
+                    <span className="absolute inset-x-0 bottom-0 text-[10px] text-center py-0.5 bg-black/60 text-white">{preset.name}</span>
+                  </button>
+                ))}
+              </div>
+              {form.design?.bg_image ? (
+                <button type="button" onClick={() => setDesign("bg_image", "")}
+                  className="text-[10px] text-[#71717A] hover:text-red-400 mt-2">Clear background image</button>
+              ) : null}
             </div>
           </div>
 

@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 20 focused verification of the 5 P0 batch items + regression sweep. Backend: new pytest suite /app/backend/tests/test_iter20_batch.py (16 tests, 16 passed) covering multi-step persistence + public step rendering, A/B variants-analytics math + winner detection + promote-variant (incl. 404 path), product currency persistence, footer block persistence + public payload + unsubscribe track event, coupon design.bg_image persistence + public exposure, and list-endpoint regression sweep. Frontend: Playwright runs verified funnel-surface-tabs, tab-add-step/rename/surface switch, footer block editor testids, tab-add-variant, save+reload persistence, funnel-variants-analytics with variant-winning-badge (Variant A 20% vs B 4%, 25 views each) and UI promote-winner clearing variants, public funnel footer render (brand/address/phone/email/legal/copyright) + unsubscribe success + /track fired, multi-step public nav switching, products currency <select> with exactly 40 options (EUR select+save persisted), coupon bg_image 4 presets populating input and persisting after save (verified via API), 19 templates in the New-funnel dialog, /reviews /sequences /products load clean. All 5 P0 items functionally work. Two real defects found: currency symbol hardcoded to '$' in public product block and Products card, and main-page blocks becoming publicly unreachable once any step exists.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/public/f/{slug}", "issue": "funnels.py:906-909 — when steps[] is non-empty the funnel's own `blocks` (Main page) are never served: default active_step = steps[0] and there is no way to request the main page. steps_meta also omits the main page, so main-page content silently disappears from the live funnel after a merchant adds a single step. Suggest exposing main as a pseudo-step (e.g. slug_suffix='' entry prepended to steps_meta) or only overriding blocks when ?step= matches."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "PublicFunnelBlocks.js ProductBlock", "issue": "Price renders with a hardcoded '$' regardless of product.currency — an EUR product shows '$59.00 EUR'. Lines 137/138/143: replace `$${price.toFixed(2)}` with a currency-symbol lookup (EUR -> €, GBP -> £, JPY -> ¥, INR -> ₹, fallback to code prefix).", "selector": "[data-testid='funnel-block-product']", "priority": "MEDIUM"},
+      {"component": "Products.js product card", "issue": "Same hardcoded '$' on the product card price (line 186: `${p.price} {p.currency}` renders '$77 EUR').", "selector": "[data-testid^='product-card-']", "priority": "MEDIUM"},
+      {"component": "PublicFunnel.js step nav", "issue": "funnel-step-nav only renders when stepsMeta.length > 1 (line 372). With exactly one step the visitor sees only that step and has no navigation, while the main page blocks are also unreachable (see backend issue). Low priority once the backend main-page issue is fixed.", "selector": "[data-testid='funnel-step-nav']", "priority": "LOW"},
+      {"component": "Funnels.js addVariant", "issue": "Line 237 clones `funnel.blocks` (main page) instead of currentBlocks(); adding an A/B variant while a step surface is active produces an empty variant. Spec said 'clones current blocks'.", "selector": "[data-testid='tab-add-variant']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter20_batch.py",
+    "/app/test_reports/pytest/iter20_results.xml"
+  ],
+  "action_items": [
+    "PublicFunnelBlocks.js:137-143 — use currency symbol map instead of hardcoded '$' for product price.",
+    "Products.js:186 — same currency symbol fix on the product card.",
+    "funnels.py:906-909 — keep the Main page reachable when steps exist (prepend main to steps_meta / only swap blocks when ?step= matches).",
+    "Funnels.js:237 — addVariant should clone currentBlocks() (or explicitly document that A/B applies to the main page only)."
+  ],
+  "critical_code_review_comments": [
+    "funnels.py promote_variant clears `variants: []` unconditionally — no snapshot of the losing variant is kept; consider archiving into promoted_variant for auditability.",
+    "renameStep derives slug_suffix from the name with no uniqueness check; two steps named the same produce duplicate slug_suffix and the backend then always resolves ?step= to the first match.",
+    "Funnels.js is 850 lines — editor tabs/variants/footer editors should be extracted into components per the 700-line guideline."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter20_batch.py",
+    "/app/test_reports/iter20_seed.py"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "95% (all 5 P0 flows pass; 2 currency-symbol display bugs)"},
+  "seed_data_creation": "Created and then deleted: funnels 'TEST_iter20 UI funnel' & 'TEST_iter20 public', products 'TEST_iter20 EUR Tee'/'TEST_iter20 UI EUR product', coupon 'TEST_iter20 UI coupon'. 100 funnel_events rows for the A/B math remain in db.funnel_events tied to deleted funnel ids (harmless).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@promoos.com / admin123 (owner) — worked; note login redirects to '/' not '/dashboard'.",
+  "context_for_next_testing_agent": "Reusable suite: /app/backend/tests/test_iter20_batch.py (creates its own funnel, publishes it — public endpoints 404 unless published). Playwright: login redirects to '/' so wait on text=Dashboard, not URL. Coupon editor save navigates back to /coupons, so verify persistence via API instead of reload. Remaining unverified P0-adjacent areas: integrations activation, AI gift-card generate, share-email, commerce-connector (explicitly deferred by user).",
+  "rca_of_the_issue": "Currency bug: ProductBlock/Products card template literals prefix '$' and append the currency code, so any non-USD currency renders a wrong symbol. Main-page-unreachable bug: public funnel handler treats steps as a full replacement for blocks and defaults to steps[0], with no representation of the main page in steps_meta."
+}

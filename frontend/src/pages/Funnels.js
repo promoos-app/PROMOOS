@@ -234,7 +234,9 @@ export function FunnelEditor() {
     setFunnel({ ...funnel, steps: s });
   };
   const addVariant = () => {
-    const cloneBlocks = JSON.parse(JSON.stringify(funnel.blocks || []));
+    // Clone whichever surface is currently active (main / step / existing variant) so
+    // the merchant's context doesn't reset when they add an A/B variant on a specific page.
+    const cloneBlocks = JSON.parse(JSON.stringify(currentBlocks() || []));
     for (const b of cloneBlocks) b.id = crypto.randomUUID();
     const newV = { id: crypto.randomUUID(),
                    name: `Variant ${String.fromCharCode(65 + (funnel.variants || []).length)}`,
@@ -291,8 +293,12 @@ export function FunnelEditor() {
                fields: [{ key: "email", label: "Email address", required: true }], lead_tag: "" },
       spacer: { height: 40 },
       divider: {},
+      footer: { brand: "Your Brand", address: "123 Main St\nCity, ST 00000",
+                phone: "+1 (555) 000-0000", email: "hello@yourbrand.com",
+                privacy_url: "/privacy", terms_url: "/terms", cookies_url: "",
+                copyright_extra: "" },
     };
-    setFunnel((f) => ({ ...f, blocks: [...f.blocks, { id: crypto.randomUUID(), type, props: defaults[type] || {} }] }));
+    setCurrentBlocks([...currentBlocks(), { id: crypto.randomUUID(), type, props: defaults[type] || {} }]);
   };
 
   const save = async () => {
@@ -300,6 +306,7 @@ export function FunnelEditor() {
     try {
       await api.put(`/funnels/${id}`, {
         name: funnel.name, blocks: funnel.blocks, theme: funnel.theme, seo: funnel.seo, slug: funnel.slug,
+        steps: funnel.steps || [], variants: funnel.variants || [],
       });
       toast.success("Saved");
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
@@ -346,6 +353,78 @@ export function FunnelEditor() {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
         <div className="space-y-3">
+          {/* Multi-step + A/B surface tabs */}
+          <div className="surface rounded-lg p-3 flex flex-wrap items-center gap-2" data-testid="funnel-surface-tabs">
+            <button onClick={() => setSurface("main")}
+              data-testid="tab-main"
+              className={`text-xs px-3 py-1.5 rounded-md ${surface === "main" ? "bg-[#CCFF00] text-black font-bold" : "bg-[#0A0A0A] text-[#A1A1AA] hover:text-white"}`}>
+              Main page ({(funnel.blocks || []).length})
+            </button>
+            {(funnel.steps || []).map((s, i) => (
+              <div key={s.id} className={`flex items-center gap-0.5 rounded-md ${surface === `step:${s.id}` ? "ring-1 ring-[#CCFF00]" : ""}`}>
+                <button onClick={() => setSurface(`step:${s.id}`)}
+                  data-testid={`tab-step-${s.id}`}
+                  className={`text-xs pl-3 pr-2 py-1.5 rounded-l-md ${surface === `step:${s.id}` ? "bg-[#141414] text-white font-bold" : "bg-[#0A0A0A] text-[#A1A1AA] hover:text-white"}`}>
+                  <span className="opacity-60 mr-1">{i + 2}.</span>
+                  <input value={s.name} onChange={(e) => renameStep(s.id, e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="bg-transparent border-none outline-none text-xs w-20"
+                    data-testid={`tab-step-name-${s.id}`} />
+                </button>
+                <div className="flex items-center bg-[#0A0A0A] rounded-r-md pr-1">
+                  <button onClick={() => moveStep(i, -1)} className="text-[10px] text-[#71717A] hover:text-white px-1">↑</button>
+                  <button onClick={() => moveStep(i, 1)} className="text-[10px] text-[#71717A] hover:text-white px-1">↓</button>
+                  <button onClick={() => removeStep(s.id)} data-testid={`tab-step-remove-${s.id}`} className="text-[10px] text-red-400 hover:bg-red-500/10 rounded px-1">×</button>
+                </div>
+              </div>
+            ))}
+            <button onClick={addStep} data-testid="tab-add-step"
+              className="text-xs px-3 py-1.5 rounded-md border border-dashed border-[#3F3F46] text-[#A1A1AA] hover:border-[#CCFF00] hover:text-white">
+              + Add step
+            </button>
+            <div className="mx-2 h-6 w-px bg-[#27272A]" />
+            {(funnel.variants || []).map((v) => (
+              <div key={v.id} className={`flex items-center gap-0.5 rounded-md ${surface === `variant:${v.id}` ? "ring-1 ring-[#F97316]" : ""}`}>
+                <button onClick={() => setSurface(`variant:${v.id}`)}
+                  data-testid={`tab-variant-${v.id}`}
+                  className={`text-xs px-3 py-1.5 rounded-l-md ${surface === `variant:${v.id}` ? "bg-[#141414] text-[#F97316] font-bold" : "bg-[#0A0A0A] text-[#F97316]/80 hover:text-[#F97316]"}`}>
+                  🅐/🅑 {v.name}
+                </button>
+                <button onClick={() => promoteVariant(v.id)} data-testid={`tab-variant-promote-${v.id}`}
+                  className="text-[10px] px-1.5 py-1.5 bg-[#0A0A0A] text-[#22C55E] hover:bg-[#22C55E]/10" title="Promote to main">✓</button>
+                <button onClick={() => removeVariant(v.id)} data-testid={`tab-variant-remove-${v.id}`}
+                  className="text-[10px] px-1.5 py-1.5 bg-[#0A0A0A] text-red-400 rounded-r-md hover:bg-red-500/10">×</button>
+              </div>
+            ))}
+            <button onClick={addVariant} data-testid="tab-add-variant"
+              className="text-xs px-3 py-1.5 rounded-md border border-dashed border-[#F97316]/40 text-[#F97316] hover:border-[#F97316] hover:bg-[#F97316]/5">
+              + A/B variant
+            </button>
+          </div>
+          {/* A/B variants analytics dashboard */}
+          {variantAnalytics && (variantAnalytics.variants || []).length ? (
+            <div className="surface rounded-lg p-4" data-testid="funnel-variants-analytics">
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-[#F97316] mb-3">
+                🅐/🅑 Variant performance
+                {variantAnalytics.winning_variant_id ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#22C55E]/15 text-[#22C55E] font-bold" data-testid="variant-winning-badge">
+                    ✓ Winner: {(variantAnalytics.variants.find((r) => r.id === variantAnalytics.winning_variant_id) || {}).name}
+                  </span>
+                ) : null}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {variantAnalytics.variants.map((r) => (
+                  <div key={r.id} className={`rounded-md p-3 border ${r.id === variantAnalytics.winning_variant_id ? "border-[#22C55E]" : "border-[#27272A]"} bg-[#0A0A0A]`}
+                    data-testid={`variant-metric-${r.id}`}>
+                    <div className="text-[10px] uppercase tracking-widest text-[#71717A]">{r.name} · w{r.weight}</div>
+                    <div className="text-2xl font-bold mt-1">{r.conversion_pct}%</div>
+                    <div className="text-[10px] text-[#71717A]">{r.views} views · {r.buy_now_clicks + r.optin_submits} conv.</div>
+                  </div>
+                ))}
+              </div>
+              {variantAnalytics.note ? <div className="text-[10px] text-[#71717A] mt-2">{variantAnalytics.note}</div> : null}
+            </div>
+          ) : null}
           {analytics ? (
             <div className="surface rounded-lg p-4" data-testid="funnel-analytics-panel">
               <div className="flex items-center justify-between mb-3">
@@ -380,7 +459,7 @@ export function FunnelEditor() {
               </div>
             </div>
           ) : null}
-          {funnel.blocks.map((b, idx) => (
+          {currentBlocks().map((b, idx) => (
             <div key={b.id} data-testid={`block-${b.id}`} className="surface rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
                 <div className="text-[10px] uppercase tracking-widest text-[#CCFF00]">{b.type}</div>
@@ -589,6 +668,32 @@ export function FunnelEditor() {
               {b.type === "divider" && (
                 <div className="text-[11px] text-[#71717A]" data-testid={`block-divider-hint-${b.id}`}>Uses the block accent colour above.</div>
               )}
+              {b.type === "footer" && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <Input value={b.props.brand || ""} onChange={(e) => updateBlock(b.id, { brand: e.target.value })}
+                    placeholder="Brand name" data-testid={`block-footer-brand-${b.id}`}
+                    className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <Input value={b.props.copyright_extra || ""} onChange={(e) => updateBlock(b.id, { copyright_extra: e.target.value })}
+                    placeholder="Copyright note (optional)" className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <textarea rows={2} value={b.props.address || ""}
+                    onChange={(e) => updateBlock(b.id, { address: e.target.value })}
+                    placeholder="Mailing address" data-testid={`block-footer-address-${b.id}`}
+                    className="md:col-span-2 w-full bg-[#0A0A0A] border border-[#27272A] rounded-md p-2 text-sm text-white" />
+                  <Input value={b.props.phone || ""} onChange={(e) => updateBlock(b.id, { phone: e.target.value })}
+                    placeholder="Phone" data-testid={`block-footer-phone-${b.id}`}
+                    className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <Input value={b.props.email || ""} onChange={(e) => updateBlock(b.id, { email: e.target.value })}
+                    placeholder="Contact email" data-testid={`block-footer-email-${b.id}`}
+                    className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <Input value={b.props.privacy_url || ""} onChange={(e) => updateBlock(b.id, { privacy_url: e.target.value })}
+                    placeholder="/privacy" data-testid={`block-footer-privacy-${b.id}`}
+                    className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <Input value={b.props.terms_url || ""} onChange={(e) => updateBlock(b.id, { terms_url: e.target.value })}
+                    placeholder="/terms" data-testid={`block-footer-terms-${b.id}`}
+                    className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                  <div className="md:col-span-2 text-[10px] text-[#71717A]">The public footer renders unsubscribe capture, contact details, and legal links.</div>
+                </div>
+              )}
               {b.type === "hero" && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   <Input value={b.props.eyebrow || ""} onChange={(e) => updateBlock(b.id, { eyebrow: e.target.value })} placeholder="Eyebrow" className="bg-[#0A0A0A] border-[#27272A] text-white" />
@@ -687,7 +792,7 @@ export function FunnelEditor() {
           <div className="surface rounded-lg p-4">
             <div className="text-xs uppercase tracking-widest text-[#71717A] mb-3">Add a block</div>
             {[
-              { label: "Layout", types: ["hero", "heading", "paragraph", "image", "video", "audio", "row", "spacer", "divider"] },
+              { label: "Layout", types: ["hero", "heading", "paragraph", "image", "video", "audio", "row", "spacer", "divider", "footer"] },
               { label: "Conversion", types: ["cta", "optin", "product", "order_bump", "upsell", "pricing_table", "countdown"] },
               { label: "Trust", types: ["testimonial", "features", "stats", "guarantee", "logo_bar", "faq"] },
               { label: "Rewards", types: ["coupon", "giftcard"] },

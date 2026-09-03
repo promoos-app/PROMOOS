@@ -220,24 +220,28 @@ def register(api, db, EMERGENT_LLM_KEY, now_iso, get_current_user, require_write
             except Exception as e:
                 raise HTTPException(502, f"AI copy failed: {e}")
         elif field in ("background", "image_bg"):
-            # Use Emergent Gemini nano-banana image generation
+            # Use Emergent Gemini nano-banana image generation via LlmChat multimodal
             try:
                 from emergentintegrations.llm.chat import LlmChat, UserMessage
-                from emergentintegrations.llm.googleai.image_generation import GeminiImageGeneration
             except Exception as e:
                 raise HTTPException(502, f"emergentintegrations not installed: {e}")
             desc = body.prompt or "abstract luxury gift-card background, soft gradient, premium, cinematic"
-            gen = GeminiImageGeneration(api_key=EMERGENT_LLM_KEY)
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=f"gc-img-{uuid.uuid4()}",
+                system_message="You generate premium gift-card background artwork.",
+            )
+            chat.with_model("gemini", "gemini-3.1-flash-image-preview").with_params(modalities=["image", "text"])
+            prompt_text = (
+                f"Gift card background art: {desc}. Widescreen 3:2 aspect, "
+                "no text, no letters, tasteful, cinematic, premium, high quality."
+            )
             try:
-                images = await gen.generate_images(
-                    prompt=f"Gift card background art: {desc}. Widescreen 3:2 aspect, no text, no letters, tasteful.",
-                    model="gemini-2.5-flash-image", number_of_images=1,
-                )
+                _text, images = await chat.send_message_multimodal_response(UserMessage(text=prompt_text))
                 if not images:
                     raise HTTPException(502, "No image returned")
-                img_bytes = images[0] if isinstance(images[0], bytes) else images[0].get("image_bytes") or images[0]
-                b64 = base64.b64encode(img_bytes).decode()
-                data_url = f"data:image/png;base64,{b64}"
+                img = images[0]
+                data_url = f"data:{img.get('mime_type', 'image/png')};base64,{img['data']}"
                 return {"field": field, "value": {"type": "image", "value": data_url}}
             except HTTPException:
                 raise
