@@ -1,3 +1,17 @@
+## Feb 2026 — Verified: Embed Snippet & Image Style Presets
+
+### Embed Snippet — verified end-to-end
+- Rendered the coupon `VIPELITJRIXE` on an external HTML page via `<script async src=".../api/embed/coupon.js" data-promoos-code="…"></script>`.
+- Browser test confirmed: card renders, headline/description/code visible, Copy button reactive, `/api/public/coupons/{code}` returns full brand + coupon payload.
+- No code changes required — endpoint at `server.py:834` (`GET /embed/coupon.js`) supports 5 variants (inline, popup, bar, wheel, wallet).
+
+### Gift Card AI Style Presets (`GiftCardStudio.js`)
+- Added 5 one-tap style chips under the Background section: **Champagne**, **Neon**, **Minimal**, **Botanical**, **Midnight**.
+- Each chip stores a curated prompt + accent color. Clicking calls `POST /api/giftcards/regenerate` with `field="image_bg"` and the preset's prompt, then swaps the card accent to the preset's palette.
+- No prompt writing required. Extended `regen()` signature to accept an optional `promptOverride` (kept fully backwards-compatible with the existing `AI regenerate` and `AI generate image` buttons).
+- data-testid: `gc-style-presets`, `preset-champagne`, `preset-neon`, `preset-minimal`, `preset-botanical`, `preset-midnight`.
+
+
 ## Feb 2026 — Hotfix: Gift Card AI Image (Cloudflare 502)
 - **Bug**: `/api/giftcards/regenerate` with `field: "image_bg"` returned Cloudflare 502 (invalid/incomplete upstream response). Local backend showed `HTTPException(502): emergentintegrations not installed: No module named 'emergentintegrations.llm.googleai'`.
 - **Root cause**: `routers/giftcards.py` imported the removed `GeminiImageGeneration` class + `gemini-2.5-flash-image` model. In the installed `emergentintegrations 0.2.0`, the `googleai` submodule does not exist.

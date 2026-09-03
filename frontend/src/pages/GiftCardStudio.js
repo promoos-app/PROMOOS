@@ -73,22 +73,37 @@ export default function GiftCardStudio() {
     });
   };
 
-  const regen = async (field) => {
-    setAiBusy(field);
+  const regen = async (field, promptOverride) => {
+    setAiBusy(promptOverride ? `preset:${promptOverride.key}` : field);
     try {
       const { data } = await api.post("/giftcards/regenerate", {
         field, template_id: selected.id,
         current_headline: design.headline, current_subline: design.subline,
         occasion: selected.category,
+        prompt: promptOverride ? promptOverride.prompt : undefined,
       });
       if (field === "background" || field === "image_bg") {
         setDesign((d) => ({ ...d, background: data.value }));
+        if (promptOverride?.accent) setDesign((d) => ({ ...d, accent: promptOverride.accent }));
       } else {
         setDesign((d) => ({ ...d, [field]: data.value }));
       }
-      toast.success(`AI regenerated ${field}`);
+      toast.success(promptOverride ? `${promptOverride.label} style applied` : `AI regenerated ${field}`);
     } catch (e) { toast.error(apiError(e)); } finally { setAiBusy(null); }
   };
+
+  const IMAGE_PRESETS = [
+    { key: "champagne", label: "Champagne", accent: "#E7CB8E",
+      prompt: "elegant champagne gold luxury gradient background, soft warm golden bokeh, silk texture, premium boutique, cinematic lighting, no text" },
+    { key: "neon", label: "Neon", accent: "#CCFF00",
+      prompt: "vibrant neon night background, electric magenta and cyan glow, glossy reflections, futuristic cyberpunk aesthetic, high contrast, no text" },
+    { key: "minimal", label: "Minimal", accent: "#111111",
+      prompt: "minimal off-white paper background, subtle warm grain, tasteful architectural shadow, editorial premium, matte finish, no text" },
+    { key: "botanical", label: "Botanical", accent: "#7C9A5F",
+      prompt: "soft botanical greenery watercolor background, sage and olive palette, hand-painted leaves at edges, airy natural light, no text" },
+    { key: "midnight", label: "Midnight", accent: "#8B5CF6",
+      prompt: "deep midnight blue background with starfield, aurora streaks in violet and teal, cinematic astro aesthetic, premium, no text" },
+  ];
 
   const uploadLogo = async (file) => {
     const fd = new FormData(); fd.append("file", file);
@@ -196,6 +211,26 @@ export default function GiftCardStudio() {
                 className="text-[10px] tracking-widest uppercase text-[#CCFF00] flex items-center gap-1 hover:opacity-80">
                 {aiBusy === "image_bg" ? <Loader2 className="w-3 h-3 spin" /> : <Sparkles className="w-3 h-3" />} AI generate image
               </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mb-2" data-testid="gc-style-presets">
+              {IMAGE_PRESETS.map((p) => {
+                const busy = aiBusy === `preset:${p.key}`;
+                const anyBusy = !!aiBusy;
+                return (
+                  <button
+                    key={p.key}
+                    onClick={() => regen("image_bg", p)}
+                    disabled={anyBusy}
+                    data-testid={`preset-${p.key}`}
+                    title={`One-tap ${p.label} style`}
+                    className="text-[10px] tracking-widest uppercase inline-flex items-center gap-1 px-2 py-1 rounded-full border border-[#27272A] hover:border-[#CCFF00] hover:text-[#CCFF00] transition-colors disabled:opacity-40"
+                  >
+                    <span className="w-2 h-2 rounded-full" style={{ background: p.accent }} />
+                    {busy ? <Loader2 className="w-3 h-3 spin" /> : null}
+                    {p.label}
+                  </button>
+                );
+              })}
             </div>
             <div className="flex items-center gap-2 mb-2">
               <Input type="color" value={design.background?.type === "solid" ? design.background.value : "#141414"}
