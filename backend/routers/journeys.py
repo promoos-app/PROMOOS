@@ -230,6 +230,79 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             {"_id": 0}).sort("started_at", -1).to_list(200)
         return runs
 
+    JOURNEY_TEMPLATES = [
+        {
+            "id": "welcome",
+            "name": "Welcome flow",
+            "description": "Greet new signups, wait a day, then send a 10% welcome coupon.",
+            "trigger": "signup",
+            "steps": [
+                {"type": "send_email",
+                 "subject": "Welcome to the family",
+                 "body": "Hey! Thanks for joining us. We built a little gift to say hi — arriving tomorrow."},
+                {"type": "wait", "hours": 24},
+                {"type": "send_coupon", "discount": 10,
+                 "headline": "10% off, on us", "type_coupon": "percentage",
+                 "description": "A tiny welcome gift to start your journey with us."},
+            ],
+        },
+        {
+            "id": "cart_abandonment",
+            "name": "Cart abandonment",
+            "description": "Nudge shoppers 4h after they leave, then rescue with a 15% code the next day.",
+            "trigger": "inactive_30d",
+            "steps": [
+                {"type": "wait", "hours": 4},
+                {"type": "send_email",
+                 "subject": "Still thinking it over?",
+                 "body": "We saved your favourites. Come back anytime — they'll be waiting."},
+                {"type": "wait", "hours": 20},
+                {"type": "send_coupon", "discount": 15,
+                 "headline": "15% off — come finish your order", "type_coupon": "percentage",
+                 "description": "This one's just for you. Good for the next 48 hours."},
+            ],
+        },
+        {
+            "id": "birthday",
+            "name": "Birthday reward",
+            "description": "Wish customers a happy birthday and drop a 20% code they can spend all week.",
+            "trigger": "birthday",
+            "steps": [
+                {"type": "send_email",
+                 "subject": "Happy birthday from us",
+                 "body": "Wishing you the best year yet. We put a little something aside for you."},
+                {"type": "send_coupon", "discount": 20,
+                 "headline": "Happy birthday — 20% off, all week", "type_coupon": "percentage",
+                 "description": "Our birthday gift to you. Good for the next seven days."},
+            ],
+        },
+    ]
+
+    @api.get("/journey-templates")
+    async def list_journey_templates(user: dict = Depends(get_current_user)):
+        """Ready-to-run automation templates any workspace can install with one click."""
+        return {"templates": JOURNEY_TEMPLATES}
+
+    @api.post("/journey-templates/{tid}/apply")
+    async def apply_journey_template(tid: str, user: dict = Depends(get_current_user)):
+        """Copy a template into the merchant's workspace as an enabled journey."""
+        require_writer(user)
+        tpl = next((t for t in JOURNEY_TEMPLATES if t["id"] == tid), None)
+        if not tpl:
+            raise HTTPException(404, f"Template '{tid}' not found")
+        doc = {
+            "id": str(uuid.uuid4()), "workspace_id": user["workspace_id"],
+            "name": tpl["name"], "trigger": tpl["trigger"], "steps": tpl["steps"],
+            "enabled": True,
+            "stats": {"entered": 0, "completed": 0, "conversions": 0},
+            "created_at": now_iso(),
+            "source": f"template:{tid}",
+        }
+        await db.journeys.insert_one({**doc})
+        return doc
+
+
+
     return {
         "fire_trigger": _fire_trigger,
         "enroll": _enroll_customer_in_journey,

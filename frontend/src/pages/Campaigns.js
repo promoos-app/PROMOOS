@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Plus, Megaphone, Trash2, Mail, Timer, Ticket, MessageSquare, UserPlus, Activity } from "lucide-react";
+import { Loader2, Plus, Megaphone, Trash2, Mail, Timer, Ticket, MessageSquare, UserPlus, Activity, Sparkles } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
@@ -113,9 +113,20 @@ export default function Campaigns() {
   const [runs, setRuns] = useState({});
   const [enrolling, setEnrolling] = useState(null);
   const [enrollFor, setEnrollFor] = useState({ customer: "", email: "" });
+  const [templates, setTemplates] = useState([]);
+  const [applyingTpl, setApplyingTpl] = useState(null);
 
   const load = () => api.get("/journeys").then((r) => setRows(r.data)).catch((e) => toast.error(apiError(e)));
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); api.get("/journey-templates").then((r) => setTemplates(r.data.templates || [])).catch(() => {}); }, []);
+
+  const applyTemplate = async (tid) => {
+    setApplyingTpl(tid);
+    try {
+      await api.post(`/journey-templates/${tid}/apply`);
+      toast.success("Template installed and enabled");
+      load();
+    } catch (e) { toast.error(apiError(e)); } finally { setApplyingTpl(null); }
+  };
 
   // Auto-refresh runs feed every 8s while an enroll panel is open
   useEffect(() => {
@@ -166,6 +177,33 @@ export default function Campaigns() {
         </div>
         <NewJourneyDialog onCreated={load} />
       </div>
+
+      {templates.length > 0 && (
+        <div className="surface rounded-lg p-4 mb-6" data-testid="journey-templates-strip">
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles className="w-4 h-4 text-[#CCFF00]" />
+            <div className="text-xs uppercase tracking-widest text-[#71717A]">Ready-to-run templates</div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {templates.map((t) => (
+              <div key={t.id} className="rounded-md p-4 bg-[#0A0A0A] border border-[#27272A] hover:border-[#CCFF00] transition-colors" data-testid={`journey-template-${t.id}`}>
+                <div className="font-display font-bold text-sm mb-1">{t.name}</div>
+                <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Trigger · {t.trigger.replace("_", " ")}</div>
+                <div className="text-xs text-[#A1A1AA] mb-3">{t.description}</div>
+                <div className="text-[10px] text-[#71717A] mb-3">{(t.steps || []).length} step{(t.steps || []).length === 1 ? "" : "s"}</div>
+                <Button
+                  data-testid={`journey-template-apply-${t.id}`}
+                  onClick={() => applyTemplate(t.id)}
+                  disabled={applyingTpl === t.id}
+                  className="btn-primary rounded-md gap-1 h-8 text-xs w-full"
+                >
+                  {applyingTpl === t.id && <Loader2 className="w-3 h-3 spin" />} Install
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {rows.length === 0 ? (
         <div className="surface rounded-lg p-12 text-center">
           <Megaphone className="w-8 h-8 text-[#CCFF00] mx-auto mb-3" />

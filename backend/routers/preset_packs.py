@@ -77,6 +77,49 @@ def register(api, db, now_iso, get_current_user, require_superadmin):
             raise HTTPException(404, "Preset pack not found")
         return {"ok": True}
 
+    @api.post("/admin/preset-packs/import")
+    async def import_pack(body: dict, user: dict = Depends(get_current_user)):
+        """Bulk-import a preset pack from a raw JSON blob (partner/agency handoff)."""
+        require_superadmin(user)
+        name = (body.get("name") or "").strip()
+        scope = body.get("scope", "both")
+        if not name:
+            raise HTTPException(400, "JSON must include a 'name'")
+        if scope not in ("coupon", "gift_card", "both"):
+            raise HTTPException(400, "'scope' must be coupon | gift_card | both")
+        raw_presets = body.get("presets") or []
+        if not isinstance(raw_presets, list) or not raw_presets:
+            raise HTTPException(400, "JSON must include a non-empty 'presets' array")
+        cleaned = []
+        seen_keys = set()
+        for i, p in enumerate(raw_presets):
+            if not isinstance(p, dict):
+                raise HTTPException(400, f"preset[{i}] must be an object")
+            key = str(p.get("key") or "").strip().lower()
+            label = str(p.get("label") or "").strip()
+            accent = str(p.get("accent") or "#CCFF00").strip()
+            prompt = str(p.get("prompt") or "").strip()
+            if not key or not label or not prompt:
+                raise HTTPException(400, f"preset[{i}] needs key, label, and prompt")
+            if key in seen_keys:
+                raise HTTPException(400, f"duplicate preset key '{key}'")
+            seen_keys.add(key)
+            cleaned.append({"key": key, "label": label, "accent": accent, "prompt": prompt})
+        doc = {
+            "id": str(uuid.uuid4()),
+            "name": name[:80],
+            "scope": scope,
+            "presets": cleaned,
+            "is_public": bool(body.get("is_public", True)),
+            "created_by": user["id"],
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "source": "import",
+        }
+        await db.preset_packs.insert_one({**doc})
+        return doc
+
+
     @api.get("/preset-packs")
     async def public_packs(scope: Optional[str] = None,
                            user: dict = Depends(get_current_user)):

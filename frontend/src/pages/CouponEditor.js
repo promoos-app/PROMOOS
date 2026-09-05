@@ -463,11 +463,57 @@ export default function CouponEditor() {
             </div>
             {/* Background graphic URL — a photo/pattern/gradient painted behind the coupon card. */}
             <div className="pt-2 border-t border-[#27272A]">
-              <Label className="text-[10px] text-[#71717A] uppercase tracking-widest">Background graphic URL</Label>
+              <Label className="text-[10px] text-[#71717A] uppercase tracking-widest">Background graphic</Label>
+              <div
+                data-testid="coupon-bg-dropzone"
+                onDragOver={(e) => { e.preventDefault(); e.currentTarget.dataset.hover = "1"; }}
+                onDragLeave={(e) => { delete e.currentTarget.dataset.hover; }}
+                onDrop={async (e) => {
+                  e.preventDefault();
+                  delete e.currentTarget.dataset.hover;
+                  const file = e.dataTransfer?.files?.[0];
+                  if (!file || !file.type.startsWith("image/")) { toast.error("Drop an image file"); return; }
+                  const fd = new FormData(); fd.append("file", file);
+                  try {
+                    const { data } = await api.post("/uploads", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                    setDesign("bg_image", `${process.env.REACT_APP_BACKEND_URL}${data.url}`);
+                    toast.success("Background uploaded");
+                  } catch (er) { toast.error(apiError(er)); }
+                }}
+                className="mt-1 border-2 border-dashed border-[#27272A] hover:border-[#CCFF00] rounded-md p-4 text-center text-xs text-[#71717A] transition-colors data-[hover='1']:border-[#CCFF00] data-[hover='1']:bg-[#CCFF00]/5"
+              >
+                {form.design?.bg_image ? (
+                  <div className="flex items-center gap-3">
+                    <div className="w-20 h-14 rounded overflow-hidden border border-[#27272A]"
+                      style={{ backgroundImage: `url(${form.design.bg_image})`, backgroundSize: "cover", backgroundPosition: "center" }} />
+                    <div className="flex-1 text-left">
+                      <div className="text-white text-[11px] truncate">{form.design.bg_image}</div>
+                      <div className="text-[10px] text-[#71717A]">Drop a new image to replace, or clear below</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="text-white text-sm mb-1">Drop your hero image here</div>
+                    <div>or paste a URL below · JPG/PNG/WebP/SVG · max 10MB</div>
+                    <label className="btn-ghost inline-flex items-center gap-2 cursor-pointer rounded-md px-3 py-1.5 text-[10px] mt-2 uppercase tracking-widest" data-testid="coupon-bg-upload-btn">
+                      Choose file
+                      <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                        const f = e.target.files?.[0]; if (!f) return;
+                        const fd = new FormData(); fd.append("file", f);
+                        try {
+                          const { data } = await api.post("/uploads", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                          setDesign("bg_image", `${process.env.REACT_APP_BACKEND_URL}${data.url}`);
+                          toast.success("Background uploaded");
+                        } catch (er) { toast.error(apiError(er)); }
+                      }} />
+                    </label>
+                  </div>
+                )}
+              </div>
               <Input value={form.design?.bg_image || ""} onChange={(e) => setDesign("bg_image", e.target.value)}
                 placeholder="https://images.unsplash.com/photo-… or your own image URL"
                 data-testid="coupon-design-bg_image"
-                className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white text-xs font-mono" />
+                className="mt-2 bg-[#0A0A0A] border-[#27272A] text-white text-xs font-mono" />
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
                 {[
                   { name: "Confetti", url: "https://images.unsplash.com/photo-1513151233558-d860c5398176?auto=format&fit=crop&w=1200&q=60" },

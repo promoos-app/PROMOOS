@@ -76,6 +76,9 @@ function PresetPacksManager() {
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ name: "", scope: "both", is_public: true, presets: [] });
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
   const emptyPreset = () => ({ key: "", label: "", accent: "#CCFF00", prompt: "" });
 
   const load = () => {
@@ -119,6 +122,28 @@ function PresetPacksManager() {
     const arr = [...f.presets]; arr[i] = { ...arr[i], [k]: v }; return { ...f, presets: arr };
   });
 
+  const doImport = async () => {
+    let parsed;
+    try { parsed = JSON.parse(importText); }
+    catch (e) { toast.error("Invalid JSON — check your syntax"); return; }
+    setImportBusy(true);
+    try {
+      await api.post("/admin/preset-packs/import", parsed);
+      toast.success("Pack imported");
+      setImportOpen(false); load();
+    } catch (e) { toast.error(apiError(e)); } finally { setImportBusy(false); }
+  };
+
+  const sampleJson = JSON.stringify({
+    name: "Acme Holiday Kit",
+    scope: "both",
+    is_public: true,
+    presets: [
+      { key: "cranberry", label: "Cranberry", accent: "#8B1E1E", prompt: "warm cranberry red holiday premium banner, subtle snowflakes, cinematic" },
+      { key: "pine", label: "Pine", accent: "#2F5D3A", prompt: "deep pine forest holiday banner, snow-dusted needles, cinematic lighting" },
+    ],
+  }, null, 2);
+
   return (
     <div className="surface rounded-lg p-5" data-testid="admin-preset-packs">
       <div className="flex items-center justify-between mb-4">
@@ -128,6 +153,10 @@ function PresetPacksManager() {
         </div>
         <Button data-testid="preset-pack-new-btn" onClick={openNew} className="btn-primary rounded-md gap-2">
           <Plus className="w-4 h-4" /> New pack
+        </Button>
+        <Button data-testid="preset-pack-import-btn" onClick={() => { setImportText(""); setImportOpen(true); }}
+          className="ml-2 rounded-md gap-2 border border-[#27272A] text-[#CCFF00] hover:border-[#CCFF00] bg-transparent">
+          Import JSON
         </Button>
       </div>
 
@@ -210,6 +239,39 @@ function PresetPacksManager() {
           <DialogFooter>
             <Button onClick={save} disabled={busy} data-testid="preset-pack-save" className="btn-primary rounded-md gap-2">
               {busy && <Loader2 className="w-4 h-4 spin" />} {editing ? "Save" : "Publish pack"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-2xl" data-testid="preset-pack-import-dialog">
+          <DialogHeader><DialogTitle>Import preset pack from JSON</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-[#A1A1AA]">
+              Paste a JSON blob shared by a partner or agency. Required keys:
+              <code className="mx-1 text-[#CCFF00]">name</code>,
+              <code className="mx-1 text-[#CCFF00]">scope</code>,
+              <code className="mx-1 text-[#CCFF00]">presets[]</code>.
+              Each preset needs <code className="text-[#CCFF00]">key</code>, <code className="text-[#CCFF00]">label</code>, and <code className="text-[#CCFF00]">prompt</code>.
+            </p>
+            <textarea
+              data-testid="preset-pack-import-textarea"
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder={sampleJson}
+              className="w-full h-64 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white text-xs font-mono p-3"
+            />
+            <button
+              type="button"
+              onClick={() => setImportText(sampleJson)}
+              className="text-[10px] uppercase tracking-widest text-[#CCFF00] hover:opacity-80"
+              data-testid="preset-pack-import-sample"
+            >Fill with sample</button>
+          </div>
+          <DialogFooter>
+            <Button onClick={doImport} disabled={importBusy} data-testid="preset-pack-import-submit" className="btn-primary rounded-md gap-2">
+              {importBusy && <Loader2 className="w-4 h-4 spin" />} Import pack
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1020,7 +1020,7 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
     async def track_funnel_event(slug: str, body: FunnelEvent, request: Request = None):
         """Public analytics event ingester — fired from PublicFunnel client-side."""
         ev = (body.event or "").strip().lower()
-        if ev not in ("view", "buy_now_click", "coupon_copy", "cta_click", "optin_submit"):
+        if ev not in ("view", "buy_now_click", "coupon_copy", "cta_click", "optin_submit", "hyperlink_click"):
             raise HTTPException(400, "Unknown event")
         f = await db.funnels.find_one({"slug": slug, "is_deleted": {"$ne": True}},
                                         {"id": 1, "workspace_id": 1})
@@ -1130,3 +1130,47 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
             "buy_now_conversion_pct": conv,
             "optin_conversion_pct": optin_conv,
         }
+
+    @api.get("/funnels/{fid}/hyperlink-analytics")
+    async def hyperlink_analytics(fid: str, user: dict = Depends(get_current_user)):
+        """Per-block hyperlink click-through table for a funnel."""
+        f = await db.funnels.find_one(
+            {"id": fid, "workspace_id": user["workspace_id"], "is_deleted": {"$ne": True}},
+            {"_id": 0, "id": 1, "slug": 1, "views": 1, "blocks": 1, "steps": 1, "variants": 1})
+        if not f: raise HTTPException(404, "Not found")
+        # Build a lookup: block_id -> {type, link_url}
+        block_map: dict = {}
+        for b in (f.get("blocks") or []):
+            block_map[b.get("id")] = {"type": b.get("type"),
+                                      "link_url": (b.get("props") or {}).get("link_url", "")}
+        for s in (f.get("steps") or []):
+            for b in (s.get("blocks") or []):
+                block_map[b.get("id")] = {"type": b.get("type"),
+                                          "link_url": (b.get("props") or {}).get("link_url", "")}
+        for v in (f.get("variants") or []):
+            for b in (v.get("blocks") or []):
+                block_map[b.get("id")] = {"type": b.get("type"),
+                                          "link_url": (b.get("props") or {}).get("link_url", "")}
+        pipeline = [
+            {"$match": {"funnel_id": fid, "workspace_id": user["workspace_id"],
+                        "event": "hyperlink_click"}},
+            {"$group": {"_id": "$block_id", "count": {"$sum": 1},
+                        "last_at": {"$max": "$created_at"},
+                        "sample_href": {"$last": "$meta.href"}}},
+            {"$sort": {"count": -1}},
+        ]
+        rows = []
+        views = int(f.get("views") or 0)
+        async for r in db.funnel_events.aggregate(pipeline):
+            info = block_map.get(r["_id"]) or {"type": "unknown", "link_url": ""}
+            ctr = round((r["count"] / views) * 100, 2) if views else 0.0
+            rows.append({
+                "block_id": r["_id"],
+                "block_type": info["type"],
+                "href": info["link_url"] or r.get("sample_href", ""),
+                "clicks": r["count"],
+                "ctr_pct": ctr,
+                "last_at": r.get("last_at"),
+            })
+        total_clicks = sum(r["clicks"] for r in rows)
+        return {"funnel_id": fid, "views": views, "total_clicks": total_clicks, "rows": rows}

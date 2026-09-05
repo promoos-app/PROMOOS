@@ -1,3 +1,32 @@
+## Feb 2026 — Uploader + Import + Link Analytics + Automation Templates
+
+### 📤 Coupon Cover Uploader (`CouponEditor.js`)
+- Drag-and-drop zone on the coupon design panel: drop any image → uploads to `/api/uploads` (Emergent object storage) → auto-sets `design.bg_image`.
+- Fallback file picker button and existing URL input both preserved. Shows uploaded thumbnail + filename when a background is active. Data-testids: `coupon-bg-dropzone`, `coupon-bg-upload-btn`.
+
+### 📥 Preset Pack Import (Admin)
+- New endpoint `POST /api/admin/preset-packs/import` — parses a JSON blob, validates every preset has `key/label/prompt`, rejects duplicates, tags the record with `source: "import"`.
+- Admin UI: new **Import JSON** button next to *New pack* opens a modal with a monospace textarea, a "Fill with sample" helper, and validation surfaced from the backend. Data-testids: `preset-pack-import-btn`, `preset-pack-import-textarea`, `preset-pack-import-submit`.
+- Verified: valid payload returned `source: import`; invalid payload (missing prompt) returned HTTP 400 with the exact field error.
+
+### 🔗 Hyperlink Analytics (Funnel editor)
+- New endpoint `GET /api/funnels/{fid}/hyperlink-analytics` — aggregates `hyperlink_click` events grouped by `block_id`, joined with each block's `link_url` and `type`, sorted by clicks desc. Returns `{views, total_clicks, rows[]}` with per-row CTR%.
+- Whitelisted `hyperlink_click` in `POST /public/f/{slug}/track` so the public renderer's clicks actually get recorded.
+- Funnel editor renders a per-block table under storefront analytics (Block · Destination · Clicks · CTR). Data-testids: `hyperlink-analytics-panel`, `hyperlink-analytics-totals`, `hyperlink-row-{block_id}`.
+- Verified: 3 tracked clicks on `b1` → aggregation shows 3 clicks, 300% CTR (1 view baseline).
+
+### ⚡ Automation Templates (Campaigns page)
+- New endpoints in `routers/journeys.py`:
+  - `GET /api/journey-templates` — returns 3 built-in packs.
+  - `POST /api/journey-templates/{tid}/apply` — clones the template into the workspace as an enabled journey, tagged `source: template:{tid}`.
+- Templates shipped:
+  1. **Welcome flow** (`signup`): email → wait 24h → 10% coupon.
+  2. **Cart abandonment** (`inactive_30d`): wait 4h → email → wait 20h → 15% coupon.
+  3. **Birthday reward** (`birthday`): email → 20% coupon.
+- Campaigns page hero strip renders the 3 templates with a one-click **Install** button per card. Data-testids: `journey-templates-strip`, `journey-template-{id}`, `journey-template-apply-{id}`.
+- Verified: template list returned all 3; applying "welcome" created a live journey.
+
+
 ## Feb 2026 — Wave 3: Router Split + Marketplace + Hyperlinks
 
 ### 🧹 Router Split Wave 3 — `server.py` 2589 → 2100 lines (−489)

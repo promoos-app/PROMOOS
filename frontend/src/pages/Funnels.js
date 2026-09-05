@@ -157,6 +157,7 @@ export function FunnelEditor() {
   const [reviews, setReviews] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [variantAnalytics, setVariantAnalytics] = useState(null);
+  const [linkAnalytics, setLinkAnalytics] = useState(null);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [domain, setDomain] = useState("");
@@ -172,6 +173,7 @@ export function FunnelEditor() {
     api.get("/reviews?approved=true").then((r) => setReviews(r.data)).catch(() => setReviews([]));
     api.get(`/funnels/${id}/analytics`).then((r) => setAnalytics(r.data)).catch(() => {});
     api.get(`/funnels/${id}/variants-analytics`).then((r) => setVariantAnalytics(r.data)).catch(() => {});
+    api.get(`/funnels/${id}/hyperlink-analytics`).then((r) => setLinkAnalytics(r.data)).catch(() => {});
   }, [id]);
 
   if (!funnel) return <div className="text-[#71717A]">Loading…</div>;
@@ -457,6 +459,44 @@ export function FunnelEditor() {
                   <div className="text-2xl font-bold mt-1">{analytics.buy_now_conversion_pct}%</div>
                 </div>
               </div>
+            </div>
+          ) : null}
+          {linkAnalytics && (linkAnalytics.rows || []).length > 0 ? (
+            <div className="surface rounded-lg p-4" data-testid="hyperlink-analytics-panel">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-[#CCFF00]">
+                  <Link2 className="w-3.5 h-3.5" /> Hyperlink clicks · per block
+                </div>
+                <div className="text-[10px] text-[#71717A]" data-testid="hyperlink-analytics-totals">
+                  {linkAnalytics.total_clicks} clicks · {linkAnalytics.views} views
+                </div>
+              </div>
+              <table className="w-full text-xs">
+                <thead className="text-[10px] uppercase tracking-widest text-[#71717A]">
+                  <tr>
+                    <th className="text-left py-2">Block</th>
+                    <th className="text-left py-2">Destination</th>
+                    <th className="text-right py-2">Clicks</th>
+                    <th className="text-right py-2">CTR</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {linkAnalytics.rows.map((r) => (
+                    <tr key={r.block_id} className="border-t border-[#27272A]" data-testid={`hyperlink-row-${r.block_id}`}>
+                      <td className="py-2">
+                        <span className="text-[10px] uppercase text-[#CCFF00] mr-2">{r.block_type}</span>
+                        <span className="font-mono text-[10px] text-[#71717A]">{r.block_id}</span>
+                      </td>
+                      <td className="py-2">
+                        <a href={r.href} target="_blank" rel="noopener noreferrer"
+                          className="text-[#CCFF00] hover:underline break-all">{r.href || "—"}</a>
+                      </td>
+                      <td className="py-2 text-right font-bold">{r.clicks}</td>
+                      <td className="py-2 text-right">{r.ctr_pct}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : null}
           {currentBlocks().map((b, idx) => (
