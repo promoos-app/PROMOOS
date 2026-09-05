@@ -285,16 +285,25 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
         Union of:
         - Built-in templates (welcome / cart abandonment / birthday)
         - Templates saved by this workspace via the Journey Template Studio
+        - Public templates promoted by superadmin (Template Marketplace)
         """
-        custom = await db.journey_templates.find(
+        own = await db.journey_templates.find(
             {"workspace_id": user["workspace_id"]},
             {"_id": 0}).sort("created_at", -1).to_list(100)
-        # Normalize custom into the same shape as builtin
-        custom_shaped = [{
+        public = await db.journey_templates.find(
+            {"is_public": True, "workspace_id": {"$ne": user["workspace_id"]}},
+            {"_id": 0}).sort("published_at", -1).to_list(100)
+        # Normalize into the same shape as builtin
+        own_shaped = [{
             "id": c["id"], "name": c["name"], "description": c.get("description", ""),
             "trigger": c["trigger"], "steps": c["steps"], "source": "custom",
-        } for c in custom]
-        return {"templates": custom_shaped + JOURNEY_TEMPLATES}
+            "is_public": bool(c.get("is_public")),
+        } for c in own]
+        public_shaped = [{
+            "id": c["id"], "name": c["name"], "description": c.get("description", ""),
+            "trigger": c["trigger"], "steps": c["steps"], "source": "marketplace",
+        } for c in public]
+        return {"templates": own_shaped + public_shaped + JOURNEY_TEMPLATES}
 
     class SaveTemplateIn(BaseModel):
         journey_id: str
@@ -321,9 +330,32 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             "source_journey_id": body.journey_id,
             "created_by": user["id"],
             "created_at": now_iso(),
+            "is_public": False,  # merchant-scoped by default; superadmin can promote
         }
         await db.journey_templates.insert_one({**doc})
         return doc
+
+    @api.post("/admin/journey-templates/{tid}/publish")
+    async def publish_custom_template(tid: str, user: dict = Depends(get_current_user)):
+        """Template Marketplace — superadmin promotes a workspace-scoped template to the global catalog."""
+        if user.get("role") != "superadmin":
+            raise HTTPException(403, "Superadmin only")
+        r = await db.journey_templates.update_one(
+            {"id": tid}, {"$set": {"is_public": True, "published_at": now_iso(),
+                                     "published_by": user["id"]}})
+        if r.matched_count == 0:
+            raise HTTPException(404, "Custom template not found")
+        return {"ok": True}
+
+    @api.post("/admin/journey-templates/{tid}/unpublish")
+    async def unpublish_custom_template(tid: str, user: dict = Depends(get_current_user)):
+        if user.get("role") != "superadmin":
+            raise HTTPException(403, "Superadmin only")
+        r = await db.journey_templates.update_one(
+            {"id": tid}, {"$set": {"is_public": False}})
+        if r.matched_count == 0:
+            raise HTTPException(404, "Custom template not found")
+        return {"ok": True}
 
     @api.delete("/journey-templates/custom/{tid}")
     async def delete_custom_template(tid: str, user: dict = Depends(get_current_user)):
@@ -342,7 +374,10 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
         tpl = next((t for t in JOURNEY_TEMPLATES if t["id"] == tid), None)
         if tpl is None:
             custom = await db.journey_templates.find_one(
-                {"id": tid, "workspace_id": user["workspace_id"]}, {"_id": 0})
+                {"id": tid, "$or": [
+                    {"workspace_id": user["workspace_id"]},
+                    {"is_public": True},
+                ]}, {"_id": 0})
             if custom:
                 tpl = custom
         if not tpl:

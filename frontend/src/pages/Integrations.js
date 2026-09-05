@@ -58,6 +58,15 @@ function OAuthConnector({ provider, label, icon, hint, tokens, providers, onChan
       setPublishOpen(false); setPostContent(""); setPostImage("");
     } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
   };
+  const retest = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/oauth/${provider}/retest`);
+      if (data?.health?.ok) toast.success(`${label} is healthy — ${data.health.account || "connected"}`);
+      else toast.warning(`${label} failed: ${data?.health?.error || "unknown"}`);
+      onChange?.();
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+  };
 
   return (
     <div className="surface rounded-lg p-5" data-testid={`connector-${provider}`}>
@@ -124,6 +133,10 @@ function OAuthConnector({ provider, label, icon, hint, tokens, providers, onChan
                 </DialogContent>
               </Dialog>
               )}
+              <Button data-testid={`retest-${provider}`} onClick={retest} disabled={busy}
+                className="btn-ghost rounded-md text-xs gap-1" title="Re-run the health probe">
+                {busy ? <Loader2 className="w-3 h-3 spin" /> : <RefreshCw className="w-3 h-3" />} Retest
+              </Button>
               <Button data-testid={`disconnect-${provider}`} onClick={disconnect} className="btn-ghost rounded-md text-xs gap-1">
                 <Trash2 className="w-3 h-3" /> Disconnect
               </Button>

@@ -6,7 +6,7 @@ import { STATE_STYLES, TYPE_LABELS, discountText } from "@/lib/couponUtils";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, MoreHorizontal, Ticket, Share2, Download, Copy, Sparkles, ImageIcon, Loader2 } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Ticket, Share2, Download, Copy, Sparkles, ImageIcon, Loader2, Upload } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
@@ -121,9 +121,30 @@ export default function Coupons() {
           <h1 className="font-display font-bold text-3xl tracking-tight">Coupons</h1>
           <p className="text-sm text-[#A1A1AA] mt-1">Create, manage and publish your offers.</p>
         </div>
-        <Button data-testid="new-coupon-btn" onClick={() => navigate("/coupons/new")} className="btn-primary gap-2 rounded-md">
-          <Plus className="w-4 h-4" /> New Coupon
-        </Button>
+        <div className="flex items-center gap-2">
+          <label className="btn-ghost rounded-md cursor-pointer gap-2 inline-flex items-center px-3 h-9 text-sm border border-[#27272A] hover:border-[#CCFF00]" data-testid="import-csv-btn"
+            title="Bulk-create coupons from a CSV">
+            <Upload className="w-4 h-4" /> Import CSV
+            <input type="file" accept=".csv" className="hidden" data-testid="import-csv-input"
+              onChange={async (e) => {
+                const f = e.target.files?.[0]; if (!f) return;
+                const fd = new FormData(); fd.append("file", f);
+                try {
+                  const { data } = await api.post("/coupons/import-csv", fd, { headers: { "Content-Type": "multipart/form-data" } });
+                  if (data.errors?.length) {
+                    toast.warning(`Imported ${data.created} · ${data.errors.length} row error(s)`);
+                  } else {
+                    toast.success(`Imported ${data.created} coupon${data.created === 1 ? "" : "s"}`);
+                  }
+                  qc.invalidateQueries({ queryKey: ["coupons"] });
+                } catch (er) { toast.error(apiError(er)); }
+                finally { e.target.value = ""; }
+              }} />
+          </label>
+          <Button data-testid="new-coupon-btn" onClick={() => navigate("/coupons/new")} className="btn-primary gap-2 rounded-md">
+            <Plus className="w-4 h-4" /> New Coupon
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-4">

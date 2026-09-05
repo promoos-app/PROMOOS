@@ -5,7 +5,7 @@ import os
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
@@ -341,6 +341,63 @@ async def create_coupon(body: CouponIn, user: dict = Depends(get_current_user)):
     }
     await db.coupons.insert_one(doc)
     return coupon_public(doc)
+
+
+@api.post("/coupons/import-csv")
+async def import_coupons_csv(file: UploadFile = File(...),
+                              user: dict = Depends(get_current_user)):
+    """Bulk-create coupons from a CSV.
+
+    Accepted columns (header row required; extras ignored):
+        name*, code, type, discount_value*, headline, description, terms, cta, state
+    """
+    require_writer(user)
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(400, "Upload a .csv file")
+    raw = (await file.read()).decode("utf-8-sig", errors="replace")
+    import csv as _csv
+    from io import StringIO
+    reader = _csv.DictReader(StringIO(raw))
+    created, errors = [], []
+    for i, row in enumerate(reader, start=2):  # start=2 → line 1 is the header
+        try:
+            name = (row.get("name") or "").strip()
+            if not name:
+                raise ValueError("name required")
+            disc = float(row.get("discount_value") or 0)
+            code = (row.get("code") or rand_code()).strip().upper()
+            ctype = (row.get("type") or "percentage").strip()
+            if ctype not in ("percentage", "fixed_amount", "bogo", "free_shipping", "tiered"):
+                ctype = "percentage"
+            state = (row.get("state") or "draft").strip()
+            if state not in ("draft", "scheduled", "active", "paused", "expired", "archived"):
+                state = "draft"
+            cid = str(uuid.uuid4())
+            doc = {
+                "id": cid, "workspace_id": user["workspace_id"],
+                "name": name[:120], "type": ctype, "discount_value": disc,
+                "code": code, "codes": [],
+                "headline": (row.get("headline") or "").strip()[:140],
+                "description": (row.get("description") or "").strip()[:400],
+                "terms": (row.get("terms") or "").strip()[:400],
+                "cta": (row.get("cta") or "Claim Offer").strip()[:60],
+                "state": state,
+                "rules": {"min_cart": 0, "scope": "all", "scope_value": "",
+                          "usage_limit": 0, "per_customer_limit": 1, "stackable": False,
+                          "start_date": None, "end_date": None,
+                          "referral_enabled": False, "referral_credit_pct": 10},
+                "image_url": "", "design": {},
+                "payment_link": "", "qr_code": gen_qr(code),
+                "stats": {"impressions": 0, "clicks": 0, "redemptions": 0, "revenue": 0.0},
+                "created_at": now_iso(), "source": "csv_import",
+            }
+            await db.coupons.insert_one(doc)
+            created.append({"code": code, "name": name})
+        except Exception as e:
+            errors.append({"row": i, "error": str(e)[:120]})
+    return {"created": len(created), "errors": errors,
+            "sample": created[:5]}
+
 
 
 @api.get("/coupons/{cid}")
@@ -1964,7 +2021,8 @@ from routers.reviews import register as register_reviews
 extras_ctx = register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso,
                           get_current_user, require_writer, _admin_log)
 register_giftcards(api, db, EMERGENT_LLM_KEY, now_iso, get_current_user, require_writer)
-register_oauth(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
+register_oauth_ctx = register_oauth(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
+_rotation_nudge_worker = register_oauth_ctx.get("rotation_nudge_worker") if isinstance(register_oauth_ctx, dict) else None
 register_funnels(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
 register_qr(api, db, now_iso, get_current_user, require_writer)
 register_admin(api, db, now_iso, get_current_user, require_superadmin, hash_password, _admin_log)
@@ -2139,6 +2197,9 @@ async def startup():
             pass
         await seed()
         asyncio.create_task(journey_worker())
+        # Rotation-nudge worker — daily loop that emails workspace owners when an OAuth token turns 55 days old.
+        if _rotation_nudge_worker:
+            asyncio.create_task(_rotation_nudge_worker())
         # Sequence delivery worker — polls scheduled emails every minute and sends via Resend.
         try:
             seq_loop = getattr(getattr(api, "state", None), "sequence_delivery_loop", None)

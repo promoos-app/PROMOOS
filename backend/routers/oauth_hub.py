@@ -335,6 +335,32 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
             {"$set": {"revoked": True, "revoked_at": now_iso()}})
         return {"ok": True}
 
+
+    @api.post("/oauth/{provider}/retest")
+    async def retest_connection(provider: str, user: dict = Depends(get_current_user)):
+        """Re-run the live health probe against the currently-stored token."""
+        require_writer(user)
+        tok = await db.oauth_tokens.find_one(
+            {"provider": provider, "workspace_id": user["workspace_id"], "revoked": {"$ne": True}})
+        if not tok:
+            raise HTTPException(404, f"{provider} not connected")
+        token = decrypt_str(tok.get("access_token", ""))
+        health = _health_check(provider, token)
+        metadata = tok.get("metadata") or {}
+        if health.get("account"):
+            metadata["account_name"] = health["account"]
+        if health.get("error"):
+            metadata["last_health_error"] = health["error"]
+        else:
+            metadata.pop("last_health_error", None)
+        await db.oauth_tokens.update_one(
+            {"_id": tok["_id"]},
+            {"$set": {"health_ok": bool(health.get("ok")),
+                      "metadata": metadata,
+                      "last_retested_at": now_iso()}})
+        return {"health": health, "last_retested_at": now_iso()}
+
+
     class PublishIn(BaseModel):
         content: str
         image_url: Optional[str] = None
@@ -471,3 +497,67 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
         if rec["status"] == "failed":
             raise HTTPException(502, f"{provider} publish failed: {rec.get('error', 'unknown')}")
         return {**{k: v for k, v in rec.items() if k != "_id"}}
+
+
+
+    async def rotation_nudge_worker():
+        """Daily loop: when a stored token turns 55 days old, email the workspace owner once.
+
+        Uses Resend if configured; otherwise silently marks the token as notified so we
+        don't spam the check every day.
+        """
+        import asyncio, logging
+        from datetime import datetime, timezone as _tz
+        _logger = logging.getLogger(__name__)
+        while True:
+            try:
+                now = datetime.now(_tz.utc)
+                async for tok in db.oauth_tokens.find(
+                        {"revoked": {"$ne": True},
+                         "rotation_notified_at": {"$exists": False}}):
+                    connected = tok.get("connected_at")
+                    if not connected:
+                        continue
+                    try:
+                        age = (now - datetime.fromisoformat(connected.replace("Z", "+00:00"))).days
+                    except Exception:
+                        continue
+                    if age < 55:
+                        continue
+                    # Find workspace owner email
+                    ws_id = tok["workspace_id"]
+                    owner = await db.users.find_one(
+                        {"workspace_id": ws_id, "role": {"$in": ["owner", "admin"]}},
+                        {"_id": 0, "email": 1, "name": 1})
+                    if not owner or not owner.get("email"):
+                        # No addressable owner; mark notified so we don't retry every day
+                        await db.oauth_tokens.update_one({"_id": tok["_id"]},
+                            {"$set": {"rotation_notified_at": now.isoformat(),
+                                      "rotation_note": "no owner email on file"}})
+                        continue
+                    try:
+                        from server import RESEND_API_KEY, SENDER_EMAIL, resend
+                        if RESEND_API_KEY:
+                            subject = f"Rotate your {tok.get('label', tok['provider'])} token soon"
+                            html = f"""
+                            <div style='font-family:Helvetica,Arial,sans-serif;padding:24px;background:#0A0A0A;color:#fff'>
+                              <h2 style='color:#CCFF00;margin:0 0 12px'>Time to rotate your {tok.get('label')} token</h2>
+                              <p style='color:#A1A1AA'>The access token you connected {age} days ago is nearing expiry.
+                              Some providers (Meta, LinkedIn) auto-invalidate long-lived tokens at day 60 — rotate now to keep your campaigns firing.</p>
+                              <p style='margin:20px 0'><a href='#/integrations' style='background:#CCFF00;color:#0A0A0A;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700'>Open Integrations</a></p>
+                              <p style='color:#71717A;font-size:12px'>You're getting this because you're a workspace admin on PromoOS.</p>
+                            </div>"""
+                            await asyncio.to_thread(resend.Emails.send, {
+                                "from": SENDER_EMAIL, "to": [owner["email"]],
+                                "subject": subject, "html": html})
+                            _logger.info("rotation nudge sent to %s for %s", owner["email"], tok["provider"])
+                    except Exception as e:
+                        _logger.warning("rotation nudge failed: %s", e)
+                    await db.oauth_tokens.update_one({"_id": tok["_id"]},
+                        {"$set": {"rotation_notified_at": now.isoformat()}})
+            except Exception as e:
+                _logger.exception("rotation_nudge_worker crash: %s", e)
+            # Once a day is plenty
+            await asyncio.sleep(24 * 60 * 60)
+
+    return {"rotation_nudge_worker": rotation_nudge_worker}

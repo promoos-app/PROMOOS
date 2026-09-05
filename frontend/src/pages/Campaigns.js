@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import api, { apiError } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -109,6 +110,7 @@ function NewJourneyDialog({ onCreated }) {
 }
 
 export default function Campaigns() {
+  const { user: currentUser } = useAuth();
   const [rows, setRows] = useState([]);
   const [runs, setRuns] = useState({});
   const [enrolling, setEnrolling] = useState(null);
@@ -131,6 +133,14 @@ export default function Campaigns() {
       setSavingFromJourney(null); setTplName(""); setTplDesc("");
       api.get("/journey-templates").then((r) => setTemplates(r.data.templates || [])).catch(() => {});
     } catch (e) { toast.error(apiError(e)); } finally { setTplBusy(false); }
+  };
+  const toggleMarketplace = async (tpl) => {
+    const goingPublic = !tpl.is_public;
+    try {
+      await api.post(`/admin/journey-templates/${tpl.id}/${goingPublic ? "publish" : "unpublish"}`);
+      toast.success(goingPublic ? "Published to marketplace" : "Un-published");
+      api.get("/journey-templates").then((r) => setTemplates(r.data.templates || [])).catch(() => {});
+    } catch (e) { toast.error(apiError(e)); }
   };
 
   const load = () => api.get("/journeys").then((r) => setRows(r.data)).catch((e) => toast.error(apiError(e)));
@@ -204,11 +214,30 @@ export default function Campaigns() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {templates.map((t) => (
               <div key={t.id} className="rounded-md p-4 bg-[#0A0A0A] border border-[#27272A] hover:border-[#CCFF00] transition-colors" data-testid={`journey-template-${t.id}`}>
-                <div className="flex items-start justify-between mb-1">
+                <div className="flex items-start justify-between mb-1 gap-2">
                   <div className="font-display font-bold text-sm">{t.name}</div>
-                  {t.source === "custom" && (
-                    <span className="text-[9px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded-full bg-[#CCFF00]/15 text-[#CCFF00] border border-[#CCFF00]/40" data-testid={`journey-template-custom-badge-${t.id}`}>Custom</span>
-                  )}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {t.source === "custom" && (
+                      <span className="text-[9px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded-full bg-[#CCFF00]/15 text-[#CCFF00] border border-[#CCFF00]/40" data-testid={`journey-template-custom-badge-${t.id}`}>Custom</span>
+                    )}
+                    {t.source === "marketplace" && (
+                      <span className="text-[9px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded-full bg-[#005CEE]/15 text-[#005CEE] border border-[#005CEE]/40" data-testid={`journey-template-marketplace-badge-${t.id}`}>Marketplace</span>
+                    )}
+                    {currentUser?.role === "superadmin" && t.source === "custom" && (
+                      <button
+                        onClick={() => toggleMarketplace(t)}
+                        data-testid={`journey-template-marketplace-toggle-${t.id}`}
+                        title={t.is_public ? "Un-publish from marketplace" : "Publish to marketplace"}
+                        className={`text-[9px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded-full border ${
+                          t.is_public
+                            ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/40"
+                            : "bg-transparent text-[#71717A] border-[#27272A] hover:text-white"
+                        }`}
+                      >
+                        {t.is_public ? "★ Public" : "☆ Publish"}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Trigger · {t.trigger.replace("_", " ")}</div>
                 <div className="text-xs text-[#A1A1AA] mb-3">{t.description}</div>

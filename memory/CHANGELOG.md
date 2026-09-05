@@ -1,3 +1,29 @@
+## Feb 2026 — Retest + CSV Import + Marketplace + Rotation Nudge
+
+### 🩺 Provider Retest
+- New endpoint `POST /api/oauth/{provider}/retest` — reads the encrypted stored token, re-runs the live health probe, updates `metadata.account_name`, clears/sets `last_health_error`, records `last_retested_at`.
+- Frontend: **Retest** button (RefreshCw icon) on every connected provider card. Toast shows the fresh health result. Data-testid: `retest-{provider}`.
+- Verified: sendgrid retest surfaced the exact failure ("Provider rejected the token") + timestamp.
+
+### 📥 Bulk Coupon CSV Import
+- New endpoint `POST /api/coupons/import-csv` (multipart upload). Accepts columns `name, code, type, discount_value, headline, description, terms, cta, state`. Extras ignored, unknown types/states default to safe values, per-row errors returned in `errors[]` without aborting the batch.
+- Coupons page: **Import CSV** button (Upload icon) next to *New Coupon*. Hidden file input consumes the FormData. Data-testids: `import-csv-btn`, `import-csv-input`.
+- Verified: 3-row CSV → `created: 2, errors: [{row: 4, error: "could not convert string to float: 'invalid'"}]`.
+
+### 🌐 Journey Template Marketplace
+- Extended `journey_templates` schema with `is_public` flag.
+- New superadmin-only endpoints: `POST /api/admin/journey-templates/{tid}/publish` and `.../{tid}/unpublish`.
+- `GET /api/journey-templates` now unions three sources: workspace's own custom templates, public templates from any workspace (Marketplace), and 3 built-ins. `POST /journey-templates/{tid}/apply` accepts marketplace ids across workspaces.
+- Campaigns page shows a blue **Marketplace** badge on cross-workspace public templates. When a superadmin views their own custom template, a **☆ Publish** / **★ Public** toggle appears inline. Data-testids: `journey-template-marketplace-badge-{id}`, `journey-template-marketplace-toggle-{id}`.
+- Verified end-to-end: owner saved a template → superadmin published it → superadmin's `/journey-templates` list included it with `source: "marketplace"` → unpublish HTTP 200.
+
+### 📧 Rotation Auto-Nudge Worker
+- New `rotation_nudge_worker()` in `routers/oauth_hub.py` — runs once every 24 hours.
+- Finds tokens where age ≥ 55 days and `rotation_notified_at` is unset. Looks up the workspace owner/admin email. Sends a branded Resend email ("Rotate your {label} token soon") and stamps `rotation_notified_at` so we never re-notify for the same event.
+- Falls through silently when Resend isn't configured (still marks the token to avoid daily retries).
+- Wired into `server.py` startup event alongside `journey_worker`. Verified via source grep (4 references: import + context capture + startup log line + `create_task`).
+
+
 ## Feb 2026 — Stripe Live + Health Check + Rotation + Bulk Actions + Template Studio
 
 ### 💳 Stripe — Live API-key Connection
