@@ -274,6 +274,75 @@ function PosSecrets() {
   );
 }
 
+function AnyOtherSystem({ pos }) {
+  const [code, setCode] = useState("");
+  const [amount, setAmount] = useState("100");
+  const [customer, setCustomer] = useState("buyer@example.com");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const send = async () => {
+    if (!code.trim()) { toast.error("Enter a coupon code"); return; }
+    setBusy(true); setResult(null);
+    try {
+      const { data } = await api.post("/public/coupons/redeem", {
+        code: code.trim().toUpperCase(),
+        amount: parseFloat(amount) || 0,
+        customer: customer.trim() || undefined,
+      });
+      setResult({ ok: true, data });
+      toast.success("Redeemed — the response is stored in your dashboard");
+    } catch (e) {
+      const err = e?.response?.data?.detail || e?.message || "Request failed";
+      setResult({ ok: false, error: err });
+      toast.error(String(err));
+    } finally { setBusy(false); }
+  };
+  const curlSnippet = pos.generic_curl
+    .replace('"CODE"', `"${(code || "CODE").toUpperCase()}"`)
+    .replace('"amount":100', `"amount":${amount || 100}`)
+    .replace('"buyer@example.com"', `"${customer || "buyer@example.com"}"`);
+  return (
+    <div className="surface rounded-lg p-5 mb-8" data-testid="pos-curl">
+      <div className="flex items-center gap-2 mb-2">
+        <Webhook className="w-4 h-4 text-[#CCFF00]" />
+        <div className="font-display font-bold">Any other system</div>
+      </div>
+      <p className="text-xs text-[#A1A1AA] mb-3">Send any order to the public redeem endpoint from a webhook, a Zap, or a custom app. Test it live below — the same payload works from anywhere.</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
+        <Input value={code} onChange={(e) => setCode(e.target.value)}
+          placeholder="Coupon code" className="bg-[#0A0A0A] border-[#27272A] text-white font-mono"
+          data-testid="any-system-code" />
+        <Input type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+          placeholder="Order amount" className="bg-[#0A0A0A] border-[#27272A] text-white"
+          data-testid="any-system-amount" />
+        <Input value={customer} onChange={(e) => setCustomer(e.target.value)}
+          placeholder="Customer (email or id)" className="bg-[#0A0A0A] border-[#27272A] text-white"
+          data-testid="any-system-customer" />
+      </div>
+      <div className="flex gap-2 mb-3">
+        <Button onClick={send} disabled={busy} className="btn-primary rounded-md gap-2"
+          data-testid="any-system-send">
+          {busy ? <Loader2 className="w-4 h-4 spin" /> : <Webhook className="w-4 h-4" />}
+          Send live test
+        </Button>
+        <button
+          onClick={() => { navigator.clipboard.writeText(curlSnippet).catch(() => {}); toast.success("cURL copied"); }}
+          data-testid="any-system-copy-curl"
+          className="btn-ghost rounded-md gap-1 inline-flex items-center px-3 border border-[#27272A]">
+          <Copy className="w-3.5 h-3.5" /> Copy cURL
+        </button>
+      </div>
+      <pre className="text-[11px] font-mono text-[#E4E4E7] bg-[#0A0A0A] border border-[#27272A] rounded p-3 overflow-x-auto whitespace-pre-wrap break-all" data-testid="any-system-curl">{curlSnippet}</pre>
+      {result && (
+        <div className={`mt-3 rounded-md p-3 text-xs font-mono border ${result.ok ? "bg-emerald-500/5 border-emerald-500/30 text-emerald-300" : "bg-red-500/5 border-red-500/30 text-red-300"}`}
+          data-testid="any-system-result">
+          {result.ok ? JSON.stringify(result.data, null, 2) : `Error: ${result.error}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Integrations() {
   const [keys, setKeys] = useState([]);
   const [name, setName] = useState("");
@@ -292,7 +361,30 @@ export default function Integrations() {
     load();
     loadOauth();
     api.get("/pos/snippets").then((r) => setPos(r.data)).catch(() => {});
+    // Rotation Snooze deep-link handler: /integrations?snooze=facebook&days=5
+    const q = new URLSearchParams(window.location.search);
+    const snoozeProvider = q.get("snooze");
+    if (snoozeProvider) {
+      const days = parseInt(q.get("days") || "5", 10);
+      api.post(`/oauth/${snoozeProvider}/snooze?days=${days}`).then((r) => {
+        toast.success(`Reminder snoozed — next nudge on ${r.data.reminder_at?.slice(0, 10)}`);
+        loadOauth();
+      }).catch((e) => toast.error(apiError(e)));
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
+
+  const [retestBusy, setRetestBusy] = useState(false);
+  const retestAll = async () => {
+    setRetestBusy(true);
+    try {
+      const { data } = await api.post("/oauth/retest-all");
+      const s = data.summary;
+      if (s.failing === 0) toast.success(`All ${s.total} integrations healthy`);
+      else toast.warning(`${s.healthy}/${s.total} healthy · ${s.failing} failing — see cards for details`);
+      loadOauth();
+    } catch (e) { toast.error(apiError(e)); } finally { setRetestBusy(false); }
+  };
 
   const create = async () => {
     if (!name.trim()) { toast.error("Give the key a name"); return; }
@@ -313,11 +405,20 @@ export default function Integrations() {
 
   return (
     <div className="fade-up max-w-[1200px]" data-testid="integrations-page">
-      <div className="mb-6">
-        <h1 className="font-display font-bold text-3xl tracking-tight flex items-center gap-2">
-          <Plug className="w-7 h-7 text-[#CCFF00]" /> Integrations
-        </h1>
-        <p className="text-sm text-[#A1A1AA] mt-1">Connect PromoOS to your store, email, SMS, and any external system.</p>
+      <div className="mb-6 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="font-display font-bold text-3xl tracking-tight flex items-center gap-2">
+            <Plug className="w-7 h-7 text-[#CCFF00]" /> Integrations
+          </h1>
+          <p className="text-sm text-[#A1A1AA] mt-1">Connect PromoOS to your store, email, SMS, and any external system.</p>
+        </div>
+        {oauthTokens.length > 0 && (
+          <Button data-testid="retest-all-btn" onClick={retestAll} disabled={retestBusy}
+            className="btn-ghost rounded-md gap-2 border border-[#27272A] hover:border-[#CCFF00]">
+            {retestBusy ? <Loader2 className="w-4 h-4 spin" /> : <RefreshCw className="w-4 h-4" />}
+            Retest all ({oauthTokens.length})
+          </Button>
+        )}
       </div>
 
       <h2 className="font-display font-bold text-lg mb-3">Email marketing platforms</h2>
@@ -411,16 +512,7 @@ export default function Integrations() {
         ))}
       </div>
 
-      {pos && (
-        <div className="surface rounded-lg p-5 mb-8" data-testid="pos-curl">
-          <div className="flex items-center gap-2 mb-2">
-            <Webhook className="w-4 h-4 text-[#CCFF00]" />
-            <div className="font-display font-bold">Any other system</div>
-          </div>
-          <p className="text-xs text-[#A1A1AA] mb-2">Send any order to the public redeem endpoint from a webhook, a Zap, or a custom app:</p>
-          <pre className="text-[11px] font-mono text-[#E4E4E7] bg-[#0A0A0A] border border-[#27272A] rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">{pos.generic_curl}</pre>
-        </div>
-      )}
+      {pos && <AnyOtherSystem pos={pos} />}
 
       <h2 className="font-display font-bold text-lg mb-3 flex items-center gap-2"><Code2 className="w-4 h-4 text-[#CCFF00]" /> Public REST API</h2>
       <div className="surface rounded-lg p-5 mb-4">

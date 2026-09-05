@@ -240,6 +240,11 @@ export default function Campaigns() {
                   </div>
                 </div>
                 <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Trigger · {t.trigger.replace("_", " ")}</div>
+                {t.source === "marketplace" && t.published_by_workspace && (
+                  <div className="text-[10px] text-[#005CEE] mb-2" data-testid={`journey-template-attribution-${t.id}`}>
+                    Curated by <span className="font-bold">{t.published_by_workspace}</span>
+                  </div>
+                )}
                 <div className="text-xs text-[#A1A1AA] mb-3">{t.description}</div>
                 <div className="text-[10px] text-[#71717A] mb-3">{(t.steps || []).length} step{(t.steps || []).length === 1 ? "" : "s"}</div>
                 <div className="flex gap-2">

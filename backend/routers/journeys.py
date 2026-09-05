@@ -293,6 +293,12 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
         public = await db.journey_templates.find(
             {"is_public": True, "workspace_id": {"$ne": user["workspace_id"]}},
             {"_id": 0}).sort("published_at", -1).to_list(100)
+        # Attribution — resolve publishing workspace names in one round-trip
+        ws_ids = list({c["workspace_id"] for c in public if c.get("workspace_id")})
+        ws_names: dict = {}
+        if ws_ids:
+            async for ws in db.workspaces.find({"id": {"$in": ws_ids}}, {"_id": 0, "id": 1, "name": 1}):
+                ws_names[ws["id"]] = ws.get("name", "")
         # Normalize into the same shape as builtin
         own_shaped = [{
             "id": c["id"], "name": c["name"], "description": c.get("description", ""),
@@ -302,6 +308,7 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
         public_shaped = [{
             "id": c["id"], "name": c["name"], "description": c.get("description", ""),
             "trigger": c["trigger"], "steps": c["steps"], "source": "marketplace",
+            "published_by_workspace": ws_names.get(c.get("workspace_id"), "Agency"),
         } for c in public]
         return {"templates": own_shaped + public_shaped + JOURNEY_TEMPLATES}
 

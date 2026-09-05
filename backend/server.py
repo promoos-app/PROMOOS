@@ -345,11 +345,15 @@ async def create_coupon(body: CouponIn, user: dict = Depends(get_current_user)):
 
 @api.post("/coupons/import-csv")
 async def import_coupons_csv(file: UploadFile = File(...),
+                              dry_run: bool = False,
                               user: dict = Depends(get_current_user)):
     """Bulk-create coupons from a CSV.
 
     Accepted columns (header row required; extras ignored):
         name*, code, type, discount_value*, headline, description, terms, cta, state
+
+    When `dry_run=true` the rows are parsed and validated but NOT inserted —
+    used by the frontend to preview the first N rows before committing.
     """
     require_writer(user)
     if not file.filename.lower().endswith(".csv"):
@@ -358,7 +362,7 @@ async def import_coupons_csv(file: UploadFile = File(...),
     import csv as _csv
     from io import StringIO
     reader = _csv.DictReader(StringIO(raw))
-    created, errors = [], []
+    created, errors, preview = [], [], []
     for i, row in enumerate(reader, start=2):  # start=2 → line 1 is the header
         try:
             name = (row.get("name") or "").strip()
@@ -372,12 +376,20 @@ async def import_coupons_csv(file: UploadFile = File(...),
             state = (row.get("state") or "draft").strip()
             if state not in ("draft", "scheduled", "active", "paused", "expired", "archived"):
                 state = "draft"
+            parsed = {
+                "row": i, "name": name[:120], "code": code, "type": ctype,
+                "discount_value": disc, "state": state,
+                "headline": (row.get("headline") or "").strip()[:140],
+            }
+            if dry_run:
+                preview.append(parsed)
+                continue
             cid = str(uuid.uuid4())
             doc = {
                 "id": cid, "workspace_id": user["workspace_id"],
-                "name": name[:120], "type": ctype, "discount_value": disc,
+                "name": parsed["name"], "type": ctype, "discount_value": disc,
                 "code": code, "codes": [],
-                "headline": (row.get("headline") or "").strip()[:140],
+                "headline": parsed["headline"],
                 "description": (row.get("description") or "").strip()[:400],
                 "terms": (row.get("terms") or "").strip()[:400],
                 "cta": (row.get("cta") or "Claim Offer").strip()[:60],
@@ -395,8 +407,13 @@ async def import_coupons_csv(file: UploadFile = File(...),
             created.append({"code": code, "name": name})
         except Exception as e:
             errors.append({"row": i, "error": str(e)[:120]})
-    return {"created": len(created), "errors": errors,
-            "sample": created[:5]}
+    return {
+        "dry_run": dry_run,
+        "created": len(created), "errors": errors,
+        "preview": preview[:5],           # first 5 parsed rows (dry-run)
+        "total_valid": len(preview) if dry_run else len(created),
+        "sample": created[:5],            # first 5 committed (real run)
+    }
 
 
 

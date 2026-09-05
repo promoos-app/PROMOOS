@@ -1,3 +1,30 @@
+## Feb 2026 — Any-Other-System Live + CSV Preview + Attribution + Snooze + Retest All
+
+### 🔌 "Any other system" activated
+- Previously a static cURL block. Now a live-test panel: paste code / amount / customer → **Send live test** hits `POST /api/public/coupons/redeem` and renders the JSON response inline. **Copy cURL** button updates its snippet from the same inputs so devs can paste ready-to-run curl into their CI or Zap.
+- Data-testids: `any-system-code`, `any-system-amount`, `any-system-customer`, `any-system-send`, `any-system-copy-curl`, `any-system-curl`, `any-system-result`.
+- Verified against a real active coupon: `{ok:true, discount:10, revenue:40, loyalty_points_awarded:80}`.
+
+### 👀 CSV Import Preview (dry-run)
+- `POST /api/coupons/import-csv?dry_run=true` parses every row without inserting, returns `{total_valid, preview[:5], errors[]}`.
+- Coupons page now runs a dry-run first, opens a preview dialog showing the first 5 parsed rows + skipped-row explanations, then **Import N coupons** commits with a second real call.
+- Data-testids: `csv-preview-dialog`, `csv-preview-table`, `csv-preview-row-{row}`, `csv-preview-errors`, `csv-preview-commit`.
+
+### 🏷️ Marketplace Attribution
+- `GET /api/journey-templates` now resolves the publishing workspace name and includes `published_by_workspace` on marketplace templates.
+- Marketplace cards on Campaigns show a "Curated by **{workspace}**" line under the trigger. Data-testid: `journey-template-attribution-{id}`.
+
+### 😴 Rotation Snooze
+- New endpoint `POST /api/oauth/{provider}/snooze?days=N` — pushes `rotation_notified_at` forward by N days so the nudge worker skips the token until then.
+- Rotation email now includes both **Rotate now** and **Remind me in 5 days** buttons. The snooze URL is `/integrations?snooze={provider}&days=5`, handled by a `useEffect` that fires the snooze call and toasts the new reminder date.
+- Verified: `sendgrid/snooze?days=5` returned `reminder_at: 2026-09-10T…` (exactly +5d).
+
+### 🩺 Retest All (Batch)
+- New endpoint `POST /api/oauth/retest-all` — iterates every workspace-connected provider, re-probes each token, updates `metadata.account_name` + `last_health_error` + `last_retested_at`, and returns `{summary:{total,healthy,failing}, results[]}`.
+- **Retest all (N)** button appears in the /integrations header when at least one provider is connected. Success toast: "All 3 integrations healthy" · warning: "2/3 healthy · 1 failing — see cards for details".
+- Data-testid: `retest-all-btn`.
+
+
 ## Feb 2026 — Retest + CSV Import + Marketplace + Rotation Nudge
 
 ### 🩺 Provider Retest

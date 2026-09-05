@@ -27,6 +27,22 @@ export default function Coupons() {
   const [bulkBg, setBulkBg] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkStateBusy, setBulkStateBusy] = useState(false);
+  const [csvPreview, setCsvPreview] = useState(null);
+  const [csvBusy, setCsvBusy] = useState(false);
+
+  const commitCsv = async () => {
+    if (!csvPreview?.file) return;
+    setCsvBusy(true);
+    try {
+      const fd = new FormData(); fd.append("file", csvPreview.file);
+      const { data } = await api.post("/coupons/import-csv", fd,
+        { headers: { "Content-Type": "multipart/form-data" } });
+      toast.success(`Imported ${data.created} coupon${data.created === 1 ? "" : "s"}`);
+      if (data.errors?.length) toast.warning(`${data.errors.length} row error(s) skipped`);
+      qc.invalidateQueries({ queryKey: ["coupons"] });
+      setCsvPreview(null);
+    } catch (e) { toast.error(apiError(e)); } finally { setCsvBusy(false); }
+  };
 
   const bulkState = async (state) => {
     if (selected.size === 0) return;
@@ -130,13 +146,9 @@ export default function Coupons() {
                 const f = e.target.files?.[0]; if (!f) return;
                 const fd = new FormData(); fd.append("file", f);
                 try {
-                  const { data } = await api.post("/coupons/import-csv", fd, { headers: { "Content-Type": "multipart/form-data" } });
-                  if (data.errors?.length) {
-                    toast.warning(`Imported ${data.created} · ${data.errors.length} row error(s)`);
-                  } else {
-                    toast.success(`Imported ${data.created} coupon${data.created === 1 ? "" : "s"}`);
-                  }
-                  qc.invalidateQueries({ queryKey: ["coupons"] });
+                  const { data } = await api.post("/coupons/import-csv?dry_run=true", fd,
+                    { headers: { "Content-Type": "multipart/form-data" } });
+                  setCsvPreview({ file: f, preview: data.preview || [], errors: data.errors || [], total_valid: data.total_valid || 0 });
                 } catch (er) { toast.error(apiError(er)); }
                 finally { e.target.value = ""; }
               }} />
@@ -364,6 +376,67 @@ export default function Coupons() {
               Apply to {selected.size} coupon{selected.size === 1 ? "" : "s"}
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!csvPreview} onOpenChange={(o) => !o && setCsvPreview(null)}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-2xl" data-testid="csv-preview-dialog">
+          <DialogHeader><DialogTitle>Preview import · {csvPreview?.file?.name}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="text-xs text-[#A1A1AA]">
+              <span className="text-[#CCFF00] font-bold">{csvPreview?.total_valid ?? 0}</span> row{csvPreview?.total_valid === 1 ? "" : "s"} will be created ·{" "}
+              <span className={csvPreview?.errors?.length ? "text-red-400" : ""}>{csvPreview?.errors?.length ?? 0} skipped</span>
+            </div>
+            {(csvPreview?.preview || []).length > 0 ? (
+              <div className="rounded-md border border-[#27272A] overflow-hidden">
+                <table className="w-full text-xs" data-testid="csv-preview-table">
+                  <thead className="bg-[#0A0A0A] text-[10px] uppercase tracking-widest text-[#71717A]">
+                    <tr>
+                      <th className="text-left px-2 py-2 w-8">#</th>
+                      <th className="text-left px-2 py-2">Name</th>
+                      <th className="text-left px-2 py-2">Code</th>
+                      <th className="text-left px-2 py-2">Type</th>
+                      <th className="text-right px-2 py-2">Disc.</th>
+                      <th className="text-left px-2 py-2">State</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {csvPreview.preview.map((p) => (
+                      <tr key={p.row} className="border-t border-[#27272A]" data-testid={`csv-preview-row-${p.row}`}>
+                        <td className="px-2 py-1.5 text-[#71717A] font-mono">{p.row}</td>
+                        <td className="px-2 py-1.5">{p.name}</td>
+                        <td className="px-2 py-1.5 font-mono text-[#CCFF00]">{p.code}</td>
+                        <td className="px-2 py-1.5 text-[#A1A1AA]">{p.type}</td>
+                        <td className="px-2 py-1.5 text-right font-mono">{p.discount_value}</td>
+                        <td className="px-2 py-1.5 text-[#A1A1AA]">{p.state}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-xs text-[#71717A] py-3 text-center">No valid rows found. Check your header row and required columns (name, discount_value).</div>
+            )}
+            {csvPreview?.errors?.length > 0 && (
+              <div className="rounded-md border border-red-500/30 bg-red-500/5 p-3 text-xs" data-testid="csv-preview-errors">
+                <div className="text-red-300 font-bold mb-1">Skipped rows</div>
+                <ul className="space-y-1 text-red-200/80 max-h-32 overflow-y-auto">
+                  {csvPreview.errors.slice(0, 20).map((e, i) => (
+                    <li key={i}>Row {e.row}: {e.error}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <button onClick={() => setCsvPreview(null)} className="text-xs text-[#71717A] hover:text-white mr-3">Cancel</button>
+            <Button data-testid="csv-preview-commit" onClick={commitCsv}
+              disabled={csvBusy || !(csvPreview?.total_valid > 0)}
+              className="btn-primary rounded-md gap-2">
+              {csvBusy && <Loader2 className="w-4 h-4 spin" />}
+              Import {csvPreview?.total_valid ?? 0} coupon{csvPreview?.total_valid === 1 ? "" : "s"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -360,6 +360,54 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
                       "last_retested_at": now_iso()}})
         return {"health": health, "last_retested_at": now_iso()}
 
+    @api.post("/oauth/retest-all")
+    async def retest_all(user: dict = Depends(get_current_user)):
+        """Run the health probe against every connected provider at once."""
+        require_writer(user)
+        toks = await db.oauth_tokens.find(
+            {"workspace_id": user["workspace_id"], "revoked": {"$ne": True}}).to_list(50)
+        results = []
+        for tok in toks:
+            token = decrypt_str(tok.get("access_token", ""))
+            health = _health_check(tok["provider"], token)
+            metadata = tok.get("metadata") or {}
+            if health.get("account"): metadata["account_name"] = health["account"]
+            if health.get("error"):   metadata["last_health_error"] = health["error"]
+            else:                     metadata.pop("last_health_error", None)
+            await db.oauth_tokens.update_one(
+                {"_id": tok["_id"]},
+                {"$set": {"health_ok": bool(health.get("ok")),
+                          "metadata": metadata,
+                          "last_retested_at": now_iso()}})
+            results.append({"provider": tok["provider"], "ok": bool(health.get("ok")),
+                             "account": health.get("account", ""), "error": health.get("error")})
+        summary = {"total": len(results),
+                    "healthy": sum(1 for r in results if r["ok"]),
+                    "failing": sum(1 for r in results if not r["ok"])}
+        return {"summary": summary, "results": results}
+
+    @api.post("/oauth/{provider}/snooze")
+    async def snooze_rotation(provider: str, days: int = 5,
+                               user: dict = Depends(get_current_user)):
+        """Rotation Snooze — defer the auto-nudge for N days.
+
+        We push `rotation_notified_at` forward by `days` so the worker skips
+        this token until then. Used by the "Remind me in 5 days" email link.
+        """
+        require_writer(user)
+        from datetime import datetime, timedelta, timezone as _tz
+        # Setting notified_at to (now + days - 55) makes the age-vs-notification math resolve
+        # to another notice in `days` days. Simpler: just set the wall-clock notified_at forward.
+        future_notified = (datetime.now(_tz.utc) + timedelta(days=days)).isoformat()
+        r = await db.oauth_tokens.update_one(
+            {"provider": provider, "workspace_id": user["workspace_id"], "revoked": {"$ne": True}},
+            {"$set": {"rotation_notified_at": future_notified,
+                      "rotation_snoozed_days": days,
+                      "rotation_snoozed_at": now_iso()}})
+        if r.matched_count == 0:
+            raise HTTPException(404, f"{provider} not connected")
+        return {"ok": True, "reminder_at": future_notified}
+
 
     class PublishIn(BaseModel):
         content: str
@@ -536,15 +584,19 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
                                       "rotation_note": "no owner email on file"}})
                         continue
                     try:
-                        from server import RESEND_API_KEY, SENDER_EMAIL, resend
+                        from server import RESEND_API_KEY, SENDER_EMAIL, resend, PUBLIC_APP_URL
                         if RESEND_API_KEY:
                             subject = f"Rotate your {tok.get('label', tok['provider'])} token soon"
+                            base = (PUBLIC_APP_URL or "").rstrip("/")
                             html = f"""
                             <div style='font-family:Helvetica,Arial,sans-serif;padding:24px;background:#0A0A0A;color:#fff'>
                               <h2 style='color:#CCFF00;margin:0 0 12px'>Time to rotate your {tok.get('label')} token</h2>
                               <p style='color:#A1A1AA'>The access token you connected {age} days ago is nearing expiry.
                               Some providers (Meta, LinkedIn) auto-invalidate long-lived tokens at day 60 — rotate now to keep your campaigns firing.</p>
-                              <p style='margin:20px 0'><a href='#/integrations' style='background:#CCFF00;color:#0A0A0A;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700'>Open Integrations</a></p>
+                              <p style='margin:20px 0;display:flex;gap:12px;flex-wrap:wrap'>
+                                <a href='{base}/integrations' style='background:#CCFF00;color:#0A0A0A;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700'>Rotate now</a>
+                                <a href='{base}/integrations?snooze={tok["provider"]}&days=5' style='background:transparent;border:1px solid #27272A;color:#A1A1AA;padding:12px 20px;border-radius:8px;text-decoration:none'>Remind me in 5 days</a>
+                              </p>
                               <p style='color:#71717A;font-size:12px'>You're getting this because you're a workspace admin on PromoOS.</p>
                             </div>"""
                             await asyncio.to_thread(resend.Emails.send, {
