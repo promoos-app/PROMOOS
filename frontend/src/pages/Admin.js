@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Shield, Users, Building2, ScrollText, CreditCard, BarChart3, Plus, Loader2,
-  Pause, Play, RotateCcw, Trash2,
+  Pause, Play, RotateCcw, Trash2, Palette,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
@@ -19,6 +19,7 @@ const TABS = [
   { k: "users", label: "Users", icon: Users },
   { k: "workspaces", label: "Workspaces", icon: Building2 },
   { k: "payments", label: "Payments", icon: CreditCard },
+  { k: "presets", label: "Preset Packs", icon: Palette },
   { k: "logs", label: "Audit Log", icon: ScrollText },
 ];
 
@@ -66,6 +67,154 @@ function CreateUserDialog({ onCreated }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PresetPacksManager() {
+  const [packs, setPacks] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ name: "", scope: "both", is_public: true, presets: [] });
+  const emptyPreset = () => ({ key: "", label: "", accent: "#CCFF00", prompt: "" });
+
+  const load = () => {
+    api.get("/admin/preset-packs").then((r) => setPacks(r.data)).catch((e) => toast.error(apiError(e)));
+  };
+  useEffect(() => { load(); }, []);
+
+  const openNew = () => {
+    setEditing(null);
+    setForm({ name: "", scope: "both", is_public: true, presets: [emptyPreset()] });
+    setOpen(true);
+  };
+  const openEdit = (p) => {
+    setEditing(p);
+    setForm({ name: p.name, scope: p.scope, is_public: p.is_public,
+      presets: p.presets.length ? p.presets : [emptyPreset()] });
+    setOpen(true);
+  };
+
+  const save = async () => {
+    if (!form.name.trim()) { toast.error("Give the pack a name"); return; }
+    const cleaned = form.presets.filter((x) => x.key && x.label && x.prompt);
+    if (!cleaned.length) { toast.error("Add at least one preset with key, label and prompt"); return; }
+    setBusy(true);
+    try {
+      const body = { ...form, presets: cleaned };
+      if (editing) await api.put(`/admin/preset-packs/${editing.id}`, body);
+      else await api.post("/admin/preset-packs", body);
+      toast.success(editing ? "Pack updated" : "Pack published");
+      setOpen(false); load();
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+  };
+
+  const del = async (p) => {
+    if (!window.confirm(`Delete "${p.name}"?`)) return;
+    try { await api.delete(`/admin/preset-packs/${p.id}`); toast.success("Deleted"); load(); }
+    catch (e) { toast.error(apiError(e)); }
+  };
+
+  const setPreset = (i, k, v) => setForm((f) => {
+    const arr = [...f.presets]; arr[i] = { ...arr[i], [k]: v }; return { ...f, presets: arr };
+  });
+
+  return (
+    <div className="surface rounded-lg p-5" data-testid="admin-preset-packs">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="text-sm font-bold">Preset Packs</div>
+          <div className="text-xs text-[#71717A]">Curated style chips available in every workspace's Coupon and Gift Card studios.</div>
+        </div>
+        <Button data-testid="preset-pack-new-btn" onClick={openNew} className="btn-primary rounded-md gap-2">
+          <Plus className="w-4 h-4" /> New pack
+        </Button>
+      </div>
+
+      {packs.length === 0 ? (
+        <div className="text-xs text-[#71717A] py-4">No packs yet. Publish your first pack.</div>
+      ) : (
+        <table className="w-full text-sm" data-testid="preset-packs-table">
+          <thead className="bg-[#0A0A0A] text-[#71717A] text-xs uppercase tracking-wider">
+            <tr>
+              <th className="text-left px-3 py-2">Name</th>
+              <th className="text-left px-3 py-2">Scope</th>
+              <th className="text-right px-3 py-2">Presets</th>
+              <th className="text-left px-3 py-2">Public</th>
+              <th className="text-right px-3 py-2">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {packs.map((p) => (
+              <tr key={p.id} className="border-t border-[#27272A]" data-testid={`preset-pack-row-${p.id}`}>
+                <td className="px-3 py-2 font-medium">{p.name}</td>
+                <td className="px-3 py-2 text-xs uppercase text-[#CCFF00]">{p.scope}</td>
+                <td className="px-3 py-2 text-right">{(p.presets || []).length}</td>
+                <td className="px-3 py-2 text-xs">{p.is_public ? "Yes" : "No"}</td>
+                <td className="px-3 py-2 text-right">
+                  <button onClick={() => openEdit(p)} className="text-[10px] uppercase text-[#CCFF00] mr-3" data-testid={`preset-pack-edit-${p.id}`}>Edit</button>
+                  <button onClick={() => del(p)} className="text-[10px] uppercase text-red-400" data-testid={`preset-pack-delete-${p.id}`}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-2xl">
+          <DialogHeader><DialogTitle>{editing ? "Edit pack" : "New preset pack"}</DialogTitle></DialogHeader>
+          <div className="space-y-3 max-h-[65vh] overflow-y-auto pr-1">
+            <div>
+              <Label className="text-xs text-[#A1A1AA]">Name</Label>
+              <Input data-testid="preset-pack-name" value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                className="mt-1 bg-[#0A0A0A] border-[#27272A]" placeholder="Acme Holiday Kit" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs text-[#A1A1AA]">Scope</Label>
+                <select data-testid="preset-pack-scope" value={form.scope}
+                  onChange={(e) => setForm((f) => ({ ...f, scope: e.target.value }))}
+                  className="mt-1 w-full h-9 px-2 bg-[#0A0A0A] border border-[#27272A] rounded-md text-sm">
+                  <option value="both">Both studios</option>
+                  <option value="coupon">Coupon only</option>
+                  <option value="gift_card">Gift card only</option>
+                </select>
+              </div>
+              <label className="flex items-end gap-2 text-sm text-[#A1A1AA] pb-1">
+                <input type="checkbox" checked={form.is_public}
+                  onChange={(e) => setForm((f) => ({ ...f, is_public: e.target.checked }))}
+                  data-testid="preset-pack-public" />
+                Published to all workspaces
+              </label>
+            </div>
+            <div className="pt-2">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs uppercase tracking-widest text-[#71717A]">Presets in this pack</div>
+                <button className="text-[10px] uppercase text-[#CCFF00]" data-testid="preset-pack-add-preset"
+                  onClick={() => setForm((f) => ({ ...f, presets: [...f.presets, emptyPreset()] }))}>+ Add preset</button>
+              </div>
+              {form.presets.map((p, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2 mb-2 items-start" data-testid={`preset-row-${i}`}>
+                  <Input placeholder="key (unique)" value={p.key} onChange={(e) => setPreset(i, "key", e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} className="col-span-3 bg-[#0A0A0A] border-[#27272A]" />
+                  <Input placeholder="Label" value={p.label} onChange={(e) => setPreset(i, "label", e.target.value)} className="col-span-3 bg-[#0A0A0A] border-[#27272A]" />
+                  <Input type="color" value={p.accent} onChange={(e) => setPreset(i, "accent", e.target.value)} className="col-span-1 h-9 p-1 bg-[#0A0A0A] border-[#27272A]" />
+                  <Input placeholder="Image prompt" value={p.prompt} onChange={(e) => setPreset(i, "prompt", e.target.value)} className="col-span-4 bg-[#0A0A0A] border-[#27272A]" />
+                  <button onClick={() => setForm((f) => ({ ...f, presets: f.presets.filter((_, x) => x !== i) }))}
+                    className="col-span-1 text-red-400 text-xs pt-2" data-testid={`preset-row-remove-${i}`}>Remove</button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={save} disabled={busy} data-testid="preset-pack-save" className="btn-primary rounded-md gap-2">
+              {busy && <Loader2 className="w-4 h-4 spin" />} {editing ? "Save" : "Publish pack"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 
@@ -254,6 +403,8 @@ export default function Admin() {
           )}
         </div>
       )}
+
+      {tab === "presets" && <PresetPacksManager />}
 
       {tab === "logs" && (
         <div className="surface rounded-lg overflow-hidden">

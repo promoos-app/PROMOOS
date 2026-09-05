@@ -1,3 +1,38 @@
+## Feb 2026 — Wave 3: Router Split + Marketplace + Hyperlinks
+
+### 🧹 Router Split Wave 3 — `server.py` 2589 → 2100 lines (−489)
+- `routers/embed.py` — `/api/embed/coupon.js` (5 variants: inline, popup, bar, wheel, wallet).
+- `routers/exports.py` — `/api/analytics/export?format=csv|pdf`.
+- `routers/journeys.py` — full journey CRUD + `journey_worker` bg loop + `_fire_trigger` re-exported to `server.py` for `/coupons/redeem` and `/v1/coupons/redeem`.
+- Verified: all three endpoints return HTTP 200 in place, journey worker restarts cleanly.
+
+### 💳 Stripe Payment Link Webhook Fix
+- `POST /api/stripe/webhook` now handles hosted Payment Link sessions from the Pricing page:
+  - Falls back to `client_reference_id` when `metadata.workspace_id` is missing.
+  - Infers `lookup_key` from `amount_total` against the PLANS table.
+  - Tags upgrade with `subscription.source = "payment_link" | "checkout"` for downstream audit.
+- Verified: synthetic `checkout.session.completed` payload with amount 7900 and workspace as `client_reference_id` upgraded the workspace to `pro_monthly` / `active`.
+
+### 🎨 Coupon Studio — one-tap Style Presets
+- Same 5 curated chips as gift cards: Champagne, Neon, Minimal, Botanical, Midnight.
+- Reads pack presets from `/api/preset-packs?scope=coupon` and merges with built-ins.
+- data-testids: `coupon-style-presets`, `coupon-preset-{key}`.
+
+### 🏪 Preset Marketplace (Admin)
+- New router `routers/preset_packs.py`:
+  - `POST/GET/PUT/DELETE /api/admin/preset-packs` — superadmin CRUD.
+  - `GET /api/preset-packs?scope=coupon|gift_card` — authenticated read of public packs (union: pack.scope in [scope, "both"]).
+- New Admin tab **Preset Packs**: create pack (name, scope, is_public), inline preset rows (key/label/accent/prompt), edit/delete. Data-testids: `admin-tab-presets`, `admin-preset-packs`, `preset-pack-new-btn`, `preset-pack-save`, `preset-pack-row-{id}`.
+- Both studios auto-hydrate published packs on mount; new custom presets appear alongside built-ins with a pack-name tooltip.
+- Verified: full CRUD via curl + admin UI screenshot.
+
+### 🔗 Universal Hyperlink System (Funnels)
+- Every block (text, heading, paragraph, image, video, audio, product, cta, etc.) now supports `props.link_url` + optional `props.link_target` ("_blank" default, "_self" opt-in via checkbox).
+- Editor: universal hyperlink row inserted at the top of every block card in `Funnels.js` (Link2 icon + URL input + "Same tab" toggle). Data-testids: `block-hyperlink-{id}`, `block-link-url-{id}`, `block-link-same-tab-{id}`.
+- Public renderer: `PublicFunnel.js` `Block()` wraps `<Comp />` in an `<a>` when `link_url` is set. Emits `hyperlink_click` funnel event on click with the target `href` in `meta`.
+- Verified: create/update funnel → public payload preserves `link_url` and `link_target`.
+
+
 ## Feb 2026 — Verified: Embed Snippet & Image Style Presets
 
 ### Embed Snippet — verified end-to-end

@@ -175,6 +175,7 @@ export default function CouponEditor() {
   const [aiCopyLoading, setAiCopyLoading] = useState(false);
   const [aiImgLoading, setAiImgLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [marketPresets, setMarketPresets] = useState([]);
 
   useEffect(() => {
     if (id) {
@@ -183,6 +184,11 @@ export default function CouponEditor() {
         setForm({ ...empty, ...c, rules: { ...empty.rules, ...c.rules } });
       }).catch((e) => toast.error(apiError(e)));
     }
+    api.get("/preset-packs?scope=coupon").then((r) => {
+      const flat = (r.data || []).flatMap((pack) =>
+        (pack.presets || []).map((p) => ({ ...p, packName: pack.name })));
+      setMarketPresets(flat);
+    }).catch(() => {});
   }, [id]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -209,17 +215,32 @@ export default function CouponEditor() {
     finally { setAiCopyLoading(false); }
   };
 
-  const runAIImage = async () => {
-    const p = prompt.trim() || form.headline || form.name;
-    if (!p) { toast.error("Add a prompt or headline first"); return; }
+  const runAIImage = async (presetOverride) => {
+    const basePrompt = presetOverride
+      ? presetOverride.prompt
+      : (prompt.trim() || form.headline || form.name);
+    if (!basePrompt) { toast.error("Add a prompt or headline first"); return; }
     setAiImgLoading(true);
     try {
-      const { data } = await api.post("/ai/image", { prompt: p });
+      const { data } = await api.post("/ai/image", { prompt: basePrompt });
       set("image_url", data.image_url);
-      toast.success("AI generated a promo visual");
+      toast.success(presetOverride ? `${presetOverride.label} visual generated` : "AI generated a promo visual");
     } catch (e) { toast.error(apiError(e, "Image generation failed")); }
     finally { setAiImgLoading(false); }
   };
+
+  const IMAGE_PRESETS = [
+    { key: "champagne", label: "Champagne", accent: "#E7CB8E",
+      prompt: "elegant champagne gold luxury promotional banner background, soft warm bokeh, silk texture, premium boutique, cinematic lighting, no text" },
+    { key: "neon", label: "Neon", accent: "#CCFF00",
+      prompt: "vibrant neon night promotional banner, electric magenta and cyan glow, glossy reflections, futuristic cyberpunk aesthetic, high contrast, no text" },
+    { key: "minimal", label: "Minimal", accent: "#111111",
+      prompt: "minimal off-white paper promotional banner, subtle warm grain, tasteful architectural shadow, editorial premium, matte finish, no text" },
+    { key: "botanical", label: "Botanical", accent: "#7C9A5F",
+      prompt: "soft botanical greenery watercolor promotional banner, sage and olive palette, hand-painted leaves, airy natural light, no text" },
+    { key: "midnight", label: "Midnight", accent: "#8B5CF6",
+      prompt: "deep midnight blue promotional banner with starfield, aurora streaks in violet and teal, cinematic astro aesthetic, premium, no text" },
+  ];
 
   const save = async () => {
     if (!form.name.trim()) { toast.error("Give your coupon a name"); return; }
@@ -264,10 +285,25 @@ export default function CouponEditor() {
               <Button data-testid="ai-generate-copy-btn" onClick={runAICopy} disabled={aiCopyLoading} className="btn-ai rounded-md gap-2 flex-1">
                 {aiCopyLoading ? <Loader2 className="w-4 h-4 spin" /> : <Wand2 className="w-4 h-4" />} Generate Copy
               </Button>
-              <Button data-testid="ai-generate-image-btn" onClick={runAIImage} disabled={aiImgLoading}
+              <Button data-testid="ai-generate-image-btn" onClick={() => runAIImage()} disabled={aiImgLoading}
                 className="rounded-md gap-2 flex-1 bg-[#0A0A0A] border border-[#CCFF00]/40 text-white hover:bg-[#1E1E1E]">
                 {aiImgLoading ? <Loader2 className="w-4 h-4 spin" /> : <ImageIcon className="w-4 h-4" />} Generate Visual
               </Button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-3" data-testid="coupon-style-presets">
+              {[...IMAGE_PRESETS, ...marketPresets].map((p) => (
+                <button
+                  key={`${p.packName || 'builtin'}-${p.key}`}
+                  onClick={() => runAIImage(p)}
+                  disabled={aiImgLoading}
+                  data-testid={`coupon-preset-${p.key}`}
+                  title={p.packName ? `${p.packName} · ${p.label}` : `One-tap ${p.label} style`}
+                  className="text-[10px] tracking-widest uppercase inline-flex items-center gap-1 px-2 py-1 rounded-full border border-[#27272A] hover:border-[#CCFF00] hover:text-[#CCFF00] transition-colors disabled:opacity-40"
+                >
+                  <span className="w-2 h-2 rounded-full" style={{ background: p.accent }} />
+                  {p.label}
+                </button>
+              ))}
             </div>
           </div>
 

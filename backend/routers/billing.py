@@ -282,7 +282,20 @@ def register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso, get_curr
         obj, t = event["data"]["object"], event["type"]
         if t == "checkout.session.completed":
             sid = obj.get("id")
-            ws_id = (obj.get("metadata") or {}).get("workspace_id")
+            meta = obj.get("metadata") or {}
+            ws_id = meta.get("workspace_id")
+            lookup_key = meta.get("lookup_key")
+            # Fallback: Payment Links (from Pricing page) don't attach workspace_id via metadata.
+            # We pass workspace_id as client_reference_id from the frontend, and infer the plan
+            # from amount_total when lookup_key is missing.
+            if not ws_id:
+                ws_id = obj.get("client_reference_id")
+            if not lookup_key:
+                amt = obj.get("amount_total")
+                if amt:
+                    for _p in PLANS:
+                        if _p["amount_cents"] == amt:
+                            lookup_key = _p["lookup_key"]; break
             await db.payment_transactions.update_one(
                 {"session_id": sid, "payment_status": {"$ne": "paid"}},
                 {"$set": {"status": "completed", "payment_status": obj.get("payment_status", "paid"),
@@ -291,10 +304,11 @@ def register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso, get_curr
                           "updated_at": now_iso()}})
             if ws_id:
                 await db.workspaces.update_one({"id": ws_id}, {"$set": {"subscription": {
-                    "status": "active", "plan": (obj.get("metadata") or {}).get("lookup_key"),
+                    "status": "active", "plan": lookup_key,
                     "stripe_subscription_id": obj.get("subscription"),
                     "stripe_customer_id": obj.get("customer"),
-                    "activated_at": now_iso()}}})
+                    "activated_at": now_iso(),
+                    "source": "payment_link" if not meta.get("workspace_id") else "checkout"}}})
         elif t in ("customer.subscription.deleted", "customer.subscription.updated"):
             sub_id = obj.get("id"); status = obj.get("status")
             await db.workspaces.update_one({"subscription.stripe_subscription_id": sub_id},

@@ -321,7 +321,27 @@ const REGISTRY = {
 function Block({ block, theme, slug, funnel }) {
   const Comp = REGISTRY[block.type];
   if (!Comp) return null;
-  return <Comp block={block} theme={theme} slug={slug} funnel={funnel} />;
+  const inner = <Comp block={block} theme={theme} slug={slug} funnel={funnel} />;
+  const link = ((block.props && block.props.link_url) || block.link_url || "").trim();
+  if (!link) return inner;
+  const target = ((block.props && block.props.link_target) || block.link_target) === "_self" ? "_self" : "_blank";
+  const onLinkClick = () => {
+    trackFunnelEvent(slug, "hyperlink_click", {
+      block_id: block.id, block_type: block.type, meta: { href: link },
+    });
+  };
+  return (
+    <a
+      href={link}
+      target={target}
+      rel={target === "_blank" ? "noopener noreferrer" : undefined}
+      onClick={onLinkClick}
+      className="block hover:opacity-90 transition-opacity"
+      data-testid={`block-link-${block.id}`}
+    >
+      {inner}
+    </a>
+  );
 }
 
 export default function PublicFunnel() {

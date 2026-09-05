@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
-import { Plus, Loader2, ArrowLeft, Globe, ExternalLink, Trash2, Save, Rocket, Copy, Eye, MousePointerClick, Copy as CopyIcon, TrendingUp, Palette, MessageSquareQuote } from "lucide-react";
+import { Plus, Loader2, ArrowLeft, Globe, ExternalLink, Trash2, Save, Rocket, Copy, Eye, MousePointerClick, Copy as CopyIcon, TrendingUp, Palette, MessageSquareQuote, Link2 } from "lucide-react";
 
 // Small color-swatch input used across every block for optional per-section theming.
 function ColorSwatch({ label, value, onChange, allowClear = true, testid }) {
@@ -477,6 +477,26 @@ export function FunnelEditor() {
                   <button onClick={() => moveBlock(idx, 1)} className="text-xs text-[#71717A] hover:text-white px-1">↓</button>
                   <button onClick={() => removeBlock(b.id)} data-testid={`block-remove-${b.id}`} className="text-red-400 hover:bg-red-500/10 rounded p-1"><Trash2 className="w-3 h-3" /></button>
                 </div>
+              </div>
+              {/* Universal hyperlink control — applies to any block (text, image, video, audio, etc.) */}
+              <div className="flex items-center gap-2 mb-3" data-testid={`block-hyperlink-${b.id}`}>
+                <Link2 className="w-3 h-3 text-[#71717A]" />
+                <Input
+                  value={b.props.link_url || ""}
+                  onChange={(e) => updateBlock(b.id, { link_url: e.target.value })}
+                  placeholder="Hyperlink URL (optional) — wraps this block in a clickable link"
+                  className="bg-[#0A0A0A] border-[#27272A] text-white text-xs h-8 flex-1"
+                  data-testid={`block-link-url-${b.id}`}
+                />
+                <label className="flex items-center gap-1 text-[10px] text-[#71717A] whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={b.props.link_target === "_self"}
+                    onChange={(e) => updateBlock(b.id, { link_target: e.target.checked ? "_self" : "_blank" })}
+                    data-testid={`block-link-same-tab-${b.id}`}
+                  />
+                  Same tab
+                </label>
               </div>
               {b.type === "image" && (
                 <div className="space-y-2">

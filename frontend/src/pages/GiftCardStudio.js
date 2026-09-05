@@ -56,12 +56,18 @@ export default function GiftCardStudio() {
   const [recipientName, setRecipientName] = useState("");
   const [saving, setSaving] = useState(false);
   const [aiBusy, setAiBusy] = useState(null);
+  const [marketPresets, setMarketPresets] = useState([]);
 
   useEffect(() => {
     api.get("/giftcard-templates").then((r) => {
       setTemplates(r.data.templates);
       setCategories(r.data.categories);
     }).catch((e) => toast.error(apiError(e)));
+    api.get("/preset-packs?scope=gift_card").then((r) => {
+      const flat = (r.data || []).flatMap((pack) =>
+        (pack.presets || []).map((p) => ({ ...p, packName: pack.name })));
+      setMarketPresets(flat);
+    }).catch(() => {});
   }, []);
 
   const pick = (tpl) => {
@@ -213,16 +219,16 @@ export default function GiftCardStudio() {
               </button>
             </div>
             <div className="flex flex-wrap gap-1.5 mb-2" data-testid="gc-style-presets">
-              {IMAGE_PRESETS.map((p) => {
+              {[...IMAGE_PRESETS, ...marketPresets].map((p) => {
                 const busy = aiBusy === `preset:${p.key}`;
                 const anyBusy = !!aiBusy;
                 return (
                   <button
-                    key={p.key}
+                    key={`${p.packName || 'builtin'}-${p.key}`}
                     onClick={() => regen("image_bg", p)}
                     disabled={anyBusy}
                     data-testid={`preset-${p.key}`}
-                    title={`One-tap ${p.label} style`}
+                    title={p.packName ? `${p.packName} · ${p.label}` : `One-tap ${p.label} style`}
                     className="text-[10px] tracking-widest uppercase inline-flex items-center gap-1 px-2 py-1 rounded-full border border-[#27272A] hover:border-[#CCFF00] hover:text-[#CCFF00] transition-colors disabled:opacity-40"
                   >
                     <span className="w-2 h-2 rounded-full" style={{ background: p.accent }} />
