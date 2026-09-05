@@ -1,3 +1,34 @@
+## Feb 2026 — Stripe Live + Health Check + Rotation + Bulk Actions + Template Studio
+
+### 💳 Stripe — Live API-key Connection
+- Removed the hardcoded "connected=true" Stripe card and replaced with a real `OAuthConnector` (`mode: api_key`, `category: delivery`).
+- `key_hint: "sk_live_xxxxxxxx or sk_test_xxxxxxxx"`, `token_docs`: link to `dashboard.stripe.com/apikeys`.
+- Health probe hits `GET /v1/account` on connect and surfaces the business profile name.
+
+### 🩺 Publish-Time Health Check (all providers)
+- `POST /oauth/{provider}/connect` now runs a light live probe against the provider's REST API using the pasted token. Response now includes `{ health: { ok, account, error? } }`.
+- Probes implemented for: **Sendgrid, Mailchimp, Facebook, Instagram, LinkedIn, Resend, Stripe, Twilio, Telegram, Paystack**. Unknown providers silently pass with `account: "Stored (not probed)"`.
+- Frontend toast surfaces the connected account name: `"Mailchimp connected — Acme Marketing"`. On probe failure the toast warns (`toast.warning`) and the connector shows a red inline error under the account preview.
+- Connected cards render `metadata.account_name` in bold + last `health_ok` state. Data-testids: `account-{provider}`, `health-error-{provider}`.
+
+### 🔁 Provider Rotation Reminder
+- `/api/oauth/tokens` now computes `age_days` and `expires_soon` (age ≥ 55d — hit before Meta long-lived tokens flip at day 60).
+- Connected cards render an amber "Rotate soon · Nd old" badge when `expires_soon` is true. Data-testid: `rotate-badge-{provider}`.
+
+### 🎯 Bulk Coupon Actions Expand
+- New endpoints: `POST /api/coupons/bulk-state` (state ∈ draft/scheduled/active/paused/expired/archived) and `POST /api/coupons/bulk-delete`.
+- Coupons list bulk bar now shows **Publish · Pause · Expire · Archive** buttons alongside the existing **Set background**. Confirm dialog before applying. Verified `active → paused` returns `updated: 1`.
+- Data-testids: `coupons-bulk-publish`, `coupons-bulk-pause`, `coupons-bulk-expire`, `coupons-bulk-archive`.
+
+### 🧬 Journey Template Studio
+- New collection `journey_templates` (workspace-scoped custom templates).
+- `POST /journey-templates/save` — snapshot an existing journey as a reusable template (name/description/steps/trigger). Verified.
+- `DELETE /journey-templates/custom/{tid}` — remove a custom template.
+- `GET /journey-templates` now returns the union of workspace's custom templates + 3 built-ins.
+- `POST /journey-templates/{tid}/apply` now handles both builtin and custom template ids.
+- Campaigns page: **Save as template** button on every journey card + save dialog with name/description. Custom templates render with a green "Custom" badge in the templates strip. Data-testids: `journey-save-template-{id}`, `journey-save-template-dialog`, `journey-save-template-submit`, `journey-template-custom-badge-{id}`.
+
+
 ## Feb 2026 — Hotfix: OAuth providers unblocked with access-token fallback
 
 - **Bug**: Mailchimp, Facebook, Instagram Business, LinkedIn, and TikTok cards showed a static "Configure ..._CLIENT_ID + ..._CLIENT_SECRET in backend/.env" message. Merchants couldn't connect without waiting on a platform-owner env change.

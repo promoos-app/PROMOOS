@@ -79,7 +79,80 @@ PROVIDERS = {
     "razorpay":   {"label": "Razorpay",            "mode": "api_key", "category": "delivery", "key_hint": "rzp_KEY_ID:KEY_SECRET"},
     "paystack":   {"label": "Paystack",            "mode": "api_key", "category": "delivery", "key_hint": "sk_live_xxxxxxxx"},
     "telegram":   {"label": "Telegram Bot",        "mode": "api_key", "category": "delivery", "key_hint": "bot token from @BotFather"},
+    "stripe":     {"label": "Stripe",              "mode": "api_key", "category": "delivery",
+                    "key_hint": "sk_live_xxxxxxxx or sk_test_xxxxxxxx",
+                    "token_docs": "https://dashboard.stripe.com/apikeys"},
 }
+
+
+# ---- Health-check helpers: light API probes to confirm a pasted token works ----
+def _health_check(provider: str, token: str) -> dict:
+    """Return {ok: bool, account: str, extra?: dict}. Never raises — returns ok:false on failure."""
+    import requests as _rq
+    try:
+        if provider == "sendgrid":
+            r = _rq.get("https://api.sendgrid.com/v3/user/profile",
+                         headers={"Authorization": f"Bearer {token}"}, timeout=8)
+            if r.ok:
+                d = r.json()
+                return {"ok": True, "account": f"{d.get('first_name','')} {d.get('last_name','')}".strip() or d.get("email") or "SendGrid account"}
+        elif provider == "mailchimp":
+            # Mailchimp keys end with -dcX (e.g. -us1). Use it to pick the datacenter.
+            dc = token.rsplit("-", 1)[-1] if "-" in token else "us1"
+            r = _rq.get(f"https://{dc}.api.mailchimp.com/3.0/",
+                         auth=("anystring", token), timeout=8)
+            if r.ok:
+                d = r.json()
+                return {"ok": True, "account": d.get("account_name") or "Mailchimp account"}
+        elif provider in ("facebook", "instagram"):
+            r = _rq.get("https://graph.facebook.com/v18.0/me",
+                         params={"access_token": token, "fields": "name,id"}, timeout=8)
+            if r.ok:
+                d = r.json()
+                return {"ok": True, "account": d.get("name") or f"ID {d.get('id')}"}
+        elif provider == "linkedin":
+            r = _rq.get("https://api.linkedin.com/v2/userinfo",
+                         headers={"Authorization": f"Bearer {token}"}, timeout=8)
+            if r.ok:
+                d = r.json()
+                return {"ok": True, "account": d.get("name") or d.get("email") or "LinkedIn user"}
+        elif provider == "resend":
+            r = _rq.get("https://api.resend.com/domains",
+                         headers={"Authorization": f"Bearer {token}"}, timeout=8)
+            if r.ok:
+                data = r.json().get("data", [])
+                return {"ok": True, "account": f"{len(data)} domain(s)"}
+        elif provider == "stripe":
+            r = _rq.get("https://api.stripe.com/v1/account",
+                         auth=(token, ""), timeout=8)
+            if r.ok:
+                d = r.json()
+                return {"ok": True, "account": d.get("business_profile", {}).get("name") or d.get("email") or d.get("id") or "Stripe account"}
+        elif provider == "twilio":
+            # Format: AC_SID:AUTH_TOKEN
+            if ":" in token:
+                sid, auth = token.split(":", 1)
+                r = _rq.get(f"https://api.twilio.com/2010-04-01/Accounts/{sid}.json",
+                             auth=(sid, auth), timeout=8)
+                if r.ok:
+                    d = r.json()
+                    return {"ok": True, "account": d.get("friendly_name") or sid}
+        elif provider == "telegram":
+            r = _rq.get(f"https://api.telegram.org/bot{token}/getMe", timeout=8)
+            if r.ok and r.json().get("ok"):
+                b = r.json().get("result", {})
+                return {"ok": True, "account": f"@{b.get('username')}" if b.get('username') else b.get("first_name", "Bot")}
+        elif provider == "paystack":
+            r = _rq.get("https://api.paystack.co/bank",
+                         headers={"Authorization": f"Bearer {token}"}, timeout=8)
+            if r.ok:
+                return {"ok": True, "account": "Paystack account"}
+        else:
+            # No probe defined — accept the token but flag as unverified.
+            return {"ok": True, "account": "Stored (not probed)"}
+    except Exception as e:
+        return {"ok": False, "account": "", "error": str(e)[:120]}
+    return {"ok": False, "account": "", "error": "Provider rejected the token"}
 
 
 def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer):
@@ -165,16 +238,23 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
         # Both API-key-native providers AND OAuth providers accept a pasted long-lived access token here
         # so merchants don't have to wait on platform-owner OAuth app credentials in backend/.env.
         stored_mode = "api_key" if cfg["mode"] == "api_key" else "access_token"
+        # Publish-time health check — light probe to confirm the token actually works.
+        health = _health_check(provider, body.api_key)
+        metadata = {**(body.metadata or {})}
+        if health.get("account"): metadata["account_name"] = health["account"]
+        if health.get("error"):   metadata["last_health_error"] = health["error"]
         await db.oauth_tokens.update_one(
             {"provider": provider, "workspace_id": user["workspace_id"]},
             {"$set": {"provider": provider, "workspace_id": user["workspace_id"],
                       "mode": stored_mode, "access_token": encrypt_str(body.api_key),
                       "access_token_preview": body.api_key[:6] + "…" + body.api_key[-4:],
-                      "label": body.account_label or cfg["label"],
-                      "metadata": body.metadata or {},
+                      "label": body.account_label or health.get("account") or cfg["label"],
+                      "metadata": metadata,
+                      "health_ok": bool(health.get("ok")),
                       "connected_at": now_iso(), "revoked": False}},
             upsert=True)
-        return {"ok": True, "provider": provider, "label": cfg["label"]}
+        return {"ok": True, "provider": provider, "label": cfg["label"],
+                "health": health}
 
     @api.get("/oauth/callback")
     async def oauth_callback(code: str, state: str):
@@ -233,6 +313,18 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
             {"workspace_id": user["workspace_id"], "revoked": {"$ne": True}},
             {"_id": 0, "access_token": 0, "refresh_token": 0}
         ).to_list(50)
+        from datetime import datetime, timezone as _tz
+        now = datetime.now(_tz.utc)
+        for d in docs:
+            connected = d.get("connected_at")
+            if connected:
+                try:
+                    age = (now - datetime.fromisoformat(connected.replace("Z", "+00:00"))).days
+                    d["age_days"] = age
+                    # Rotation reminder — Meta long-lived tokens expire around day 60. Warn at 55.
+                    d["expires_soon"] = age >= 55
+                except Exception:
+                    d["age_days"] = 0; d["expires_soon"] = False
         return docs
 
     @api.delete("/oauth/{provider}")

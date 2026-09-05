@@ -30,8 +30,16 @@ function OAuthConnector({ provider, label, icon, hint, tokens, providers, onChan
     if (!apiKey.trim()) { toast.error("API key required"); return; }
     setBusy(true);
     try {
-      await api.post(`/oauth/${provider}/connect`, { api_key: apiKey.trim() });
-      toast.success(`${label} connected`);
+      const { data } = await api.post(`/oauth/${provider}/connect`, { api_key: apiKey.trim() });
+      const acct = data?.health?.account;
+      const okHealth = data?.health?.ok;
+      if (okHealth === false) {
+        toast.warning(`${label} connected — but the token failed a live check.${data?.health?.error ? ` ${data.health.error}` : ""}`);
+      } else if (acct) {
+        toast.success(`${label} connected — ${acct}`);
+      } else {
+        toast.success(`${label} connected`);
+      }
       setOpen(false); setApiKey(""); onChange?.();
     } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
   };
@@ -64,8 +72,27 @@ function OAuthConnector({ provider, label, icon, hint, tokens, providers, onChan
       {token ? (
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-[10px] font-mono text-[#71717A]">{token.access_token_preview}</div>
-            <div className="flex gap-1">
+            <div className="flex-1 min-w-0">
+              {token.metadata?.account_name && (
+                <div className="text-xs text-white font-bold truncate" data-testid={`account-${provider}`}>
+                  {token.metadata.account_name}
+                </div>
+              )}
+              <div className="text-[10px] font-mono text-[#71717A]">{token.access_token_preview}</div>
+              {token.expires_soon && (
+                <div className="mt-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/40"
+                  title={`Token was connected ${token.age_days} days ago — rotate before it expires.`}
+                  data-testid={`rotate-badge-${provider}`}>
+                  <RefreshCw className="w-3 h-3" /> Rotate soon · {token.age_days}d old
+                </div>
+              )}
+              {token.metadata?.last_health_error && (
+                <div className="mt-1 text-[10px] text-red-400 truncate" data-testid={`health-error-${provider}`}>
+                  ⚠ {token.metadata.last_health_error}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-1 shrink-0">
               {(cfg?.category || "social") === "social" && (
               <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
                 <DialogTrigger asChild>
@@ -328,7 +355,8 @@ export default function Integrations() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8" data-testid="delivery-platforms-grid">
         <OAuthConnector provider="twilio" label="Twilio" icon="💬" hint="Send SMS and WhatsApp coupons. Paste SID:AUTH_TOKEN."
                         tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
-        <ConnectorCard name="Stripe" icon="💳" connected={true} hint="Subscription billing + 100+ global payment methods (cards, Apple/Google Pay, SEPA, iDEAL, Klarna, Afterpay, Alipay, WeChat)." envHint="STRIPE_SECRET_KEY (configured)" />
+        <OAuthConnector provider="stripe" label="Stripe" icon="💳" hint="Subscription billing + 100+ global payment methods. Paste your Stripe secret key."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
         <OAuthConnector provider="paypal" label="PayPal" icon="🅿️" hint="Alternative payment provider for global reach."
                         tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
         <OAuthConnector provider="razorpay" label="Razorpay" icon="🇮🇳" hint="India-first payments — UPI, NetBanking, cards."

@@ -116,6 +116,22 @@ export default function Campaigns() {
   const [templates, setTemplates] = useState([]);
   const [applyingTpl, setApplyingTpl] = useState(null);
   const [previewTpl, setPreviewTpl] = useState(null);
+  const [savingFromJourney, setSavingFromJourney] = useState(null);
+  const [tplName, setTplName] = useState("");
+  const [tplDesc, setTplDesc] = useState("");
+  const [tplBusy, setTplBusy] = useState(false);
+
+  const saveTemplate = async () => {
+    if (!savingFromJourney || !tplName.trim()) { toast.error("Give the template a name"); return; }
+    setTplBusy(true);
+    try {
+      await api.post("/journey-templates/save", {
+        journey_id: savingFromJourney.id, name: tplName.trim(), description: tplDesc.trim() });
+      toast.success("Saved as reusable template");
+      setSavingFromJourney(null); setTplName(""); setTplDesc("");
+      api.get("/journey-templates").then((r) => setTemplates(r.data.templates || [])).catch(() => {});
+    } catch (e) { toast.error(apiError(e)); } finally { setTplBusy(false); }
+  };
 
   const load = () => api.get("/journeys").then((r) => setRows(r.data)).catch((e) => toast.error(apiError(e)));
   useEffect(() => { load(); api.get("/journey-templates").then((r) => setTemplates(r.data.templates || [])).catch(() => {}); }, []);
@@ -188,7 +204,12 @@ export default function Campaigns() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {templates.map((t) => (
               <div key={t.id} className="rounded-md p-4 bg-[#0A0A0A] border border-[#27272A] hover:border-[#CCFF00] transition-colors" data-testid={`journey-template-${t.id}`}>
-                <div className="font-display font-bold text-sm mb-1">{t.name}</div>
+                <div className="flex items-start justify-between mb-1">
+                  <div className="font-display font-bold text-sm">{t.name}</div>
+                  {t.source === "custom" && (
+                    <span className="text-[9px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded-full bg-[#CCFF00]/15 text-[#CCFF00] border border-[#CCFF00]/40" data-testid={`journey-template-custom-badge-${t.id}`}>Custom</span>
+                  )}
+                </div>
                 <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Trigger · {t.trigger.replace("_", " ")}</div>
                 <div className="text-xs text-[#A1A1AA] mb-3">{t.description}</div>
                 <div className="text-[10px] text-[#71717A] mb-3">{(t.steps || []).length} step{(t.steps || []).length === 1 ? "" : "s"}</div>
@@ -242,9 +263,16 @@ export default function Campaigns() {
                 <button data-testid={`journey-enroll-btn-${j.id}`} onClick={() => { setEnrolling(j.id); loadRuns(j.id); }} className="text-xs text-[#CCFF00] hover:underline flex items-center gap-1">
                   <UserPlus className="w-3 h-3" /> Enroll · view runs
                 </button>
-                <button onClick={() => del(j.id)} className="text-xs text-[#71717A] hover:text-red-400 flex items-center gap-1">
-                  <Trash2 className="w-3 h-3" /> Delete
-                </button>
+                <div className="flex items-center gap-3">
+                  <button data-testid={`journey-save-template-${j.id}`}
+                    onClick={() => setSavingFromJourney({ id: j.id, name: j.name })}
+                    className="text-xs text-[#A1A1AA] hover:text-[#CCFF00] flex items-center gap-1">
+                    <Sparkles className="w-3 h-3" /> Save as template
+                  </button>
+                  <button onClick={() => del(j.id)} className="text-xs text-[#71717A] hover:text-red-400 flex items-center gap-1">
+                    <Trash2 className="w-3 h-3" /> Delete
+                  </button>
+                </div>
               </div>
               {enrolling === j.id && (
                 <div className="mt-3 p-3 rounded-md bg-[#0A0A0A] border border-[#27272A]" data-testid={`journey-enroll-panel-${j.id}`}>
@@ -276,6 +304,32 @@ export default function Campaigns() {
           ))}
         </div>
       )}
+
+      <Dialog open={!!savingFromJourney} onOpenChange={(o) => !o && setSavingFromJourney(null)}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-md" data-testid="journey-save-template-dialog">
+          <DialogHeader><DialogTitle>Save "{savingFromJourney?.name}" as a template</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-[#A1A1AA]">Template name</label>
+              <Input data-testid="journey-save-template-name" value={tplName} onChange={(e) => setTplName(e.target.value)}
+                placeholder="e.g. Signature Welcome Flow"
+                className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" />
+            </div>
+            <div>
+              <label className="text-xs text-[#A1A1AA]">Description (optional)</label>
+              <Input data-testid="journey-save-template-desc" value={tplDesc} onChange={(e) => setTplDesc(e.target.value)}
+                placeholder="Two-touch welcome with a 10% coupon after 24h."
+                className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button data-testid="journey-save-template-submit" onClick={saveTemplate} disabled={tplBusy}
+              className="btn-primary rounded-md gap-2">
+              {tplBusy && <Loader2 className="w-4 h-4 spin" />} Save template
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!previewTpl} onOpenChange={(o) => !o && setPreviewTpl(null)}>
         <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-lg" data-testid="journey-template-preview-dialog">

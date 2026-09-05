@@ -280,14 +280,71 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
 
     @api.get("/journey-templates")
     async def list_journey_templates(user: dict = Depends(get_current_user)):
-        """Ready-to-run automation templates any workspace can install with one click."""
-        return {"templates": JOURNEY_TEMPLATES}
+        """Ready-to-run automation templates any workspace can install with one click.
+
+        Union of:
+        - Built-in templates (welcome / cart abandonment / birthday)
+        - Templates saved by this workspace via the Journey Template Studio
+        """
+        custom = await db.journey_templates.find(
+            {"workspace_id": user["workspace_id"]},
+            {"_id": 0}).sort("created_at", -1).to_list(100)
+        # Normalize custom into the same shape as builtin
+        custom_shaped = [{
+            "id": c["id"], "name": c["name"], "description": c.get("description", ""),
+            "trigger": c["trigger"], "steps": c["steps"], "source": "custom",
+        } for c in custom]
+        return {"templates": custom_shaped + JOURNEY_TEMPLATES}
+
+    class SaveTemplateIn(BaseModel):
+        journey_id: str
+        name: str
+        description: Optional[str] = ""
+
+    @api.post("/journey-templates/save")
+    async def save_journey_as_template(body: SaveTemplateIn,
+                                        user: dict = Depends(get_current_user)):
+        """Journey Template Studio — snapshot an existing journey as a reusable template."""
+        require_writer(user)
+        j = await db.journeys.find_one(
+            {"id": body.journey_id, "workspace_id": user["workspace_id"]},
+            {"_id": 0})
+        if not j:
+            raise HTTPException(404, "Journey not found")
+        doc = {
+            "id": str(uuid.uuid4()),
+            "workspace_id": user["workspace_id"],
+            "name": body.name.strip()[:80],
+            "description": (body.description or "").strip()[:280],
+            "trigger": j["trigger"],
+            "steps": j["steps"],
+            "source_journey_id": body.journey_id,
+            "created_by": user["id"],
+            "created_at": now_iso(),
+        }
+        await db.journey_templates.insert_one({**doc})
+        return doc
+
+    @api.delete("/journey-templates/custom/{tid}")
+    async def delete_custom_template(tid: str, user: dict = Depends(get_current_user)):
+        require_writer(user)
+        r = await db.journey_templates.delete_one(
+            {"id": tid, "workspace_id": user["workspace_id"]})
+        if r.deleted_count == 0:
+            raise HTTPException(404, "Custom template not found")
+        return {"ok": True}
 
     @api.post("/journey-templates/{tid}/apply")
     async def apply_journey_template(tid: str, user: dict = Depends(get_current_user)):
-        """Copy a template into the merchant's workspace as an enabled journey."""
+        """Copy a template into the merchant's workspace as an enabled journey.
+        Accepts both builtin ids and workspace-scoped custom template ids."""
         require_writer(user)
         tpl = next((t for t in JOURNEY_TEMPLATES if t["id"] == tid), None)
+        if tpl is None:
+            custom = await db.journey_templates.find_one(
+                {"id": tid, "workspace_id": user["workspace_id"]}, {"_id": 0})
+            if custom:
+                tpl = custom
         if not tpl:
             raise HTTPException(404, f"Template '{tid}' not found")
         doc = {

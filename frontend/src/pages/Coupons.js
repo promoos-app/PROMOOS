@@ -26,6 +26,20 @@ export default function Coupons() {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkBg, setBulkBg] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkStateBusy, setBulkStateBusy] = useState(false);
+
+  const bulkState = async (state) => {
+    if (selected.size === 0) return;
+    if (!window.confirm(`Move ${selected.size} coupon${selected.size === 1 ? "" : "s"} to "${state}"?`)) return;
+    setBulkStateBusy(true);
+    try {
+      const { data } = await api.post("/coupons/bulk-state",
+        { coupon_ids: Array.from(selected), state });
+      toast.success(`${data.updated} coupon${data.updated === 1 ? "" : "s"} → ${state}`);
+      qc.invalidateQueries({ queryKey: ["coupons"] });
+      clearSelection();
+    } catch (e) { toast.error(apiError(e)); } finally { setBulkStateBusy(false); }
+  };
 
   const toggleSelect = (id) => setSelected((s) => {
     const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n;
@@ -130,12 +144,32 @@ export default function Coupons() {
 
       <div className="surface rounded-lg overflow-hidden">
         {selected.size > 0 && (
-          <div className="flex items-center justify-between gap-3 p-3 bg-[#CCFF00]/5 border-b border-[#CCFF00]/30" data-testid="coupons-bulk-bar">
+          <div className="flex items-center justify-between gap-3 p-3 bg-[#CCFF00]/5 border-b border-[#CCFF00]/30 flex-wrap" data-testid="coupons-bulk-bar">
             <div className="text-xs text-[#CCFF00] font-bold">{selected.size} selected</div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Button data-testid="coupons-bulk-bg-btn" onClick={() => setBulkOpen(true)}
                 className="btn-primary rounded-md gap-2 h-8 text-xs">
                 <ImageIcon className="w-3 h-3" /> Set background
+              </Button>
+              <Button data-testid="coupons-bulk-publish"
+                onClick={() => bulkState("active")} disabled={bulkStateBusy}
+                className="btn-ghost rounded-md gap-2 h-8 text-xs border border-[#27272A]">
+                <Sparkles className="w-3 h-3" /> Publish
+              </Button>
+              <Button data-testid="coupons-bulk-pause"
+                onClick={() => bulkState("paused")} disabled={bulkStateBusy}
+                className="btn-ghost rounded-md gap-2 h-8 text-xs border border-[#27272A]">
+                Pause
+              </Button>
+              <Button data-testid="coupons-bulk-expire"
+                onClick={() => bulkState("expired")} disabled={bulkStateBusy}
+                className="btn-ghost rounded-md gap-2 h-8 text-xs border border-[#27272A]">
+                Expire
+              </Button>
+              <Button data-testid="coupons-bulk-archive"
+                onClick={() => bulkState("archived")} disabled={bulkStateBusy}
+                className="btn-ghost rounded-md gap-2 h-8 text-xs border border-[#27272A]">
+                Archive
               </Button>
               <button onClick={clearSelection} className="text-xs text-[#71717A] hover:text-white">Clear</button>
             </div>

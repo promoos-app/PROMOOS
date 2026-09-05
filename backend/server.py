@@ -454,6 +454,41 @@ async def bulk_set_background(body: BulkBackgroundIn, user: dict = Depends(get_c
     return {"updated": r.modified_count, "matched": r.matched_count}
 
 
+class BulkStateIn(BaseModel):
+    coupon_ids: List[str]
+    state: str  # draft | scheduled | active | paused | expired | archived
+
+
+@api.post("/coupons/bulk-state")
+async def bulk_set_state(body: BulkStateIn, user: dict = Depends(get_current_user)):
+    """Bulk publish / pause / expire / archive a batch of coupons."""
+    require_writer(user)
+    valid = {"draft", "scheduled", "active", "paused", "expired", "archived"}
+    if body.state not in valid:
+        raise HTTPException(400, f"state must be one of {sorted(valid)}")
+    if not body.coupon_ids:
+        raise HTTPException(400, "coupon_ids must be non-empty")
+    r = await db.coupons.update_many(
+        {"id": {"$in": body.coupon_ids}, "workspace_id": user["workspace_id"]},
+        {"$set": {"state": body.state, "updated_at": now_iso()}})
+    return {"updated": r.modified_count, "matched": r.matched_count, "state": body.state}
+
+
+class BulkDeleteIn(BaseModel):
+    coupon_ids: List[str]
+
+
+@api.post("/coupons/bulk-delete")
+async def bulk_delete_coupons(body: BulkDeleteIn, user: dict = Depends(get_current_user)):
+    require_writer(user)
+    if not body.coupon_ids:
+        raise HTTPException(400, "coupon_ids must be non-empty")
+    r = await db.coupons.delete_many(
+        {"id": {"$in": body.coupon_ids}, "workspace_id": user["workspace_id"]})
+    return {"deleted": r.deleted_count}
+
+
+
 
 @api.post("/coupons/validate")
 async def validate(body: ValidateIn, user: dict = Depends(get_current_user)):
