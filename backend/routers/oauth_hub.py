@@ -46,6 +46,29 @@ PROVIDERS = {
                "client_id_env": "TIKTOK_CLIENT_KEY",
                "client_secret_env": "TIKTOK_CLIENT_SECRET",
                "scopes": "user.info.basic,video.publish,video.upload"},
+
+    # Email marketing / delivery (api_key mode — user pastes their own key)
+    "resend":     {"label": "Resend",              "mode": "api_key", "category": "email", "key_hint": "re_xxxxxxxxxxxxxxxx"},
+    "convertkit": {"label": "ConvertKit",          "mode": "api_key", "category": "email", "key_hint": "kit_xxxxxxxx"},
+    "brevo":      {"label": "Brevo (Sendinblue)",  "mode": "api_key", "category": "email", "key_hint": "xkeysib-xxxxxxxxx"},
+    "postmark":   {"label": "Postmark",            "mode": "api_key", "category": "email", "key_hint": "server-token uuid"},
+    "mailgun":    {"label": "Mailgun",             "mode": "api_key", "category": "email", "key_hint": "key-xxxxxxxx (append domain via meta.domain later)"},
+    "ses":        {"label": "AWS SES",             "mode": "api_key", "category": "email", "key_hint": "AKIA... (paste ACCESS:SECRET as one string)"},
+    "klaviyo":    {"label": "Klaviyo",             "mode": "api_key", "category": "email", "key_hint": "pk_xxxxxxxx"},
+
+    # Social (api_key fallbacks — OAuth apps optional)
+    "twitter":    {"label": "X (Twitter)",         "mode": "api_key", "category": "social", "key_hint": "Bearer token"},
+    "youtube":    {"label": "YouTube",             "mode": "api_key", "category": "social", "key_hint": "AIza…"},
+    "pinterest":  {"label": "Pinterest",           "mode": "api_key", "category": "social", "key_hint": "pina_xxxxxxxx"},
+    "threads":    {"label": "Threads",             "mode": "api_key", "category": "social", "key_hint": "Meta Graph long-lived token"},
+    "snapchat":   {"label": "Snapchat Ads",        "mode": "api_key", "category": "social", "key_hint": "access token"},
+
+    # Delivery / payments (api_key mode)
+    "twilio":     {"label": "Twilio",              "mode": "api_key", "category": "delivery", "key_hint": "AC_SID:AUTH_TOKEN"},
+    "paypal":     {"label": "PayPal",              "mode": "api_key", "category": "delivery", "key_hint": "CLIENT_ID:CLIENT_SECRET"},
+    "razorpay":   {"label": "Razorpay",            "mode": "api_key", "category": "delivery", "key_hint": "rzp_KEY_ID:KEY_SECRET"},
+    "paystack":   {"label": "Paystack",            "mode": "api_key", "category": "delivery", "key_hint": "sk_live_xxxxxxxx"},
+    "telegram":   {"label": "Telegram Bot",        "mode": "api_key", "category": "delivery", "key_hint": "bot token from @BotFather"},
 }
 
 
@@ -75,6 +98,8 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
         return {
             "providers": [
                 {"id": pid, "label": cfg["label"], "mode": cfg["mode"],
+                 "category": cfg.get("category", "email" if pid in ("mailchimp", "sendgrid") else "social"),
+                 "key_hint": cfg.get("key_hint", ""),
                  "configured": bool(os.environ.get(cfg.get("client_id_env", ""))) and bool(os.environ.get(cfg.get("client_secret_env", ""))) or cfg["mode"] == "api_key",
                  "env_needed": [cfg.get("client_id_env"), cfg.get("client_secret_env")] if cfg["mode"] == "oauth2" else []}
                 for pid, cfg in PROVIDERS.items()

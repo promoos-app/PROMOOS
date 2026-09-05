@@ -435,6 +435,26 @@ async def delete_bulk_codes(cid: str, body: DeleteBulkIn, user: dict = Depends(g
     return {"deleted": len(body.codes)}
 
 
+class BulkBackgroundIn(BaseModel):
+    coupon_ids: List[str]
+    bg_image: str  # URL or data URL
+
+
+@api.post("/coupons/bulk-background")
+async def bulk_set_background(body: BulkBackgroundIn, user: dict = Depends(get_current_user)):
+    """Apply one uploaded hero image to many coupons at once."""
+    require_writer(user)
+    if not body.coupon_ids:
+        raise HTTPException(400, "coupon_ids must be non-empty")
+    if not body.bg_image.strip():
+        raise HTTPException(400, "bg_image required (URL or data URL)")
+    r = await db.coupons.update_many(
+        {"id": {"$in": body.coupon_ids}, "workspace_id": user["workspace_id"]},
+        {"$set": {"design.bg_image": body.bg_image, "updated_at": now_iso()}})
+    return {"updated": r.modified_count, "matched": r.matched_count}
+
+
+
 @api.post("/coupons/validate")
 async def validate(body: ValidateIn, user: dict = Depends(get_current_user)):
     code = body.code.upper()

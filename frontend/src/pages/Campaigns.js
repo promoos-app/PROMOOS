@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Plus, Megaphone, Trash2, Mail, Timer, Ticket, MessageSquare, UserPlus, Activity, Sparkles } from "lucide-react";
+import { Loader2, Plus, Megaphone, Trash2, Mail, Timer, Ticket, MessageSquare, UserPlus, Activity, Sparkles, Eye } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
@@ -115,6 +115,7 @@ export default function Campaigns() {
   const [enrollFor, setEnrollFor] = useState({ customer: "", email: "" });
   const [templates, setTemplates] = useState([]);
   const [applyingTpl, setApplyingTpl] = useState(null);
+  const [previewTpl, setPreviewTpl] = useState(null);
 
   const load = () => api.get("/journeys").then((r) => setRows(r.data)).catch((e) => toast.error(apiError(e)));
   useEffect(() => { load(); api.get("/journey-templates").then((r) => setTemplates(r.data.templates || [])).catch(() => {}); }, []);
@@ -191,14 +192,24 @@ export default function Campaigns() {
                 <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Trigger · {t.trigger.replace("_", " ")}</div>
                 <div className="text-xs text-[#A1A1AA] mb-3">{t.description}</div>
                 <div className="text-[10px] text-[#71717A] mb-3">{(t.steps || []).length} step{(t.steps || []).length === 1 ? "" : "s"}</div>
-                <Button
-                  data-testid={`journey-template-apply-${t.id}`}
-                  onClick={() => applyTemplate(t.id)}
-                  disabled={applyingTpl === t.id}
-                  className="btn-primary rounded-md gap-1 h-8 text-xs w-full"
-                >
-                  {applyingTpl === t.id && <Loader2 className="w-3 h-3 spin" />} Install
-                </Button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPreviewTpl(t)}
+                    data-testid={`journey-template-preview-${t.id}`}
+                    className="btn-ghost rounded-md h-8 px-2 text-xs inline-flex items-center gap-1 border border-[#27272A]"
+                    title="Preview every step"
+                  >
+                    <Eye className="w-3 h-3" /> Preview
+                  </button>
+                  <Button
+                    data-testid={`journey-template-apply-${t.id}`}
+                    onClick={() => applyTemplate(t.id)}
+                    disabled={applyingTpl === t.id}
+                    className="btn-primary rounded-md gap-1 h-8 text-xs flex-1"
+                  >
+                    {applyingTpl === t.id && <Loader2 className="w-3 h-3 spin" />} Install
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
@@ -265,6 +276,61 @@ export default function Campaigns() {
           ))}
         </div>
       )}
+
+      <Dialog open={!!previewTpl} onOpenChange={(o) => !o && setPreviewTpl(null)}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-lg" data-testid="journey-template-preview-dialog">
+          {previewTpl && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{previewTpl.name}</DialogTitle>
+              </DialogHeader>
+              <div className="text-[10px] uppercase tracking-widest text-[#CCFF00] mb-1">Trigger · {previewTpl.trigger.replace("_", " ")}</div>
+              <p className="text-xs text-[#A1A1AA] mb-4">{previewTpl.description}</p>
+              <ol className="space-y-3">
+                {(previewTpl.steps || []).map((s, i) => (
+                  <li key={i} className="rounded-md p-3 bg-[#0A0A0A] border border-[#27272A]" data-testid={`journey-preview-step-${i}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[10px] uppercase tracking-widest text-[#CCFF00]">Step {i + 1}</span>
+                      <span className="text-[10px] uppercase text-[#71717A]">·</span>
+                      <span className="text-[10px] uppercase text-[#A1A1AA]">{s.type.replace("_", " ")}</span>
+                    </div>
+                    {s.type === "wait" && (
+                      <div className="text-xs text-[#A1A1AA]"><Timer className="inline w-3 h-3 mr-1" /> Wait {s.hours} hour{s.hours === 1 ? "" : "s"}</div>
+                    )}
+                    {s.type === "send_email" && (
+                      <div>
+                        <div className="text-xs font-bold text-white mb-1">{s.subject || "(no subject)"}</div>
+                        <div className="text-xs text-[#A1A1AA] whitespace-pre-line">{s.body}</div>
+                      </div>
+                    )}
+                    {s.type === "send_sms" && (
+                      <div className="text-xs text-[#A1A1AA] whitespace-pre-line">{s.body}</div>
+                    )}
+                    {s.type === "send_coupon" && (
+                      <div>
+                        <div className="text-xs font-bold text-white mb-1">{s.headline || `${s.discount}% off`}</div>
+                        <div className="text-xs text-[#A1A1AA] mb-1">{s.description}</div>
+                        <div className="text-[10px] uppercase tracking-widest text-[#CCFF00]">
+                          {s.type_coupon === "fixed_amount" ? `$${s.discount} off` : `${s.discount}% off`}
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ol>
+              <DialogFooter>
+                <Button
+                  data-testid={`journey-template-apply-from-preview-${previewTpl.id}`}
+                  onClick={() => { const id = previewTpl.id; setPreviewTpl(null); applyTemplate(id); }}
+                  className="btn-primary rounded-md gap-1"
+                >
+                  Install this template
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

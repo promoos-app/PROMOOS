@@ -66,6 +66,7 @@ function OAuthConnector({ provider, label, icon, hint, tokens, providers, onChan
           <div className="flex items-center justify-between gap-2">
             <div className="text-[10px] font-mono text-[#71717A]">{token.access_token_preview}</div>
             <div className="flex gap-1">
+              {(cfg?.category || "social") === "social" && (
               <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
                 <DialogTrigger asChild>
                   <Button data-testid={`publish-${provider}`} className="btn-ghost rounded-md text-xs gap-1">
@@ -95,6 +96,7 @@ function OAuthConnector({ provider, label, icon, hint, tokens, providers, onChan
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
+              )}
               <Button data-testid={`disconnect-${provider}`} onClick={disconnect} className="btn-ghost rounded-md text-xs gap-1">
                 <Trash2 className="w-3 h-3" /> Disconnect
               </Button>
@@ -112,8 +114,11 @@ function OAuthConnector({ provider, label, icon, hint, tokens, providers, onChan
             <DialogHeader><DialogTitle>Connect {label}</DialogTitle></DialogHeader>
             <div>
               <Label className="text-xs text-[#A1A1AA]">API key</Label>
-              <Input data-testid={`api-key-input-${provider}`} value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white font-mono" placeholder="SG.xxxx or key_xxxx" />
-              <div className="text-[10px] text-[#71717A] mt-1">Stored per-workspace. Rotate anytime from your {label} dashboard.</div>
+              <Input data-testid={`api-key-input-${provider}`} value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white font-mono" placeholder={cfg?.key_hint || "SG.xxxx or key_xxxx"} />
+              <div className="text-[10px] text-[#71717A] mt-1">
+                {cfg?.key_hint ? `Format: ${cfg.key_hint}. ` : ""}
+                Stored encrypted per-workspace. Rotate anytime from your {label} dashboard.
+              </div>
             </div>
             <DialogFooter>
               <Button data-testid={`api-key-submit-${provider}`} onClick={connectKey} disabled={busy} className="btn-primary rounded-md">
@@ -249,20 +254,20 @@ export default function Integrations() {
                         tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
         <OAuthConnector provider="sendgrid" label="SendGrid" icon="📧" hint="High-volume transactional email. Uses your SG.xxx API key."
                         tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
-        <ConnectorCard name="Resend" icon="✉️" connected={false} hint="Transactional + branded coupon emails."
-                       envHint="RESEND_API_KEY=re_..." />
-        <ConnectorCard name="ConvertKit" icon="✍️" connected={false} hint="Creator-focused broadcasts and sequences."
-                       envHint="CONVERTKIT_API_KEY" />
-        <ConnectorCard name="Brevo (Sendinblue)" icon="💌" connected={false} hint="Combined email + SMS marketing platform."
-                       envHint="BREVO_API_KEY=xkeysib-…" />
-        <ConnectorCard name="Postmark" icon="📬" connected={false} hint="Best-in-class deliverability for receipts."
-                       envHint="POSTMARK_SERVER_TOKEN" />
-        <ConnectorCard name="Mailgun" icon="📨" connected={false} hint="Developer-friendly SMTP + API email."
-                       envHint="MAILGUN_API_KEY + MAILGUN_DOMAIN" />
-        <ConnectorCard name="AWS SES" icon="☁️" connected={false} hint="Amazon Simple Email Service — cheap at scale."
-                       envHint="AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY" />
-        <ConnectorCard name="Klaviyo" icon="🎯" connected={false} hint="E-commerce-first email + SMS flows."
-                       envHint="KLAVIYO_API_KEY=pk_…" />
+        <OAuthConnector provider="resend" label="Resend" icon="✉️" hint="Transactional + branded coupon emails. Paste your re_ key."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="convertkit" label="ConvertKit" icon="✍️" hint="Creator-focused broadcasts and sequences."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="brevo" label="Brevo (Sendinblue)" icon="💌" hint="Combined email + SMS marketing platform."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="postmark" label="Postmark" icon="📬" hint="Best-in-class deliverability for receipts."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="mailgun" label="Mailgun" icon="📨" hint="Developer-friendly SMTP + API email."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="ses" label="AWS SES" icon="☁️" hint="Amazon Simple Email Service — cheap at scale. Paste ACCESS:SECRET."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="klaviyo" label="Klaviyo" icon="🎯" hint="E-commerce-first email + SMS flows."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
       </div>
 
       <h2 className="font-display font-bold text-lg mb-3">Social media & AI auto-publishing</h2>
@@ -275,23 +280,31 @@ export default function Integrations() {
                         tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
         <OAuthConnector provider="tiktok" label="TikTok" icon="🎵" hint="Video promos and hashtag challenges."
                         tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
-        <ConnectorCard name="X (Twitter)" icon="𝕏" connected={false} hint="Tweet promos with generated visuals." envHint="X_BEARER_TOKEN or OAuth 2.0" />
-        <ConnectorCard name="YouTube" icon="▶️" connected={false} hint="Community posts + Shorts scheduling." envHint="YOUTUBE_API_KEY + OAuth" />
-        <ConnectorCard name="Pinterest" icon="📌" connected={false} hint="Pin coupon graphics to boards." envHint="PINTEREST_ACCESS_TOKEN" />
-        <ConnectorCard name="Threads" icon="@" connected={false} hint="Meta's text-first social feed." envHint="Meta Graph API" />
-        <ConnectorCard name="Snapchat Ads" icon="👻" connected={false} hint="Snap AR filter promos + geofilters." envHint="SNAPCHAT_ACCESS_TOKEN" />
+        <OAuthConnector provider="twitter" label="X (Twitter)" icon="𝕏" hint="Tweet promos with generated visuals. Paste your Bearer token."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="youtube" label="YouTube" icon="▶️" hint="Community posts + Shorts scheduling."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="pinterest" label="Pinterest" icon="📌" hint="Pin coupon graphics to boards."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="threads" label="Threads" icon="@" hint="Meta's text-first social feed."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="snapchat" label="Snapchat Ads" icon="👻" hint="Snap AR filter promos + geofilters."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
       </div>
 
       <h2 className="font-display font-bold text-lg mb-3">Delivery channels</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8">
-        <ConnectorCard name="Twilio" icon="💬" connected={false} hint="Send SMS and WhatsApp coupons."
-                       envHint="TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_SMS, TWILIO_FROM_WHATSAPP" />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8" data-testid="delivery-platforms-grid">
+        <OAuthConnector provider="twilio" label="Twilio" icon="💬" hint="Send SMS and WhatsApp coupons. Paste SID:AUTH_TOKEN."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
         <ConnectorCard name="Stripe" icon="💳" connected={true} hint="Subscription billing + 100+ global payment methods (cards, Apple/Google Pay, SEPA, iDEAL, Klarna, Afterpay, Alipay, WeChat)." envHint="STRIPE_SECRET_KEY (configured)" />
-        <ConnectorCard name="PayPal" icon="🅿️" connected={false} hint="Alternative payment provider for global reach." envHint="PAYPAL_CLIENT_ID + PAYPAL_SECRET" />
-        <ConnectorCard name="Razorpay" icon="🇮🇳" connected={false} hint="India-first payments — UPI, NetBanking, cards." envHint="RAZORPAY_KEY_ID + RAZORPAY_SECRET" />
-        <ConnectorCard name="Paystack" icon="🌍" connected={false} hint="Africa-first payments — cards, bank transfer, mobile money." envHint="PAYSTACK_SECRET_KEY" />
-        <ConnectorCard name="Telegram Bot" icon="✈️" connected={false} hint="Push coupons to Telegram channels."
-                       envHint="TELEGRAM_BOT_TOKEN" />
+        <OAuthConnector provider="paypal" label="PayPal" icon="🅿️" hint="Alternative payment provider for global reach."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="razorpay" label="Razorpay" icon="🇮🇳" hint="India-first payments — UPI, NetBanking, cards."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="paystack" label="Paystack" icon="🌍" hint="Africa-first payments — cards, bank transfer, mobile money."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
+        <OAuthConnector provider="telegram" label="Telegram Bot" icon="✈️" hint="Push coupons to Telegram channels. Paste bot token from @BotFather."
+                        tokens={oauthTokens} providers={oauthProviders} onChange={loadOauth} />
       </div>
 
       <h2 className="font-display font-bold text-lg mb-3">Commerce connectors</h2>

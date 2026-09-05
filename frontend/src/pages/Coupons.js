@@ -6,7 +6,7 @@ import { STATE_STYLES, TYPE_LABELS, discountText } from "@/lib/couponUtils";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, MoreHorizontal, Ticket, Share2, Download, Copy, Sparkles } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Ticket, Share2, Download, Copy, Sparkles, ImageIcon, Loader2 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
@@ -22,6 +22,39 @@ export default function Coupons() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkBg, setBulkBg] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const toggleSelect = (id) => setSelected((s) => {
+    const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n;
+  });
+  const selectAllVisible = (rows) => setSelected((s) => {
+    const n = new Set(s); rows.forEach((r) => n.add(r.id)); return n;
+  });
+  const clearSelection = () => setSelected(new Set());
+
+  const uploadBulkBg = async (file) => {
+    if (!file || !file.type.startsWith("image/")) { toast.error("Drop an image file"); return; }
+    const fd = new FormData(); fd.append("file", file);
+    try {
+      const { data } = await api.post("/uploads", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setBulkBg(`${process.env.REACT_APP_BACKEND_URL}${data.url}`);
+      toast.success("Image uploaded — click Apply");
+    } catch (e) { toast.error(apiError(e)); }
+  };
+  const applyBulkBg = async () => {
+    if (!bulkBg.trim() || selected.size === 0) return;
+    setBulkBusy(true);
+    try {
+      const { data } = await api.post("/coupons/bulk-background",
+        { coupon_ids: Array.from(selected), bg_image: bulkBg.trim() });
+      toast.success(`Applied to ${data.updated} coupon${data.updated === 1 ? "" : "s"}`);
+      qc.invalidateQueries({ queryKey: ["coupons"] });
+      setBulkOpen(false); setBulkBg(""); clearSelection();
+    } catch (e) { toast.error(apiError(e)); } finally { setBulkBusy(false); }
+  };
 
   const { data: coupons = [], isLoading } = useQuery({
     queryKey: ["coupons", filter],
@@ -96,6 +129,18 @@ export default function Coupons() {
       </div>
 
       <div className="surface rounded-lg overflow-hidden">
+        {selected.size > 0 && (
+          <div className="flex items-center justify-between gap-3 p-3 bg-[#CCFF00]/5 border-b border-[#CCFF00]/30" data-testid="coupons-bulk-bar">
+            <div className="text-xs text-[#CCFF00] font-bold">{selected.size} selected</div>
+            <div className="flex items-center gap-2">
+              <Button data-testid="coupons-bulk-bg-btn" onClick={() => setBulkOpen(true)}
+                className="btn-primary rounded-md gap-2 h-8 text-xs">
+                <ImageIcon className="w-3 h-3" /> Set background
+              </Button>
+              <button onClick={clearSelection} className="text-xs text-[#71717A] hover:text-white">Clear</button>
+            </div>
+          </div>
+        )}
         {isLoading ? (
           <div className="p-12 text-center text-[#71717A]">Loading…</div>
         ) : filtered.length === 0 ? (
@@ -110,6 +155,11 @@ export default function Coupons() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs uppercase tracking-wide text-[#71717A] border-b border-[#27272A]">
+                <th className="w-10 p-4">
+                  <input type="checkbox" data-testid="coupons-select-all"
+                    checked={filtered.length > 0 && filtered.every((c) => selected.has(c.id))}
+                    onChange={(e) => e.target.checked ? selectAllVisible(filtered) : clearSelection()} />
+                </th>
                 <th className="text-left font-medium p-4">Name</th>
                 <th className="text-left font-medium p-4">Code</th>
                 <th className="text-left font-medium p-4">Type</th>
@@ -124,6 +174,10 @@ export default function Coupons() {
                 <tr key={c.id} data-testid={`coupon-row-${c.id}`}
                   className="border-b border-[#1E1E1E] last:border-0 hover:bg-[#141414] transition-colors cursor-pointer"
                   onClick={() => navigate(`/coupons/${c.id}`)}>
+                  <td className="p-4" onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" data-testid={`coupon-select-${c.id}`}
+                      checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} />
+                  </td>
                   <td className="p-4 font-medium">{c.name}</td>
                   <td className="p-4"><span className="font-mono text-xs bg-[#0A0A0A] border border-[#27272A] px-2 py-1 rounded">{c.code}</span></td>
                   <td className="p-4 text-[#A1A1AA]">{TYPE_LABELS[c.type] || c.type}</td>
@@ -209,6 +263,52 @@ export default function Coupons() {
               </Button>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-lg" data-testid="coupons-bulk-bg-dialog">
+          <DialogHeader><DialogTitle>Set background · {selected.size} coupon{selected.size === 1 ? "" : "s"}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div
+              onDragOver={(e) => { e.preventDefault(); e.currentTarget.dataset.hover = "1"; }}
+              onDragLeave={(e) => { delete e.currentTarget.dataset.hover; }}
+              onDrop={(e) => { e.preventDefault(); delete e.currentTarget.dataset.hover; uploadBulkBg(e.dataTransfer?.files?.[0]); }}
+              className="border-2 border-dashed border-[#27272A] hover:border-[#CCFF00] rounded-md p-6 text-center text-xs text-[#71717A] transition-colors data-[hover='1']:border-[#CCFF00] data-[hover='1']:bg-[#CCFF00]/5"
+              data-testid="coupons-bulk-bg-dropzone"
+            >
+              {bulkBg ? (
+                <div className="flex items-center gap-3">
+                  <div className="w-24 h-16 rounded overflow-hidden border border-[#27272A]"
+                    style={{ backgroundImage: `url(${bulkBg})`, backgroundSize: "cover", backgroundPosition: "center" }} />
+                  <div className="text-left">
+                    <div className="text-white text-[11px] truncate max-w-xs">{bulkBg}</div>
+                    <div className="text-[10px] text-[#71717A]">Drop a new image to replace</div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="text-white text-sm mb-1">Drop your hero image here</div>
+                  <div>or</div>
+                  <label className="btn-ghost inline-flex items-center gap-2 cursor-pointer rounded-md px-3 py-1.5 text-[10px] mt-2 uppercase tracking-widest">
+                    Choose file
+                    <input type="file" accept="image/*" className="hidden" data-testid="coupons-bulk-bg-file"
+                      onChange={(e) => uploadBulkBg(e.target.files?.[0])} />
+                  </label>
+                </>
+              )}
+            </div>
+            <Input value={bulkBg} onChange={(e) => setBulkBg(e.target.value)}
+              placeholder="or paste a URL"
+              data-testid="coupons-bulk-bg-url"
+              className="bg-[#0A0A0A] border-[#27272A] text-white text-xs font-mono" />
+            <Button data-testid="coupons-bulk-bg-apply"
+              onClick={applyBulkBg} disabled={bulkBusy || !bulkBg.trim()}
+              className="btn-primary rounded-md gap-2 w-full">
+              {bulkBusy && <Loader2 className="w-4 h-4 spin" />}
+              Apply to {selected.size} coupon{selected.size === 1 ? "" : "s"}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

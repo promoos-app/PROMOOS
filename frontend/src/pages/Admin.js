@@ -181,6 +181,19 @@ function PresetPacksManager() {
                 <td className="px-3 py-2 text-right">{(p.presets || []).length}</td>
                 <td className="px-3 py-2 text-xs">{p.is_public ? "Yes" : "No"}</td>
                 <td className="px-3 py-2 text-right">
+                  <button onClick={() => {
+                    const payload = {
+                      name: p.name, scope: p.scope,
+                      is_public: p.is_public,
+                      presets: (p.presets || []).map(({ key, label, accent, prompt }) => ({ key, label, accent, prompt })),
+                    };
+                    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+                    const a = document.createElement("a");
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `${p.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.preset-pack.json`;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                  }} className="text-[10px] uppercase text-[#A1A1AA] hover:text-white mr-3" data-testid={`preset-pack-export-${p.id}`}>Export</button>
                   <button onClick={() => openEdit(p)} className="text-[10px] uppercase text-[#CCFF00] mr-3" data-testid={`preset-pack-edit-${p.id}`}>Edit</button>
                   <button onClick={() => del(p)} className="text-[10px] uppercase text-red-400" data-testid={`preset-pack-delete-${p.id}`}>Delete</button>
                 </td>

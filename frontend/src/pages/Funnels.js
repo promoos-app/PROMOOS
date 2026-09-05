@@ -502,7 +502,20 @@ export function FunnelEditor() {
           {currentBlocks().map((b, idx) => (
             <div key={b.id} data-testid={`block-${b.id}`} className="surface rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
-                <div className="text-[10px] uppercase tracking-widest text-[#CCFF00]">{b.type}</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-[10px] uppercase tracking-widest text-[#CCFF00]">{b.type}</div>
+                  {(() => {
+                    const row = (linkAnalytics?.rows || []).find((r) => r.block_id === b.id);
+                    if (!row || !row.clicks) return null;
+                    return (
+                      <span data-testid={`block-heatmap-${b.id}`}
+                        className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border border-[#CCFF00] text-[#CCFF00]"
+                        title={`${row.clicks} outbound clicks · ${row.ctr_pct}% CTR`}>
+                        <Link2 className="w-3 h-3" /> {row.clicks} · {row.ctr_pct}%
+                      </span>
+                    );
+                  })()}
+                </div>
                 <div className="flex gap-1 items-center">
                   <div className="flex items-center gap-1.5 mr-2 opacity-70 hover:opacity-100 transition"
                     title="Per-section color overrides"

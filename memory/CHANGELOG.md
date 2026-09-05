@@ -1,3 +1,37 @@
+## Feb 2026 — Next Action Items shipped
+
+### 👁️ Template Preview (Campaigns page)
+- Every automation template card now has a **Preview** button (eye icon) next to *Install*. Opens a dialog listing each step in order: `wait` (hours), `send_email` (subject + body), `send_sms` (body), `send_coupon` (headline / description / discount).
+- The dialog exposes a shortcut "Install this template" button that hands off to the existing apply flow.
+- Data-testids: `journey-template-preview-{id}`, `journey-template-preview-dialog`, `journey-preview-step-{i}`, `journey-template-apply-from-preview-{id}`.
+
+### 🖼️ Bulk Coupon Backgrounds (Coupons list)
+- New endpoint `POST /api/coupons/bulk-background` (`{coupon_ids[], bg_image}`) — updates `design.bg_image` on every matched coupon in a single `update_many`. Verified: HTTP 200, `updated: N`.
+- Coupons list: checkbox column + "select all visible" header checkbox. Selection > 0 renders a sticky-look bar with **Set background**. Dialog offers drag-drop / file picker / URL paste using the same `/api/uploads` object storage flow.
+- Data-testids: `coupons-select-all`, `coupon-select-{id}`, `coupons-bulk-bar`, `coupons-bulk-bg-btn`, `coupons-bulk-bg-dialog`, `coupons-bulk-bg-dropzone`, `coupons-bulk-bg-file`, `coupons-bulk-bg-url`, `coupons-bulk-bg-apply`.
+
+### 🔥 Hyperlink Heatmap (Funnel editor)
+- Each block card in the funnel editor now shows a live click badge `<Link2/> {clicks} · {ctr}%` when the hyperlink analytics endpoint has data for that block. Full detail table still lives in the analytics section.
+- Data-testid: `block-heatmap-{block_id}`.
+
+### 📤 Preset Pack Export (Admin)
+- New **Export** action on every pack row: builds a clean JSON payload matching the `POST /admin/preset-packs/import` schema (strips `id/created_by/etc.`) and triggers an in-browser download as `{slug}.preset-pack.json`. Agencies can now hand a pack to a partner with one click.
+- Data-testid: `preset-pack-export-{id}`.
+
+
+## Feb 2026 — Integrations Activated (17 new providers)
+
+- All previously-static "Not Configured" cards on `/integrations` are now real, per-workspace **Connect with API key** flows via the existing `/api/oauth/{provider}/connect` pipeline (encrypted-at-rest with Fernet).
+- Added 17 providers to `routers/oauth_hub.py` `PROVIDERS` dict with `category` and `key_hint`:
+  - **Email**: Resend, ConvertKit, Brevo (Sendinblue), Postmark, Mailgun, AWS SES, Klaviyo.
+  - **Social**: X (Twitter), YouTube, Pinterest, Threads, Snapchat Ads.
+  - **Delivery**: Twilio, PayPal, Razorpay, Paystack, Telegram Bot.
+- `GET /api/oauth/providers` now includes `category` + `key_hint`; the UI renders a placeholder + inline hint on each connect dialog.
+- `Publish` button is now gated to `category==="social"` providers so email/delivery cards no longer expose an irrelevant action.
+- Verified: 23 providers listed (9/9/5); Twilio connect + tokens list + disconnect all HTTP 200.
+- Frontend: replaced every static `ConnectorCard` in the email/social/delivery grids with a live `OAuthConnector`. Data-testids for the new dialogs match the existing pattern: `connector-{id}`, `connect-{id}`, `api-key-input-{id}`, `api-key-submit-{id}`, `disconnect-{id}`.
+
+
 ## Feb 2026 — Uploader + Import + Link Analytics + Automation Templates
 
 ### 📤 Coupon Cover Uploader (`CouponEditor.js`)
