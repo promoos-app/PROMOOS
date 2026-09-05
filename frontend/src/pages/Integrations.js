@@ -127,13 +127,45 @@ function OAuthConnector({ provider, label, icon, hint, tokens, providers, onChan
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      ) : cfg?.configured ? (
-        <Button data-testid={`connect-${provider}`} onClick={connectOAuth} disabled={busy} className="btn-primary rounded-md text-xs w-full gap-1">
-          {busy ? <Loader2 className="w-3 h-3 spin" /> : <LinkIcon className="w-3 h-3" />} Connect with OAuth
-        </Button>
       ) : (
-        <div className="text-[10px] font-mono text-[#71717A] bg-[#0A0A0A] border border-[#27272A] rounded px-2 py-1.5">
-          Configure {(cfg?.env_needed || []).filter(Boolean).join(" + ") || "OAuth credentials"} in backend/.env
+        // OAuth provider: offer OAuth flow if platform owner configured app creds,
+        // and always offer the paste-a-token fallback so merchants aren't blocked.
+        <div className="space-y-2">
+          {cfg?.oauth_configured && (
+            <Button data-testid={`connect-oauth-${provider}`} onClick={connectOAuth} disabled={busy} className="btn-primary rounded-md text-xs w-full gap-1">
+              {busy ? <Loader2 className="w-3 h-3 spin" /> : <LinkIcon className="w-3 h-3" />} Connect with OAuth
+            </Button>
+          )}
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button data-testid={`connect-${provider}`}
+                className={`rounded-md text-xs w-full gap-1 ${cfg?.oauth_configured ? "btn-ghost border border-[#27272A]" : "btn-primary"}`}>
+                <Key className="w-3 h-3" /> {cfg?.oauth_configured ? "Or paste access token" : "Connect with access token"}
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="bg-[#141414] border-[#27272A] text-white">
+              <DialogHeader><DialogTitle>Connect {label} with access token</DialogTitle></DialogHeader>
+              <div>
+                <Label className="text-xs text-[#A1A1AA]">Access token</Label>
+                <Input data-testid={`api-key-input-${provider}`} value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+                  className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white font-mono"
+                  placeholder={cfg?.key_hint || "Paste long-lived access token"} />
+                <div className="text-[10px] text-[#71717A] mt-1">
+                  {cfg?.key_hint ? `${cfg.key_hint}. ` : ""}
+                  Stored encrypted per-workspace.{" "}
+                  {cfg?.token_docs && (
+                    <a href={cfg.token_docs} target="_blank" rel="noopener noreferrer" className="text-[#CCFF00] underline"
+                      data-testid={`api-key-docs-${provider}`}>How to get one →</a>
+                  )}
+                </div>
+              </div>
+              <DialogFooter>
+                <Button data-testid={`api-key-submit-${provider}`} onClick={connectKey} disabled={busy} className="btn-primary rounded-md">
+                  {busy && <Loader2 className="w-3 h-3 spin mr-1" />} Connect
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       )}
     </div>

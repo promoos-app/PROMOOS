@@ -14,38 +14,48 @@ from pydantic import BaseModel
 
 
 PROVIDERS = {
-    "mailchimp": {"label": "Mailchimp", "mode": "oauth2",
+    "mailchimp": {"label": "Mailchimp", "mode": "oauth2", "category": "email",
                   "auth_url": "https://login.mailchimp.com/oauth2/authorize",
                   "token_url": "https://login.mailchimp.com/oauth2/token",
                   "client_id_env": "MAILCHIMP_CLIENT_ID",
                   "client_secret_env": "MAILCHIMP_CLIENT_SECRET",
-                  "scopes": ""},
+                  "scopes": "",
+                  "token_hint": "us1-xxxxxxxxxxxxxxxxxxxxxxxxxxxx-us1 · Mailchimp → Profile → Extras → API keys",
+                  "token_docs": "https://mailchimp.com/help/about-api-keys/"},
     "sendgrid": {"label": "SendGrid", "mode": "api_key",
                  "key_env_hint": "user provides SG.xxxxx personal API key"},
-    "facebook": {"label": "Facebook Pages", "mode": "oauth2",
+    "facebook": {"label": "Facebook Pages", "mode": "oauth2", "category": "social",
                  "auth_url": "https://www.facebook.com/v18.0/dialog/oauth",
                  "token_url": "https://graph.facebook.com/v18.0/oauth/access_token",
                  "client_id_env": "FACEBOOK_APP_ID",
                  "client_secret_env": "FACEBOOK_APP_SECRET",
-                 "scopes": "pages_manage_posts,pages_show_list,pages_read_engagement"},
-    "instagram": {"label": "Instagram Business", "mode": "oauth2",
+                 "scopes": "pages_manage_posts,pages_show_list,pages_read_engagement",
+                 "token_hint": "Long-lived Page Access Token from Meta Graph API Explorer",
+                 "token_docs": "https://developers.facebook.com/tools/explorer/"},
+    "instagram": {"label": "Instagram Business", "mode": "oauth2", "category": "social",
                   "auth_url": "https://www.facebook.com/v18.0/dialog/oauth",
                   "token_url": "https://graph.facebook.com/v18.0/oauth/access_token",
                   "client_id_env": "FACEBOOK_APP_ID",
                   "client_secret_env": "FACEBOOK_APP_SECRET",
-                  "scopes": "instagram_basic,instagram_content_publish,pages_show_list"},
-    "linkedin": {"label": "LinkedIn", "mode": "oauth2",
+                  "scopes": "instagram_basic,instagram_content_publish,pages_show_list",
+                  "token_hint": "IG Business long-lived access token (link IG to Page first)",
+                  "token_docs": "https://developers.facebook.com/docs/instagram-api/getting-started"},
+    "linkedin": {"label": "LinkedIn", "mode": "oauth2", "category": "social",
                  "auth_url": "https://www.linkedin.com/oauth/v2/authorization",
                  "token_url": "https://www.linkedin.com/oauth/v2/accessToken",
                  "client_id_env": "LINKEDIN_CLIENT_ID",
                  "client_secret_env": "LINKEDIN_CLIENT_SECRET",
-                 "scopes": "w_member_social,r_liteprofile,r_organization_social,w_organization_social"},
-    "tiktok": {"label": "TikTok", "mode": "oauth2",
+                 "scopes": "w_member_social,r_liteprofile,r_organization_social,w_organization_social",
+                 "token_hint": "3-legged OAuth access token from LinkedIn Developer Portal",
+                 "token_docs": "https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow"},
+    "tiktok": {"label": "TikTok", "mode": "oauth2", "category": "social",
                "auth_url": "https://www.tiktok.com/v2/auth/authorize/",
                "token_url": "https://open.tiktokapis.com/v2/oauth/token/",
                "client_id_env": "TIKTOK_CLIENT_KEY",
                "client_secret_env": "TIKTOK_CLIENT_SECRET",
-               "scopes": "user.info.basic,video.publish,video.upload"},
+               "scopes": "user.info.basic,video.publish,video.upload",
+               "token_hint": "TikTok Business access token from developers.tiktok.com",
+               "token_docs": "https://developers.tiktok.com/doc/oauth-user-access-token-management"},
 
     # Email marketing / delivery (api_key mode — user pastes their own key)
     "resend":     {"label": "Resend",              "mode": "api_key", "category": "email", "key_hint": "re_xxxxxxxxxxxxxxxx"},
@@ -99,8 +109,15 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
             "providers": [
                 {"id": pid, "label": cfg["label"], "mode": cfg["mode"],
                  "category": cfg.get("category", "email" if pid in ("mailchimp", "sendgrid") else "social"),
-                 "key_hint": cfg.get("key_hint", ""),
-                 "configured": bool(os.environ.get(cfg.get("client_id_env", ""))) and bool(os.environ.get(cfg.get("client_secret_env", ""))) or cfg["mode"] == "api_key",
+                 "key_hint": cfg.get("key_hint") or cfg.get("token_hint", ""),
+                 "token_docs": cfg.get("token_docs", ""),
+                 # `configured` = user CAN connect (either OAuth env is set OR paste-a-token is always allowed).
+                 # Since we accept pasted access tokens for OAuth providers too, this is always True.
+                 "configured": True,
+                 # `oauth_configured` = the platform owner has set the OAuth app credentials.
+                 "oauth_configured": (bool(os.environ.get(cfg.get("client_id_env", ""))) and
+                                        bool(os.environ.get(cfg.get("client_secret_env", "")))
+                                        if cfg["mode"] == "oauth2" else False),
                  "env_needed": [cfg.get("client_id_env"), cfg.get("client_secret_env")] if cfg["mode"] == "oauth2" else []}
                 for pid, cfg in PROVIDERS.items()
             ]
@@ -142,15 +159,16 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
         require_writer(user)
         cfg = PROVIDERS.get(provider)
         if not cfg: raise HTTPException(404, "Unknown provider")
-        if cfg["mode"] != "api_key":
-            raise HTTPException(400, f"{cfg['label']} uses OAuth — call /api/oauth/{provider}/start instead.")
         if not body.api_key or len(body.api_key) < 10:
-            raise HTTPException(400, "Invalid API key")
+            raise HTTPException(400, "Invalid API key or access token")
         # Store encrypted (import from server if available); fallback plaintext with masking preview.
+        # Both API-key-native providers AND OAuth providers accept a pasted long-lived access token here
+        # so merchants don't have to wait on platform-owner OAuth app credentials in backend/.env.
+        stored_mode = "api_key" if cfg["mode"] == "api_key" else "access_token"
         await db.oauth_tokens.update_one(
             {"provider": provider, "workspace_id": user["workspace_id"]},
             {"$set": {"provider": provider, "workspace_id": user["workspace_id"],
-                      "mode": "api_key", "access_token": encrypt_str(body.api_key),
+                      "mode": stored_mode, "access_token": encrypt_str(body.api_key),
                       "access_token_preview": body.api_key[:6] + "…" + body.api_key[-4:],
                       "label": body.account_label or cfg["label"],
                       "metadata": body.metadata or {},

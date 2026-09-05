@@ -1,3 +1,17 @@
+## Feb 2026 — Hotfix: OAuth providers unblocked with access-token fallback
+
+- **Bug**: Mailchimp, Facebook, Instagram Business, LinkedIn, and TikTok cards showed a static "Configure ..._CLIENT_ID + ..._CLIENT_SECRET in backend/.env" message. Merchants couldn't connect without waiting on a platform-owner env change.
+- **Fix (backend, `routers/oauth_hub.py`)**:
+  - `POST /api/oauth/{provider}/connect` now accepts pasted access tokens for OAuth providers too (stored `mode: "access_token"` vs `"api_key"`).
+  - `GET /api/oauth/providers` now returns `configured` (always true — user can always paste a token), `oauth_configured` (env-based, controls whether OAuth button appears), plus `key_hint` and `token_docs` link for every OAuth provider.
+  - Added helpful token hints and docs URLs for Mailchimp, Facebook, Instagram, LinkedIn, TikTok (Meta Graph Explorer, LinkedIn Developer Portal, TikTok Developer docs).
+- **Fix (frontend, `pages/Integrations.js`)**:
+  - OAuth cards now render an always-available **Connect with access token** dialog (falls back to primary CTA when OAuth env isn't set).
+  - When OAuth env IS set, the **Connect with OAuth** primary button appears above the token-paste fallback.
+  - Each dialog surfaces the provider-specific token hint + a "How to get one →" link to the official docs page.
+- Verified: Mailchimp + Facebook token-paste both persisted (`mode: access_token`). UI screenshot confirms all 5 providers render a live Connect button.
+
+
 ## Feb 2026 — Next Action Items shipped
 
 ### 👁️ Template Preview (Campaigns page)
