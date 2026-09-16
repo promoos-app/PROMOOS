@@ -2,6 +2,14 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 24, Feb 2026) — Go-Live Automation
+- Seeded marketplace preset packs — 7 curated packs (4 coupon + 3 gift-card, 28 tap-to-apply presets) via `routers/marketplace_seed.py`, idempotent on startup
+- Admin Health-Check endpoint + UI tab — 20 checks across env, integrations, Mongo indexes, content, compliance; flags `ready_for_launch` when zero criticals + ≤2 warnings
+- Mongo backup script `/app/scripts/backup_mongo.sh` — gzipped, auto-pruned, cron-friendly
+- Everything reasonable is coded; remaining launch work is exclusively human ops (Stripe live, Resend domain, DNS, credential rotation, first merchant onboarding — all documented in `PROVISIONING_RUNBOOK.md`)
+
+
+
 ## Latest (Iter 23, Feb 2026) — Load Testing + Provisioning + DSAR SLA + Preset Pack Comments
 - Preset Pack Marketplace Comments (`POST /api/preset-packs/{id}/rate`, `GET /api/preset-packs/{id}/comments`) with shared `PresetPackFeedback` UI in both Coupon editor and Gift Card studio
 - DSAR SLA Email Alerts — fire-and-forget email to all superadmins on every `/api/me/data/delete`, with 30-day GDPR deadline visible

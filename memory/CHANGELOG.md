@@ -1,3 +1,35 @@
+## Iteration 24 (Feb 2026) — Go-Live Automation: Seed Marketplace + Health-Check + Backups
+
+Implemented everything that could be done without human-supplied credentials or DNS.
+
+### Marketplace Preset Packs seeded ✅
+- New module `/app/backend/routers/marketplace_seed.py` — 7 curated packs (4 coupon + 3 gift-card) with 4 presets each, 28 tap-to-apply presets total.
+- Packs: Luxury Retail, Streetwear + Drop Culture, Wellness & Beauty, Food & Beverage (coupon); Celebration, Seasonal, Corporate Modern (gift card).
+- Insert is idempotent by pack `name` — running seed twice never duplicates. Wired into `startup()` after user seed.
+
+### Admin Health-Check ✅
+- `GET /api/admin/health-check` — 20 non-destructive checks across env, integrations, Mongo indexes, content, compliance.
+- Aggregates `{ok, ready_for_launch, critical_failures, warnings, checks[]}` — ready_for_launch is true only when zero criticals + ≤2 warnings.
+- Frontend: Admin → new **Health Check** tab renders each check as a red/amber/green card with pass label.
+
+### Mongo backup script ✅
+- `/app/scripts/backup_mongo.sh` — `mongodump`-based, gzipped, auto-prunes older than `$RETENTION_DAYS` (default 14).
+- Cron-friendly output, prints archive path + human-readable size + restore command.
+
+### Testing ✅
+- Backend smoke-tested via curl (superadmin auth) — 20 checks render correctly, 7 seeded packs load, health-check reports the exact human-work items still needed (PUBLIC_APP_URL, CORS, Stripe webhook, Resend, security contact).
+- Frontend screenshotted — health check tab renders all 20 checks with correct icons and level labels.
+
+### Human work explicitly deferred (not code)
+- Stripe live key + webhook secret → merchant's Stripe dashboard
+- Resend API key + verified sending domain → merchant's Resend dashboard + DNS
+- Twilio SID/token → merchant's Twilio account
+- `PUBLIC_APP_URL` + strict `CORS_ORIGINS` → set once domain is chosen
+- Rotate seed passwords (SUPERADMIN, ADMIN, JWT_SECRET) → operator's password manager
+- Publish DNS + `security.txt` verification → operator
+- First real merchant onboarding → operator UI walkthrough per `PROVISIONING_RUNBOOK.md`
+
+
 ## Iteration 23 (Feb 2026) — Load Testing + Provisioning Runbook + DSAR SLA + Preset Pack Comments
 
 ### Preset Marketplace Comments ✅

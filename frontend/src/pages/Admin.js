@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Shield, Users, Building2, ScrollText, CreditCard, BarChart3, Plus, Loader2,
-  Pause, Play, RotateCcw, Trash2, Palette,
+  Pause, Play, RotateCcw, Trash2, Palette, HeartPulse, CheckCircle2, XCircle, AlertTriangle,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
@@ -16,6 +16,7 @@ import {
 
 const TABS = [
   { k: "stats", label: "Stats", icon: BarChart3 },
+  { k: "health", label: "Health Check", icon: HeartPulse },
   { k: "users", label: "Users", icon: Users },
   { k: "workspaces", label: "Workspaces", icon: Building2 },
   { k: "payments", label: "Payments", icon: CreditCard },
@@ -359,6 +360,8 @@ export default function Admin() {
         </div>
       )}
 
+      {tab === "health" && <HealthCheckPanel />}
+
       {tab === "users" && (
         <div className="surface rounded-lg overflow-hidden">
           <table className="w-full text-sm" data-testid="admin-users-table">
@@ -507,3 +510,100 @@ export default function Admin() {
     </div>
   );
 }
+
+function HealthCheckPanel() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const run = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/admin/health-check");
+      setData(data);
+    } catch (e) { toast.error(apiError(e)); } finally { setLoading(false); }
+  };
+  useEffect(() => { run(); }, []);
+
+  const levelStyles = {
+    critical: "text-red-400 bg-red-500/10 border-red-500/30",
+    warning: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+    info: "text-[#A1A1AA] bg-[#0A0A0A] border-[#27272A]",
+  };
+
+  return (
+    <div className="space-y-4" data-testid="health-check-panel">
+      <div className="surface rounded-lg p-5 flex items-center gap-4 flex-wrap">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          {data ? (
+            data.ready_for_launch ? (
+              <div className="w-11 h-11 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+              </div>
+            ) : data.ok ? (
+              <div className="w-11 h-11 rounded-full bg-amber-500/20 flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6 text-amber-400" />
+              </div>
+            ) : (
+              <div className="w-11 h-11 rounded-full bg-red-500/20 flex items-center justify-center">
+                <XCircle className="w-6 h-6 text-red-400" />
+              </div>
+            )
+          ) : (
+            <div className="w-11 h-11 rounded-full bg-[#27272A] flex items-center justify-center">
+              <HeartPulse className="w-6 h-6 text-[#71717A]" />
+            </div>
+          )}
+          <div className="min-w-0">
+            <div className="font-display font-bold text-lg" data-testid="health-check-title">
+              {data
+                ? (data.ready_for_launch
+                    ? "Ready for launch"
+                    : data.ok ? "Operational — warnings to review" : "Critical failures — do not launch")
+                : "Running checks…"}
+            </div>
+            <div className="text-xs text-[#71717A]">
+              {data
+                ? `${data.critical_failures} critical · ${data.warnings} warning${data.warnings === 1 ? "" : "s"} · ${data.checks.length} check${data.checks.length === 1 ? "" : "s"}`
+                : "Provisioning Runbook Phase 8"}
+            </div>
+          </div>
+        </div>
+        <Button data-testid="health-check-refresh" onClick={run} disabled={loading}
+          className="btn-primary rounded-md gap-2">
+          {loading ? <Loader2 className="w-4 h-4 spin" /> : <RotateCcw className="w-4 h-4" />}
+          Re-run
+        </Button>
+      </div>
+
+      {data && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2" data-testid="health-check-results">
+          {data.checks.map((c, i) => {
+            const cls = c.ok ? levelStyles.info : (levelStyles[c.level] || levelStyles.info);
+            return (
+              <div
+                key={i}
+                className={`rounded-md border p-3 flex items-start gap-3 ${cls}`}
+                data-testid={`health-check-${c.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
+              >
+                {c.ok ? (
+                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+                ) : c.level === "critical" ? (
+                  <XCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold text-white">{c.name}</div>
+                  <div className="text-[11px] text-[#A1A1AA] mt-0.5 break-words">{c.message}</div>
+                </div>
+                <span className="text-[9px] uppercase tracking-widest text-[#71717A] shrink-0">
+                  {c.ok ? "pass" : c.level}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+

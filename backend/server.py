@@ -2363,6 +2363,12 @@ async def startup():
         except Exception:
             pass
         await seed()
+        # Marketplace seed — install curated preset packs on first boot (idempotent).
+        try:
+            from routers.marketplace_seed import install_marketplace_packs
+            await install_marketplace_packs(db, now_iso, logger)
+        except Exception as e:
+            logger.warning(f"Marketplace seed skipped: {e}")
         asyncio.create_task(journey_worker())
         # Rotation-nudge worker — daily loop that emails workspace owners when an OAuth token turns 55 days old.
         if _rotation_nudge_worker:
