@@ -1,0 +1,30 @@
+{
+  "summary": "Iter23 batch (preset-pack ratings + comments, DSAR SLA email notify, load-test scripts, PROVISIONING_RUNBOOK) tested end-to-end. 16/16 backend pytest passing. Frontend flows in both CouponEditor and GiftCardStudio verified with real UI interactions.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter23_batch.py",
+    "/app/test_reports/pytest/iter23_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "preset_packs.py rate_preset_pack: rating aggregates (rating_avg/rating_count) are duplicated onto preset_packs doc AND recomputed via aggregate on every rate — fine at MVP scale, but a $inc counter or delta-based update would avoid the full-collection aggregate on every vote when packs get popular.",
+    "PresetPackFeedback.js reloads full pack list (load()) after every rate() to refresh rating_avg — one extra GET per rating. Could be skipped since the /rate response already returns {avg,count}; setPacks locally to save the round-trip.",
+    "compliance.py fire-and-forget _notify_superadmins_of_deletion via asyncio.create_task is not awaited and errors are swallowed — good for latency but means a Resend outage is invisible in the endpoint's response. Consider persisting notify status onto the deletion_request doc (notified_at, notify_error) for observability.",
+    "loadtest_bench.py uses concurrent request loops against the preview URL which is ingress-rate-limited to ~200 rps (429s). README already warns about this — acceptable."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter23_batch.py"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% of verifiable flows"},
+  "test_credentials": "admin@promoos.com / admin123 ; superadmin@promoos.com / sZpRBNpLKypsQDURBQNqMIzE",
+  "seed_data_creation": "Reused existing 'E2E Test Pack' preset pack (scope='both', id=60c88643-47c0-487b-bd09-82d34920a725). Added 2 TEST_iter23 comments (owner + superadmin) — 1 with text, 1 stars-only — to exercise upsert + comments-endpoint filtering. Fired a TEST_ DSAR deletion request from the owner account.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend suite lives at /app/backend/tests/test_iter23_batch.py; 16/16 green. Verified: (a) POST /api/preset-packs/{pid}/rate accepts {stars, comment?}, rejects 0/6 with 400, 404 for missing id, upserts one row per (pack_id, workspace_id) — 2nd call by same workspace overwrites and count stayed the same. (b) GET /api/preset-packs returns rating_avg + rating_count on each pack (E2E Test Pack ended at avg=3.0, count=2). (c) GET /api/preset-packs/{pid}/comments returns only rows where comment is non-null, sorted by rated_at desc, with workspace_name populated. (d) POST /api/me/data/delete still returns {ok:true, request_id, status:'pending'} — no backend exception in supervisor logs after the fire-and-forget email notify. (e) Regression: /api/errors, /api/me/export, /api/.well-known/security.txt, /api/coupons/import-csv (semicolon), /api/coupons/import-mapping, /api/journey-templates, /api/unsubscribe/{token} all still green. (f) Scripts: /app/scripts/loadtest.k6.js and /app/scripts/loadtest_bench.py exist; bench parses via ast and exits 0 for a 5s/3-worker run. (g) /app/PROVISIONING_RUNBOOK.md exists and covers Phases 0..8 (sanity, credential rotation, Stripe live, Resend domain, CORS/public URL, first merchant onboarding, compliance switches, load test, post-launch). UI: on /coupons/new the 'Show marketplace pack feedback' toggle (data-testid='preset-pack-feedback-toggle-coupon') renders the E2E Test Pack row with 5 star buttons, comment input, MessageCircle toggle. Typed 'TEST_iter23 ui note first' + clicked 4★ → toast 'Rated 4★ with a note' appeared, and after opening the comments panel the note showed at top attributed to 'Acme Swimwear Co.'. Clicking 3★ with empty input produced 'Rated 3★' toast (no 'with a note' suffix). Gift Card Studio: /gift-cards/studio landing page does NOT show the toggle (component is inside the template editor); clicking any template (e.g. Midnight Onyx) opens the editor where data-testid='preset-pack-feedback-toggle-gift_card' is present and functional (3.0 · 2 rating displayed).",
+  "rca of the issue": "N/A — no bugs found."
+}

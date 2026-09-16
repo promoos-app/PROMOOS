@@ -1,3 +1,31 @@
+## Iteration 23 (Feb 2026) — Load Testing + Provisioning Runbook + DSAR SLA + Preset Pack Comments
+
+### Preset Marketplace Comments ✅
+- `POST /api/preset-packs/{pid}/rate` accepts `{stars, comment?}` — upserts one row per (pack_id, workspace_id); rejects 0/6 with 400.
+- `GET /api/preset-packs/{pid}/comments` returns 20 most-recent notes with `workspace_name`, stars-only ratings excluded.
+- Public `GET /api/preset-packs` now returns `rating_avg` + `rating_count`.
+- New shared component `/app/frontend/src/components/PresetPackFeedback.js` mounts in both `CouponEditor.js` (scope="coupon") and `GiftCardStudio.js` (scope="gift_card") behind an expandable toggle so it doesn't dominate the editor UI.
+- Index `preset_pack_ratings {pack_id, workspace_id} unique` prevents duplicate votes.
+
+### DSAR SLA Email Alerts ✅
+- `POST /api/me/data/delete` now fires an async `asyncio.create_task(_notify_superadmins_of_deletion)` — sends every active superadmin an email with request id, requester, workspace, reason, and the 30-day deadline calculated at submit time.
+- Fire-and-forget: mail failures never reach the caller, endpoint latency unchanged.
+- Works only when `RESEND_API_KEY` + `SENDER_EMAIL` are configured; no-ops silently otherwise.
+
+### Load Testing Harnesses ✅
+- `/app/scripts/loadtest.k6.js` — k6 ramping-arrival-rate to 500 rps (funnel reads) + 100 rps (validates) held for 2 min. Fails build on p95>500ms (reads) / p95>700ms (validates) / err>1%.
+- `/app/scripts/loadtest_bench.py` — in-container asyncio/httpx bench (`python3 scripts/loadtest_bench.py --duration 30 --concurrency 100 --strict`). Verified locally: p50=118ms, p95=319ms with 80/20 read/validate mix, well under thresholds (429s from preview ingress rate-limit are expected and documented).
+- `/app/scripts/README.md` covers install (`brew/apt/snap/choco/docker`), env overrides, and "which one to use when".
+
+### Provisioning Runbook ✅
+- Rewrote `/app/PROVISIONING_RUNBOOK.md` — 8 phases (sanity check → credential rotation → Stripe live → Resend domain → public URL/CORS → merchant onboarding → compliance switches → load test) + rollback + support contacts. ~45 min end-to-end.
+
+### Testing ✅
+- 16/16 pytest passing (`/app/backend/tests/test_iter23_batch.py`).
+- UI verified via Playwright: rating + comment flow in both editors; DSAR delete still 200s with no server exceptions when Resend is stubbed.
+- Non-blocking follow-ups: (a) aggregate rating recomputation could be a $inc counter at scale; (b) email notify result could be persisted on the deletion_request doc for observability.
+
+
 ## Iteration 22 (Feb 2026) — Compliance + Sticky Mappers + Rating Comments + Crash Reporter
 
 ### Sticky Mapper Presets ✅

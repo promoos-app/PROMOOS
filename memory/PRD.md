@@ -2,6 +2,15 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 23, Feb 2026) — Load Testing + Provisioning + DSAR SLA + Preset Pack Comments
+- Preset Pack Marketplace Comments (`POST /api/preset-packs/{id}/rate`, `GET /api/preset-packs/{id}/comments`) with shared `PresetPackFeedback` UI in both Coupon editor and Gift Card studio
+- DSAR SLA Email Alerts — fire-and-forget email to all superadmins on every `/api/me/data/delete`, with 30-day GDPR deadline visible
+- Load testing harnesses — `scripts/loadtest.k6.js` (500 rps, k6) + `scripts/loadtest_bench.py` (in-container asyncio bench) with strict-mode thresholds
+- Provisioning Runbook — 8-phase walkthrough at `/app/PROVISIONING_RUNBOOK.md` covering Stripe live, Resend domain, first merchant onboarding, compliance switches, and rollback
+- New indexes: `preset_pack_ratings {pack_id, workspace_id}` unique; `deletion_requests {status, created_at}`
+
+
+
 ## Latest (Iter 22, Feb 2026) — Compliance + Sticky Mappers + Rating Comments + Crash Reporter
 - Sticky Mapper Presets (`GET/POST /api/coupons/import-mapping`; auto-restore on preflight)
 - Rating Comments (`RateIn.comment`, `GET /api/journey-templates/{tid}/comments`)
