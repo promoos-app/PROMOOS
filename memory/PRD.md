@@ -1,6 +1,20 @@
 # PromoOS — AI Promotional Commerce Platform (PRD)
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
+
+## Latest (Iter 22, Feb 2026) — Compliance + Sticky Mappers + Rating Comments + Crash Reporter
+- Sticky Mapper Presets (`GET/POST /api/coupons/import-mapping`; auto-restore on preflight)
+- Rating Comments (`RateIn.comment`, `GET /api/journey-templates/{tid}/comments`)
+- Error Boundary Reporter (`POST /api/errors`, superadmin `GET /api/admin/errors`)
+- CSV Delimiter Auto-Detect (`,` `;` `\t` sniffed at preflight; badge in UI)
+- DSAR endpoints (`GET /api/me/export`, `POST /api/me/data/delete`, admin queue)
+- List-Unsubscribe (RFC 8058) headers on every send-email; `POST/GET /api/unsubscribe/{token}`
+- AI-generated metadata on `/ai/image` and `/giftcards/regenerate`; pill overlay in Coupon editor + Gift Card studio
+- RFC 9116 `security.txt` (backend `/api/.well-known/` + frontend `public/.well-known/`)
+- Cookie Consent Banner on every public funnel; persisted decision in `promoos_cookie_consent`
+- Mongo indexes on coupons/redemptions/customers/funnels/email_events/csv_mapping_presets/error_reports for 100k-user scale
+
+
 **56 modules shipped. Deployed at `https://campaign-hub-436.emergent.host`.**
 
 ## Iteration 14 (Feb 2026) — Bulk request: password reset · products · publish · bulk delete · funnel media · admin affiliates

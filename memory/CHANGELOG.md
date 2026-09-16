@@ -1,3 +1,55 @@
+## Iteration 22 (Feb 2026) — Compliance + Sticky Mappers + Rating Comments + Crash Reporter
+
+### Sticky Mapper Presets ✅
+- New collection `csv_mapping_presets` keyed by workspace + hash-of-headers signature.
+- `GET/POST /api/coupons/import-mapping` for direct read/write; `/api/coupons/import-csv` now returns `signature` + `saved_mapping` on preflight and auto-persists on successful commit.
+- Frontend `Coupons.js` restores the last mapping and toasts "Restored your last column mapping".
+
+### Rating Comments ✅
+- `RateIn` accepts optional `comment` (≤200 chars) and stores `workspace_name` alongside stars.
+- New endpoint `GET /api/journey-templates/{tid}/comments` returns the 20 most-recent notes.
+- Frontend `Campaigns.js` shows a one-line note input beside the star bar and a `MessageCircle` toggle that reveals qualitative feedback per template.
+
+### Error Boundary Reporter ✅
+- Silent `POST /api/errors` — auth optional; user_id/workspace_id are joined server-side when a Bearer token is present.
+- Superadmin-only `GET /api/admin/errors` for regression triage.
+- `ErrorBoundary.js` fire-and-forget POSTs `{message, stack, component_stack, route, user_agent}` on `componentDidCatch`.
+
+### CSV Delimiter Auto-Detect ✅
+- `_detect_csv_delimiter` sniffs `,` `;` `\t` from the first non-empty line (deliberate simplification vs full csv.Sniffer).
+- `/coupons/import-csv` returns `delimiter` ("comma"|"semicolon"|"tab") and the frontend displays a badge.
+
+### DSAR (GDPR Art. 15/17, CCPA §1798.110/.105) ✅
+- `GET /api/me/export` — user-scoped for viewer/marketer; workspace-scoped for owner (coupons, gift_cards, redemptions, customers, journeys, funnels).
+- `POST /api/me/data/delete` — requires `confirm_email` match; queues into `deletion_requests` + soft-flags `marketing_optout`.
+- `GET /api/admin/deletion-requests` — superadmin queue view.
+- `Settings.js` — new **Privacy & data rights** panel with Export JSON download + deletion request form.
+
+### List-Unsubscribe (RFC 8058, Gmail/Yahoo Feb 2024) ✅
+- Deterministic per-recipient token: `sha256(JWT_SECRET::email.lower())[:32]`.
+- `POST /api/unsubscribe/{token}` (one-click target) + `GET /api/unsubscribe/{token}` (branded HTML landing).
+- `send-email` now injects `List-Unsubscribe: <URL>, <mailto:>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers.
+
+### AI-generated watermark metadata (EU AI Act §50(2)) ✅
+- `/ai/image` and `/giftcards/regenerate` (image fields) return `{ai_generated, provider, generated_at}`.
+- Coupon editor + Gift Card studio show an "AI-generated" pill overlay.
+
+### RFC 9116 security.txt ✅
+- `GET /api/.well-known/security.txt` returns text/plain with Contact, Expires, Policy, Canonical.
+- `/app/frontend/public/.well-known/security.txt` mirrors the file at the canonical browser path.
+
+### Cookie Consent Banner (GDPR/CCPA) ✅
+- New `CookieConsent.js` mounts on every `/f/:slug` page; persists `promoos_cookie_consent = granted|denied` in localStorage; won't re-appear once decided.
+
+### Scale-out indexes ✅
+- Startup now creates indexes on `coupons {workspace_id, state}`, `redemptions {workspace_id, created_at}`, `customers {workspace_id, email}`, `funnels {slug}`, `email_events {workspace_id, created_at}`, `csv_mapping_presets {workspace_id, signature}` unique, `error_reports {created_at}`, `journey_template_ratings {template_id, workspace_id}` unique.
+
+### Testing ✅
+- 16/16 pytest passing (`/app/backend/tests/test_iter22_compliance_batch.py`).
+- UI verified end-to-end via Playwright: cookie banner on `/f/qa-storefront-live`, Settings privacy panel, comment input in Campaigns marketplace, delimiter+preset badges in CSV preview.
+- Non-blocking follow-ups: DialogDescription a11y warning on CSV preview; DSAR delete notifies via `marketing_optout` flag but does not currently email superadmin (SLA tracking backlog).
+
+
 ## Feb 2026 — Any-Other-System Live + CSV Preview + Attribution + Snooze + Retest All
 
 ### 🔌 "Any other system" activated
