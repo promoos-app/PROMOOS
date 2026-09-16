@@ -346,53 +346,66 @@ async def create_coupon(body: CouponIn, user: dict = Depends(get_current_user)):
 @api.post("/coupons/import-csv")
 async def import_coupons_csv(file: UploadFile = File(...),
                               dry_run: bool = False,
+                              mapping: Optional[str] = None,
                               user: dict = Depends(get_current_user)):
     """Bulk-create coupons from a CSV.
 
     Accepted columns (header row required; extras ignored):
         name*, code, type, discount_value*, headline, description, terms, cta, state
 
-    When `dry_run=true` the rows are parsed and validated but NOT inserted —
-    used by the frontend to preview the first N rows before committing.
+    `mapping`: optional JSON string that maps this CSV's column names to the internal fields —
+    e.g. `{"promo_code":"code","offer_name":"name","pct":"discount_value"}`.
+    When `dry_run=true` the rows are parsed and validated but NOT inserted.
     """
     require_writer(user)
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(400, "Upload a .csv file")
     raw = (await file.read()).decode("utf-8-sig", errors="replace")
-    import csv as _csv
+    import csv as _csv, json as _json
     from io import StringIO
+    col_map: dict = {}
+    if mapping:
+        try: col_map = _json.loads(mapping)
+        except Exception: raise HTTPException(400, "mapping must be a JSON object")
     reader = _csv.DictReader(StringIO(raw))
+
+    def _col(row, internal):
+        # Resolve internal field name via the mapping (source header → internal).
+        for src, tgt in col_map.items():
+            if tgt == internal and row.get(src) not in (None, ""):
+                return row.get(src)
+        return row.get(internal)
+
     created, errors, preview = [], [], []
-    for i, row in enumerate(reader, start=2):  # start=2 → line 1 is the header
+    for i, row in enumerate(reader, start=2):
         try:
-            name = (row.get("name") or "").strip()
+            name = (_col(row, "name") or "").strip()
             if not name:
                 raise ValueError("name required")
-            disc = float(row.get("discount_value") or 0)
-            code = (row.get("code") or rand_code()).strip().upper()
-            ctype = (row.get("type") or "percentage").strip()
+            disc = float(_col(row, "discount_value") or 0)
+            code = (_col(row, "code") or rand_code()).strip().upper()
+            ctype = (_col(row, "type") or "percentage").strip()
             if ctype not in ("percentage", "fixed_amount", "bogo", "free_shipping", "tiered"):
                 ctype = "percentage"
-            state = (row.get("state") or "draft").strip()
+            state = (_col(row, "state") or "draft").strip()
             if state not in ("draft", "scheduled", "active", "paused", "expired", "archived"):
                 state = "draft"
             parsed = {
                 "row": i, "name": name[:120], "code": code, "type": ctype,
                 "discount_value": disc, "state": state,
-                "headline": (row.get("headline") or "").strip()[:140],
+                "headline": (_col(row, "headline") or "").strip()[:140],
             }
             if dry_run:
-                preview.append(parsed)
-                continue
+                preview.append(parsed); continue
             cid = str(uuid.uuid4())
             doc = {
                 "id": cid, "workspace_id": user["workspace_id"],
                 "name": parsed["name"], "type": ctype, "discount_value": disc,
                 "code": code, "codes": [],
                 "headline": parsed["headline"],
-                "description": (row.get("description") or "").strip()[:400],
-                "terms": (row.get("terms") or "").strip()[:400],
-                "cta": (row.get("cta") or "Claim Offer").strip()[:60],
+                "description": (_col(row, "description") or "").strip()[:400],
+                "terms": (_col(row, "terms") or "").strip()[:400],
+                "cta": (_col(row, "cta") or "Claim Offer").strip()[:60],
                 "state": state,
                 "rules": {"min_cart": 0, "scope": "all", "scope_value": "",
                           "usage_limit": 0, "per_customer_limit": 1, "stackable": False,
@@ -407,12 +420,16 @@ async def import_coupons_csv(file: UploadFile = File(...),
             created.append({"code": code, "name": name})
         except Exception as e:
             errors.append({"row": i, "error": str(e)[:120]})
+    # Return CSV headers so the frontend can build a column-mapping UI.
+    reader2 = _csv.DictReader(StringIO(raw))
+    headers = reader2.fieldnames or []
     return {
         "dry_run": dry_run,
         "created": len(created), "errors": errors,
-        "preview": preview[:5],           # first 5 parsed rows (dry-run)
+        "preview": preview[:5],
         "total_valid": len(preview) if dry_run else len(created),
-        "sample": created[:5],            # first 5 committed (real run)
+        "sample": created[:5],
+        "csv_headers": headers,
     }
 
 
@@ -924,9 +941,25 @@ async def public_redeem(body: PublicRedeemIn):
     # Fire "purchase" trigger for any active journeys
     email = customer if "@" in customer else None
     await _fire_trigger(c["workspace_id"], "purchase", customer, email=email)
+    # Live-test history — capture last 100 redeems per workspace for the /integrations replay pane.
+    await db.public_redeem_log.insert_one({
+        "id": str(uuid.uuid4()), "workspace_id": c["workspace_id"],
+        "code": code, "amount": body.amount, "customer": customer,
+        "discount": discount, "revenue": rev,
+        "created_at": now_iso(),
+    })
     return {"ok": True, "discount": discount, "revenue": rev,
             "referral_credit": referral_credit,
             "loyalty_points_awarded": loyalty_awarded}
+
+
+@api.get("/live-test/history")
+async def live_test_history(user: dict = Depends(get_current_user)):
+    """Recent public /redeem calls for the workspace — feeds the Any-other-system replay list."""
+    docs = await db.public_redeem_log.find(
+        {"workspace_id": user["workspace_id"]},
+        {"_id": 0}).sort("created_at", -1).to_list(10)
+    return {"items": docs}
 
 
 

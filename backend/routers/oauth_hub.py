@@ -588,11 +588,15 @@ def register(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
                         if RESEND_API_KEY:
                             subject = f"Rotate your {tok.get('label', tok['provider'])} token soon"
                             base = (PUBLIC_APP_URL or "").rstrip("/")
+                            rotate_docs = (PROVIDERS.get(tok["provider"], {}) or {}).get("token_docs") or ""
+                            docs_link = (f"<a href='{rotate_docs}' style='color:#CCFF00;text-decoration:underline'>"
+                                          f"How to rotate a {tok.get('label')} token →</a>" if rotate_docs else "")
                             html = f"""
                             <div style='font-family:Helvetica,Arial,sans-serif;padding:24px;background:#0A0A0A;color:#fff'>
                               <h2 style='color:#CCFF00;margin:0 0 12px'>Time to rotate your {tok.get('label')} token</h2>
                               <p style='color:#A1A1AA'>The access token you connected {age} days ago is nearing expiry.
                               Some providers (Meta, LinkedIn) auto-invalidate long-lived tokens at day 60 — rotate now to keep your campaigns firing.</p>
+                              {f"<p style='margin:12px 0'>{docs_link}</p>" if docs_link else ""}
                               <p style='margin:20px 0;display:flex;gap:12px;flex-wrap:wrap'>
                                 <a href='{base}/integrations' style='background:#CCFF00;color:#0A0A0A;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700'>Rotate now</a>
                                 <a href='{base}/integrations?snooze={tok["provider"]}&days=5' style='background:transparent;border:1px solid #27272A;color:#A1A1AA;padding:12px 20px;border-radius:8px;text-decoration:none'>Remind me in 5 days</a>

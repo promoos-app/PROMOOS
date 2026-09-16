@@ -280,6 +280,11 @@ function AnyOtherSystem({ pos }) {
   const [customer, setCustomer] = useState("buyer@example.com");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  const [history, setHistory] = useState([]);
+
+  const loadHistory = () => api.get("/live-test/history").then((r) => setHistory(r.data.items || [])).catch(() => {});
+  useEffect(() => { loadHistory(); }, []);
+
   const send = async () => {
     if (!code.trim()) { toast.error("Enter a coupon code"); return; }
     setBusy(true); setResult(null);
@@ -291,11 +296,17 @@ function AnyOtherSystem({ pos }) {
       });
       setResult({ ok: true, data });
       toast.success("Redeemed — the response is stored in your dashboard");
+      loadHistory();
     } catch (e) {
       const err = e?.response?.data?.detail || e?.message || "Request failed";
       setResult({ ok: false, error: err });
       toast.error(String(err));
     } finally { setBusy(false); }
+  };
+  const replay = (item) => {
+    setCode(item.code || "");
+    setAmount(String(item.amount ?? "100"));
+    setCustomer(item.customer || "");
   };
   const curlSnippet = pos.generic_curl
     .replace('"CODE"', `"${(code || "CODE").toUpperCase()}"`)
@@ -337,6 +348,23 @@ function AnyOtherSystem({ pos }) {
         <div className={`mt-3 rounded-md p-3 text-xs font-mono border ${result.ok ? "bg-emerald-500/5 border-emerald-500/30 text-emerald-300" : "bg-red-500/5 border-red-500/30 text-red-300"}`}
           data-testid="any-system-result">
           {result.ok ? JSON.stringify(result.data, null, 2) : `Error: ${result.error}`}
+        </div>
+      )}
+      {history.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-[#27272A]" data-testid="live-test-history">
+          <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Recent live-tests · {history.length}</div>
+          <ul className="space-y-1">
+            {history.map((h) => (
+              <li key={h.id} className="flex items-center justify-between gap-2 text-xs font-mono py-1 px-2 rounded hover:bg-[#0A0A0A] group" data-testid={`live-test-history-row-${h.id}`}>
+                <span className="text-[#CCFF00] w-24 shrink-0 truncate">{h.code}</span>
+                <span className="text-[#A1A1AA]">${h.amount ?? 0}</span>
+                <span className="text-[#A1A1AA] truncate flex-1">{h.customer}</span>
+                <span className="text-[10px] text-[#71717A] whitespace-nowrap">{new Date(h.created_at).toLocaleString()}</span>
+                <button onClick={() => replay(h)} data-testid={`live-test-replay-${h.id}`}
+                  className="text-[10px] uppercase tracking-widest text-[#CCFF00] opacity-0 group-hover:opacity-100 transition-opacity">Replay</button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

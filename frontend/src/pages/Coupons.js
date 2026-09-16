@@ -11,7 +11,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
 
 const FILTERS = ["all", "draft", "scheduled", "active", "paused", "expired", "archived"];
@@ -148,7 +148,20 @@ export default function Coupons() {
                 try {
                   const { data } = await api.post("/coupons/import-csv?dry_run=true", fd,
                     { headers: { "Content-Type": "multipart/form-data" } });
-                  setCsvPreview({ file: f, preview: data.preview || [], errors: data.errors || [], total_valid: data.total_valid || 0 });
+                  const csvHeaders = data.csv_headers || [];
+                  // Auto-map exact matches. Unknown headers stay unmapped.
+                  const INTERNAL = ["name","code","type","discount_value","headline","description","terms","cta","state"];
+                  const initialMapping = {};
+                  csvHeaders.forEach((h) => {
+                    const norm = h.trim().toLowerCase();
+                    if (INTERNAL.includes(norm)) initialMapping[h] = norm;
+                  });
+                  setCsvPreview({
+                    file: f,
+                    preview: data.preview || [], errors: data.errors || [],
+                    total_valid: data.total_valid || 0,
+                    csv_headers: csvHeaders, mapping: initialMapping,
+                  });
                 } catch (er) { toast.error(apiError(er)); }
                 finally { e.target.value = ""; }
               }} />

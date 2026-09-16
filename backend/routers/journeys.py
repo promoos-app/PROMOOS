@@ -309,6 +309,8 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             "id": c["id"], "name": c["name"], "description": c.get("description", ""),
             "trigger": c["trigger"], "steps": c["steps"], "source": "marketplace",
             "published_by_workspace": ws_names.get(c.get("workspace_id"), "Agency"),
+            "rating_avg": c.get("rating_avg", 0.0),
+            "rating_count": c.get("rating_count", 0),
         } for c in public]
         return {"templates": own_shaped + public_shaped + JOURNEY_TEMPLATES}
 
@@ -363,6 +365,35 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
         if r.matched_count == 0:
             raise HTTPException(404, "Custom template not found")
         return {"ok": True}
+
+    class RateIn(BaseModel):
+        stars: int  # 1..5
+
+    @api.post("/journey-templates/{tid}/rate")
+    async def rate_marketplace_template(tid: str, body: RateIn,
+                                          user: dict = Depends(get_current_user)):
+        """Marketplace Rating — upvote a marketplace template (1..5). One vote per workspace, overwritable."""
+        if body.stars < 1 or body.stars > 5:
+            raise HTTPException(400, "stars must be 1..5")
+        tpl = await db.journey_templates.find_one({"id": tid, "is_public": True}, {"_id": 0, "id": 1})
+        if not tpl:
+            raise HTTPException(404, "Marketplace template not found")
+        await db.journey_template_ratings.update_one(
+            {"template_id": tid, "workspace_id": user["workspace_id"]},
+            {"$set": {"template_id": tid, "workspace_id": user["workspace_id"],
+                      "stars": int(body.stars), "rated_at": now_iso()}},
+            upsert=True)
+        # Recompute aggregate
+        agg = await db.journey_template_ratings.aggregate([
+            {"$match": {"template_id": tid}},
+            {"$group": {"_id": "$template_id", "avg": {"$avg": "$stars"},
+                         "count": {"$sum": 1}}},
+        ]).to_list(1)
+        avg = round(agg[0]["avg"], 2) if agg else 0.0
+        cnt = agg[0]["count"] if agg else 0
+        await db.journey_templates.update_one(
+            {"id": tid}, {"$set": {"rating_avg": avg, "rating_count": cnt}})
+        return {"ok": True, "avg": avg, "count": cnt}
 
     @api.delete("/journey-templates/custom/{tid}")
     async def delete_custom_template(tid: str, user: dict = Depends(get_current_user)):
