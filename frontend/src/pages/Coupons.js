@@ -35,13 +35,37 @@ export default function Coupons() {
     setCsvBusy(true);
     try {
       const fd = new FormData(); fd.append("file", csvPreview.file);
-      const { data } = await api.post("/coupons/import-csv", fd,
+      const url = "/coupons/import-csv" + (csvPreview.mapping && Object.keys(csvPreview.mapping).length
+        ? `?mapping=${encodeURIComponent(JSON.stringify(csvPreview.mapping))}` : "");
+      const { data } = await api.post(url, fd,
         { headers: { "Content-Type": "multipart/form-data" } });
       toast.success(`Imported ${data.created} coupon${data.created === 1 ? "" : "s"}`);
       if (data.errors?.length) toast.warning(`${data.errors.length} row error(s) skipped`);
       qc.invalidateQueries({ queryKey: ["coupons"] });
       setCsvPreview(null);
     } catch (e) { toast.error(apiError(e)); } finally { setCsvBusy(false); }
+  };
+
+  const rerunDryRun = async (file, mapping) => {
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const url = "/coupons/import-csv?dry_run=true" + (mapping && Object.keys(mapping).length
+        ? `&mapping=${encodeURIComponent(JSON.stringify(mapping))}` : "");
+      const { data } = await api.post(url, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setCsvPreview((p) => p ? {
+        ...p, preview: data.preview || [], errors: data.errors || [],
+        total_valid: data.total_valid || 0, mapping,
+      } : p);
+    } catch (e) { toast.error(apiError(e)); }
+  };
+  const updateMapping = (srcHeader, internalField) => {
+    if (!csvPreview) return;
+    const newMap = { ...csvPreview.mapping };
+    if (internalField) newMap[srcHeader] = internalField;
+    else delete newMap[srcHeader];
+    // Optimistic UI first
+    setCsvPreview((p) => ({ ...p, mapping: newMap }));
+    rerunDryRun(csvPreview.file, newMap);
   };
 
   const bulkState = async (state) => {
@@ -144,12 +168,22 @@ export default function Coupons() {
             <input type="file" accept=".csv" className="hidden" data-testid="import-csv-input"
               onChange={async (e) => {
                 const f = e.target.files?.[0]; if (!f) return;
+                // Preflight: read first line locally and warn if required columns are missing.
+                try {
+                  const head = await f.slice(0, 4096).text();
+                  const firstLine = head.split(/\r?\n/)[0] || "";
+                  const cols = firstLine.split(",").map((c) => c.trim().replace(/^"|"$/g, "").toLowerCase());
+                  const missing = ["name", "discount_value"].filter((r) => !cols.includes(r));
+                  if (missing.length && !window.confirm(
+                    `Your CSV is missing required column(s): ${missing.join(", ")}.\n` +
+                    `You'll need to map them in the next step. Continue?`
+                  )) { e.target.value = ""; return; }
+                } catch (_) { /* fall through to server */ }
                 const fd = new FormData(); fd.append("file", f);
                 try {
                   const { data } = await api.post("/coupons/import-csv?dry_run=true", fd,
                     { headers: { "Content-Type": "multipart/form-data" } });
                   const csvHeaders = data.csv_headers || [];
-                  // Auto-map exact matches. Unknown headers stay unmapped.
                   const INTERNAL = ["name","code","type","discount_value","headline","description","terms","cta","state"];
                   const initialMapping = {};
                   csvHeaders.forEach((h) => {
@@ -395,11 +429,53 @@ export default function Coupons() {
       <Dialog open={!!csvPreview} onOpenChange={(o) => !o && setCsvPreview(null)}>
         <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-2xl" data-testid="csv-preview-dialog">
           <DialogHeader><DialogTitle>Preview import · {csvPreview?.file?.name}</DialogTitle></DialogHeader>
-          <div className="space-y-3">
+          <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
             <div className="text-xs text-[#A1A1AA]">
               <span className="text-[#CCFF00] font-bold">{csvPreview?.total_valid ?? 0}</span> row{csvPreview?.total_valid === 1 ? "" : "s"} will be created ·{" "}
               <span className={csvPreview?.errors?.length ? "text-red-400" : ""}>{csvPreview?.errors?.length ?? 0} skipped</span>
             </div>
+            {(csvPreview?.csv_headers || []).length > 0 && (
+              <div className="rounded-md border border-[#27272A] p-3 bg-[#0A0A0A]" data-testid="csv-mapper">
+                <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Column mapping</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                  {csvPreview.csv_headers.map((h) => {
+                    const REQUIRED = ["name","discount_value"];
+                    const currentMapping = csvPreview.mapping || {};
+                    const currentTarget = currentMapping[h] || "";
+                    // Track which internal fields are already mapped elsewhere
+                    const used = new Set(Object.values(currentMapping).filter((v) => v && v !== currentTarget));
+                    return (
+                      <label key={h} className="flex items-center gap-2 py-1" data-testid={`csv-mapper-row-${h}`}>
+                        <span className="font-mono text-[#A1A1AA] truncate flex-1 min-w-0" title={h}>{h}</span>
+                        <span className="text-[#71717A]">→</span>
+                        <select
+                          value={currentTarget}
+                          onChange={(e) => updateMapping(h, e.target.value)}
+                          data-testid={`csv-mapper-select-${h}`}
+                          className="h-7 px-2 bg-[#141414] border border-[#27272A] rounded text-white text-xs min-w-[140px]"
+                        >
+                          <option value="">— ignore —</option>
+                          {["name","code","type","discount_value","headline","description","terms","cta","state"].map((k) => (
+                            <option key={k} value={k} disabled={used.has(k)}>
+                              {k}{REQUIRED.includes(k) ? " *" : ""}{used.has(k) ? " (already mapped)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    );
+                  })}
+                </div>
+                {(() => {
+                  const mapped = new Set(Object.values(csvPreview.mapping || {}));
+                  const missing = ["name","discount_value"].filter((r) => !mapped.has(r));
+                  return missing.length ? (
+                    <div className="mt-2 text-[10px] text-amber-400" data-testid="csv-mapper-missing">
+                      Missing required field{missing.length > 1 ? "s" : ""}: {missing.join(", ")}
+                    </div>
+                  ) : null;
+                })()}
+              </div>
+            )}
             {(csvPreview?.preview || []).length > 0 ? (
               <div className="rounded-md border border-[#27272A] overflow-hidden">
                 <table className="w-full text-xs" data-testid="csv-preview-table">

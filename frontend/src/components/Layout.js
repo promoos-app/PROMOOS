@@ -1,5 +1,6 @@
-import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import Footer from "@/components/Footer";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
 import api from "@/lib/api";
@@ -34,6 +35,7 @@ const NAV = [
 ];
 
 export default function Layout() {
+  const location = useLocation();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { data: ws } = useQuery({
@@ -110,7 +112,9 @@ export default function Layout() {
         </header>
 
         <main className="flex-1 overflow-y-auto p-6">
-          <Outlet />
+          <ErrorBoundary resetKey={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
           <Footer />
         </main>
       </div>

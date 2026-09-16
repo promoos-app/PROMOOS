@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Plus, Megaphone, Trash2, Mail, Timer, Ticket, MessageSquare, UserPlus, Activity, Sparkles, Eye } from "lucide-react";
+import { Loader2, Plus, Megaphone, Trash2, Mail, Timer, Ticket, MessageSquare, UserPlus, Activity, Sparkles, Eye, Star } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
@@ -142,6 +142,13 @@ export default function Campaigns() {
       api.get("/journey-templates").then((r) => setTemplates(r.data.templates || [])).catch(() => {});
     } catch (e) { toast.error(apiError(e)); }
   };
+  const rateTemplate = async (tpl, stars) => {
+    try {
+      await api.post(`/journey-templates/${tpl.id}/rate`, { stars });
+      toast.success(`Thanks — rated ${stars}★`);
+      api.get("/journey-templates").then((r) => setTemplates(r.data.templates || [])).catch(() => {});
+    } catch (e) { toast.error(apiError(e)); }
+  };
 
   const load = () => api.get("/journeys").then((r) => setRows(r.data)).catch((e) => toast.error(apiError(e)));
   useEffect(() => { load(); api.get("/journey-templates").then((r) => setTemplates(r.data.templates || [])).catch(() => {}); }, []);
@@ -243,6 +250,27 @@ export default function Campaigns() {
                 {t.source === "marketplace" && t.published_by_workspace && (
                   <div className="text-[10px] text-[#005CEE] mb-2" data-testid={`journey-template-attribution-${t.id}`}>
                     Curated by <span className="font-bold">{t.published_by_workspace}</span>
+                  </div>
+                )}
+                {t.source === "marketplace" && (
+                  <div className="flex items-center gap-1 mb-2" data-testid={`journey-template-rating-${t.id}`}>
+                    {[1, 2, 3, 4, 5].map((s) => {
+                      const filled = s <= Math.round(t.rating_avg || 0);
+                      return (
+                        <button
+                          key={s}
+                          onClick={() => rateTemplate(t, s)}
+                          data-testid={`journey-template-rate-${t.id}-${s}`}
+                          title={`Rate ${s} star${s === 1 ? "" : "s"}`}
+                          className="p-0.5 hover:scale-110 transition-transform"
+                        >
+                          <Star className={`w-3.5 h-3.5 ${filled ? "fill-[#CCFF00] text-[#CCFF00]" : "text-[#3F3F46]"}`} />
+                        </button>
+                      );
+                    })}
+                    <span className="text-[10px] text-[#71717A] ml-1">
+                      {(t.rating_avg || 0).toFixed(1)} · {t.rating_count || 0}
+                    </span>
                   </div>
                 )}
                 <div className="text-xs text-[#A1A1AA] mb-3">{t.description}</div>
