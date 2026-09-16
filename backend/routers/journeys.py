@@ -368,20 +368,30 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
 
     class RateIn(BaseModel):
         stars: int  # 1..5
+        comment: Optional[str] = None  # Rating Comment — one-line qualitative feedback
 
     @api.post("/journey-templates/{tid}/rate")
     async def rate_marketplace_template(tid: str, body: RateIn,
                                           user: dict = Depends(get_current_user)):
-        """Marketplace Rating — upvote a marketplace template (1..5). One vote per workspace, overwritable."""
+        """Marketplace Rating — upvote a marketplace template (1..5). One vote per workspace, overwritable.
+
+        Optional `comment` attaches a one-line note so agencies see qualitative feedback,
+        not just averages.
+        """
         if body.stars < 1 or body.stars > 5:
             raise HTTPException(400, "stars must be 1..5")
         tpl = await db.journey_templates.find_one({"id": tid, "is_public": True}, {"_id": 0, "id": 1})
         if not tpl:
             raise HTTPException(404, "Marketplace template not found")
+        ws = await db.workspaces.find_one({"id": user["workspace_id"]},
+                                           {"_id": 0, "name": 1}) or {}
+        comment = (body.comment or "").strip()[:200] or None
         await db.journey_template_ratings.update_one(
             {"template_id": tid, "workspace_id": user["workspace_id"]},
             {"$set": {"template_id": tid, "workspace_id": user["workspace_id"],
-                      "stars": int(body.stars), "rated_at": now_iso()}},
+                      "workspace_name": ws.get("name", "Agency"),
+                      "stars": int(body.stars), "comment": comment,
+                      "rated_at": now_iso()}},
             upsert=True)
         # Recompute aggregate
         agg = await db.journey_template_ratings.aggregate([
@@ -394,6 +404,15 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
         await db.journey_templates.update_one(
             {"id": tid}, {"$set": {"rating_avg": avg, "rating_count": cnt}})
         return {"ok": True, "avg": avg, "count": cnt}
+
+    @api.get("/journey-templates/{tid}/comments")
+    async def list_template_comments(tid: str, user: dict = Depends(get_current_user)):
+        """Return the most recent qualitative comments for a marketplace template."""
+        rows = await db.journey_template_ratings.find(
+            {"template_id": tid, "comment": {"$ne": None}},
+            {"_id": 0, "stars": 1, "comment": 1, "workspace_name": 1, "rated_at": 1}
+        ).sort("rated_at", -1).to_list(20)
+        return {"comments": rows}
 
     @api.delete("/journey-templates/custom/{tid}")
     async def delete_custom_template(tid: str, user: dict = Depends(get_current_user)):

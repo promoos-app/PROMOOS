@@ -215,6 +215,101 @@ export default function Settings() {
           </Button>
         </div>
       )}
+
+      <PrivacyPanel user={user} />
+    </div>
+  );
+}
+
+function PrivacyPanel({ user }) {
+  const [busy, setBusy] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmEmail, setConfirmEmail] = useState("");
+  const [reason, setReason] = useState("");
+  const exportData = async () => {
+    setBusy("export");
+    try {
+      const { data } = await api.get("/me/export");
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `promoos-data-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      toast.success("Data export downloaded");
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(null); }
+  };
+  const deleteAccount = async () => {
+    if (confirmEmail.trim().toLowerCase() !== (user?.email || "").toLowerCase()) {
+      toast.error("Type your account email exactly to confirm");
+      return;
+    }
+    setBusy("delete");
+    try {
+      const { data } = await api.post("/me/data/delete", { confirm_email: confirmEmail.trim(), reason });
+      toast.success(`Deletion request queued (${data.request_id?.slice(0, 8)}…) — we'll notify you when processed`);
+      setConfirmDelete(false); setConfirmEmail(""); setReason("");
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(null); }
+  };
+  return (
+    <div className="surface rounded-lg p-6 mt-6" data-testid="privacy-panel">
+      <h2 className="font-display font-bold text-xl mb-1 flex items-center gap-2">
+        <ShieldCheck className="w-5 h-5 text-[#CCFF00]" /> Privacy & data rights
+      </h2>
+      <p className="text-xs text-[#A1A1AA] mb-4">
+        Under GDPR (EU) and CCPA (California), you have the right to a copy of everything we hold
+        on you, and the right to have it erased. These controls execute both.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="rounded-md p-4 bg-[#0A0A0A] border border-[#27272A]">
+          <div className="font-medium text-sm mb-1">Download your data</div>
+          <div className="text-xs text-[#71717A] mb-3">
+            A JSON dump of your account, workspace, coupons, redemptions and customers.
+          </div>
+          <Button data-testid="privacy-export-btn" onClick={exportData}
+            disabled={busy === "export"}
+            className="btn-ghost rounded-md text-xs gap-2 border border-[#27272A] w-full">
+            {busy === "export" ? "Preparing…" : "Export JSON"}
+          </Button>
+        </div>
+        <div className="rounded-md p-4 bg-[#0A0A0A] border border-red-500/30">
+          <div className="font-medium text-sm mb-1 text-red-300">Delete your data</div>
+          <div className="text-xs text-[#71717A] mb-3">
+            Queues a right-to-erasure request. A superadmin reviews and confirms within 30 days.
+          </div>
+          {!confirmDelete ? (
+            <Button data-testid="privacy-delete-open-btn"
+              onClick={() => setConfirmDelete(true)}
+              className="btn-ghost rounded-md text-xs w-full border border-red-500/40 text-red-300 hover:bg-red-500/10">
+              Request deletion
+            </Button>
+          ) : (
+            <div className="space-y-2" data-testid="privacy-delete-form">
+              <Input
+                data-testid="privacy-delete-email"
+                placeholder={user?.email || "your account email"}
+                value={confirmEmail} onChange={(e) => setConfirmEmail(e.target.value)}
+                className="bg-[#141414] border-red-500/30 text-white text-xs h-8" />
+              <Input
+                data-testid="privacy-delete-reason"
+                placeholder="Reason (optional)"
+                value={reason} onChange={(e) => setReason(e.target.value)}
+                className="bg-[#141414] border-[#27272A] text-white text-xs h-8" />
+              <div className="flex gap-2">
+                <button onClick={() => { setConfirmDelete(false); setConfirmEmail(""); }}
+                  className="text-[10px] text-[#71717A] hover:text-white flex-1 h-7 border border-[#27272A] rounded">
+                  Cancel
+                </button>
+                <Button data-testid="privacy-delete-submit" onClick={deleteAccount}
+                  disabled={busy === "delete"}
+                  className="rounded-md text-[10px] h-7 bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30 flex-1">
+                  {busy === "delete" ? "Queuing…" : "Confirm deletion"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

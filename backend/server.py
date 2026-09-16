@@ -343,6 +343,61 @@ async def create_coupon(body: CouponIn, user: dict = Depends(get_current_user)):
     return coupon_public(doc)
 
 
+def _detect_csv_delimiter(sample: str) -> str:
+    """CSV Delimiter Auto-Detect — sniff `,`, `;`, `\t` from the first non-empty line.
+
+    Falls back to `,` if none of the candidates are found. Kept simple by design:
+    a full csv.Sniffer misfires on European exports with quoted commas inside cells.
+    """
+    first_line = ""
+    for line in sample.splitlines():
+        if line.strip():
+            first_line = line
+            break
+    if not first_line:
+        return ","
+    counts = {d: first_line.count(d) for d in (",", ";", "\t")}
+    best = max(counts, key=counts.get)
+    return best if counts[best] > 0 else ","
+
+
+def _mapping_signature(headers: list) -> str:
+    """Stable hash of a CSV header set so the same POS export always matches
+    the same saved column mapping — even if columns are reordered.
+    """
+    norm = sorted(str(h or "").strip().lower() for h in headers if str(h or "").strip())
+    return _hashlib.sha256("|".join(norm).encode()).hexdigest()[:16]
+
+
+@api.get("/coupons/import-mapping")
+async def get_saved_mapping(signature: str, user: dict = Depends(get_current_user)):
+    """Sticky Mapper Preset — return the last-used column mapping for this header signature."""
+    doc = await db.csv_mapping_presets.find_one(
+        {"workspace_id": user["workspace_id"], "signature": signature},
+        {"_id": 0, "mapping": 1, "updated_at": 1, "csv_headers": 1})
+    return doc or {}
+
+
+class ImportMappingSaveIn(BaseModel):
+    signature: str
+    mapping: dict
+    csv_headers: List[str] = []
+
+
+@api.post("/coupons/import-mapping")
+async def save_mapping_preset(body: ImportMappingSaveIn,
+                              user: dict = Depends(get_current_user)):
+    require_writer(user)
+    await db.csv_mapping_presets.update_one(
+        {"workspace_id": user["workspace_id"], "signature": body.signature},
+        {"$set": {"workspace_id": user["workspace_id"], "signature": body.signature,
+                  "mapping": body.mapping or {}, "csv_headers": body.csv_headers,
+                  "updated_at": now_iso()},
+         "$setOnInsert": {"created_at": now_iso()}},
+        upsert=True)
+    return {"ok": True}
+
+
 @api.post("/coupons/import-csv")
 async def import_coupons_csv(file: UploadFile = File(...),
                               dry_run: bool = False,
@@ -356,6 +411,7 @@ async def import_coupons_csv(file: UploadFile = File(...),
     `mapping`: optional JSON string that maps this CSV's column names to the internal fields —
     e.g. `{"promo_code":"code","offer_name":"name","pct":"discount_value"}`.
     When `dry_run=true` the rows are parsed and validated but NOT inserted.
+    Delimiter (`,`, `;`, `\t`) is auto-detected from the first line.
     """
     require_writer(user)
     if not file.filename.lower().endswith(".csv"):
@@ -367,7 +423,8 @@ async def import_coupons_csv(file: UploadFile = File(...),
     if mapping:
         try: col_map = _json.loads(mapping)
         except Exception: raise HTTPException(400, "mapping must be a JSON object")
-    reader = _csv.DictReader(StringIO(raw))
+    delimiter = _detect_csv_delimiter(raw[:4096])
+    reader = _csv.DictReader(StringIO(raw), delimiter=delimiter)
 
     def _col(row, internal):
         # Resolve internal field name via the mapping (source header → internal).
@@ -421,8 +478,24 @@ async def import_coupons_csv(file: UploadFile = File(...),
         except Exception as e:
             errors.append({"row": i, "error": str(e)[:120]})
     # Return CSV headers so the frontend can build a column-mapping UI.
-    reader2 = _csv.DictReader(StringIO(raw))
+    reader2 = _csv.DictReader(StringIO(raw), delimiter=delimiter)
     headers = reader2.fieldnames or []
+    signature = _mapping_signature(headers)
+    saved_preset = None
+    if dry_run:
+        # Preflight — hydrate the last-used mapping so the merchant doesn't remap the same POS export twice.
+        saved_preset = await db.csv_mapping_presets.find_one(
+            {"workspace_id": user["workspace_id"], "signature": signature},
+            {"_id": 0, "mapping": 1, "updated_at": 1})
+    elif col_map:
+        # Commit — persist the mapping that actually produced this import so it becomes sticky.
+        await db.csv_mapping_presets.update_one(
+            {"workspace_id": user["workspace_id"], "signature": signature},
+            {"$set": {"workspace_id": user["workspace_id"], "signature": signature,
+                      "mapping": col_map, "csv_headers": headers,
+                      "updated_at": now_iso()},
+             "$setOnInsert": {"created_at": now_iso()}},
+            upsert=True)
     return {
         "dry_run": dry_run,
         "created": len(created), "errors": errors,
@@ -430,6 +503,9 @@ async def import_coupons_csv(file: UploadFile = File(...),
         "total_valid": len(preview) if dry_run else len(created),
         "sample": created[:5],
         "csv_headers": headers,
+        "delimiter": {",": "comma", ";": "semicolon", "\t": "tab"}.get(delimiter, delimiter),
+        "signature": signature,
+        "saved_mapping": (saved_preset or {}).get("mapping") if dry_run else None,
     }
 
 
@@ -728,7 +804,10 @@ async def ai_image(body: AIImageIn, user: dict = Depends(get_current_user)):
     if not images:
         raise HTTPException(502, "No image generated")
     img = images[0]
-    return {"image_url": f"data:{img['mime_type']};base64,{img['data']}"}
+    # EU AI Act §50(2) / Coalition for Content Provenance: mark synthetic media with metadata.
+    return {"image_url": f"data:{img['mime_type']};base64,{img['data']}",
+            "ai_generated": True, "provider": "gemini-3.1-flash-image-preview",
+            "generated_at": now_iso()}
 
 
 # ---------------- Email ----------------
@@ -788,6 +867,21 @@ async def send_coupon_email(cid: str, body: SendCouponEmailIn, user: dict = Depe
     subject = body.subject or f"{c.get('headline') or c.get('name')} — use code {c.get('code')}"
     html = render_coupon_email(c, ws, body.landing_url or "")
     params = {"from": SENDER_EMAIL, "to": body.to, "subject": subject, "html": html}
+    # RFC 8058 / Gmail-Yahoo Feb 2024 rules — every marketing send MUST include
+    # a one-click List-Unsubscribe header. We derive a deterministic token per
+    # recipient so this stays stateless.
+    try:
+        from routers.compliance import unsubscribe_token_for as _uh_token
+        recipients = body.to if isinstance(body.to, list) else [body.to]
+        primary = (recipients[0] if recipients else "").strip().lower()
+        if primary and PUBLIC_APP_URL:
+            tok = _uh_token(primary, JWT_SECRET)
+            params["headers"] = {
+                "List-Unsubscribe": f"<{PUBLIC_APP_URL}/api/unsubscribe/{tok}>, <mailto:unsubscribe+{tok}@promoos.com>",
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+            }
+    except Exception:
+        pass
     try:
         result = await asyncio.to_thread(resend.Emails.send, params)
     except Exception as e:
@@ -2107,6 +2201,10 @@ _journeys_ctx = register_journeys(api, db, now_iso, get_current_user, require_wr
 _fire_trigger = _journeys_ctx["fire_trigger"]
 journey_worker = _journeys_ctx["worker"]
 
+# Compliance router — DSAR, error reporter, unsubscribe, security.txt.
+from routers.compliance import register as register_compliance
+register_compliance(api, db, now_iso, get_current_user, JWT_SECRET)
+
 app.include_router(api)
 
 # CORS: reflect incoming Origin with credentials. Wildcard "*" is browser-rejected
@@ -2240,6 +2338,20 @@ async def startup():
         await db.payment_transactions.create_index("session_id", unique=True)
         # OAuth state tokens expire after 10 minutes to prevent unbounded accumulation.
         await db.oauth_states.create_index("created_at", expireAfterSeconds=600)
+        # Scale-out indexes for the 100k-user promise.
+        await db.coupons.create_index([("workspace_id", 1), ("state", 1)])
+        await db.coupons.create_index([("code", 1)])
+        await db.redemptions.create_index([("workspace_id", 1), ("created_at", -1)])
+        await db.redemptions.create_index([("coupon_id", 1)])
+        await db.customers.create_index([("workspace_id", 1), ("email", 1)])
+        await db.funnels.create_index([("slug", 1)], unique=False)
+        await db.email_events.create_index([("workspace_id", 1), ("created_at", -1)])
+        await db.email_suppressions.create_index([("email", 1)], unique=False)
+        await db.csv_mapping_presets.create_index(
+            [("workspace_id", 1), ("signature", 1)], unique=True)
+        await db.error_reports.create_index([("created_at", -1)])
+        await db.journey_template_ratings.create_index(
+            [("template_id", 1), ("workspace_id", 1)], unique=True)
         # Initialize object storage (best-effort).
         try:
             extras_ctx["init_storage"]()

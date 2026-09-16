@@ -224,6 +224,14 @@ export default function CouponEditor() {
     try {
       const { data } = await api.post("/ai/image", { prompt: basePrompt });
       set("image_url", data.image_url);
+      // EU AI Act §50(2) — persist provenance metadata alongside the asset.
+      if (data.ai_generated) {
+        set("image_meta", {
+          ai_generated: true,
+          provider: data.provider || "gemini-nano-banana",
+          generated_at: data.generated_at || new Date().toISOString(),
+        });
+      }
       toast.success(presetOverride ? `${presetOverride.label} visual generated` : "AI generated a promo visual");
     } catch (e) { toast.error(apiError(e, "Image generation failed")); }
     finally { setAiImgLoading(false); }
@@ -574,7 +582,18 @@ export default function CouponEditor() {
               <div className="absolute inset-0 pointer-events-none rounded-xl bg-gradient-to-br from-[#141414] to-[#0A0A0A]" style={{ zIndex: -1 }} />
             )}
             {form.image_url ? (
-              <img src={form.image_url} alt="promo" className="w-full h-44 object-cover" />
+              <div className="relative">
+                <img src={form.image_url} alt="promo" className="w-full h-44 object-cover" />
+                {form.image_meta?.ai_generated && (
+                  <span
+                    data-testid="coupon-ai-generated-badge"
+                    title={`AI-generated · ${form.image_meta?.provider || "Gemini"} · ${form.image_meta?.generated_at || ""}`}
+                    className="absolute top-2 left-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/70 backdrop-blur-sm border border-[#CCFF00]/40 text-[9px] font-bold uppercase tracking-widest text-[#CCFF00]"
+                  >
+                    <Sparkles className="w-3 h-3" /> AI-generated
+                  </span>
+                )}
+              </div>
             ) : (
               <div className="w-full h-44 flex items-center justify-center bg-[#0A0A0A] text-[#3a3a3e] border-b border-[#27272A]">
                 <ImageIcon className="w-8 h-8" />

@@ -1,10 +1,14 @@
 import React from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
+import axios from "axios";
+
+const REPORTER_URL = `${process.env.REACT_APP_BACKEND_URL || ""}/api/errors`;
 
 /**
  * Route-level error boundary. Wraps every top-level page so a single component
  * crash surfaces a friendly card instead of a red screen or blank page.
- * Sentry-free; logs to console for developer debugging.
+ * Silently reports crashes to /api/errors so we spot regressions before
+ * customers complain — fire-and-forget, no user disruption.
  */
 export default class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -17,6 +21,22 @@ export default class ErrorBoundary extends React.Component {
   componentDidCatch(error, info) {
     // eslint-disable-next-line no-console
     console.error("[ErrorBoundary]", error, info?.componentStack);
+    // Silent crash report — never let the reporter itself throw.
+    try {
+      const token = (() => {
+        try { return localStorage.getItem("promoos_token") || ""; } catch (_) { return ""; }
+      })();
+      axios.post(REPORTER_URL, {
+        message: String(error?.message || error || "Unknown error").slice(0, 500),
+        stack: String(error?.stack || "").slice(0, 4000),
+        component_stack: String(info?.componentStack || "").slice(0, 4000),
+        route: typeof window !== "undefined" ? window.location.pathname + window.location.search : "",
+        user_agent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+      }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        timeout: 5000,
+      }).catch(() => {});
+    } catch (_) { /* never crash the crash-reporter */ }
   }
   componentDidUpdate(prevProps) {
     // Reset when the route/user changes.

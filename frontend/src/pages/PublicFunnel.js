@@ -4,6 +4,7 @@ import axios from "axios";
 import { Countdown, ProductBlock, Testimonials, blockColors, trackFunnelEvent } from "./PublicFunnelBlocks";
 import { LogoBar, Stats, Guarantee, PricingTable, OrderBump, Upsell, Optin, Spacer, Divider, FooterBlock } from "./PublicFunnelIndustrial";
 import { getContrastText } from "@/lib/contrast";
+import CookieConsent from "@/components/CookieConsent";
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -410,6 +411,7 @@ export default function PublicFunnel() {
       <footer className="py-8 text-center text-[10px] tracking-widest uppercase opacity-40">
         Powered by PromoOS
       </footer>
+      <CookieConsent theme={theme} />
     </div>
   );
 }

@@ -185,16 +185,26 @@ export default function Coupons() {
                     { headers: { "Content-Type": "multipart/form-data" } });
                   const csvHeaders = data.csv_headers || [];
                   const INTERNAL = ["name","code","type","discount_value","headline","description","terms","cta","state"];
-                  const initialMapping = {};
-                  csvHeaders.forEach((h) => {
-                    const norm = h.trim().toLowerCase();
-                    if (INTERNAL.includes(norm)) initialMapping[h] = norm;
-                  });
+                  // Sticky Mapper Preset — prefer the last-used mapping over the auto-derived one.
+                  const savedMapping = data.saved_mapping && typeof data.saved_mapping === "object"
+                    ? data.saved_mapping : null;
+                  let initialMapping = {};
+                  if (savedMapping && Object.keys(savedMapping).length) {
+                    initialMapping = { ...savedMapping };
+                    toast.info("Restored your last column mapping for this file");
+                  } else {
+                    csvHeaders.forEach((h) => {
+                      const norm = h.trim().toLowerCase();
+                      if (INTERNAL.includes(norm)) initialMapping[h] = norm;
+                    });
+                  }
                   setCsvPreview({
                     file: f,
                     preview: data.preview || [], errors: data.errors || [],
                     total_valid: data.total_valid || 0,
                     csv_headers: csvHeaders, mapping: initialMapping,
+                    delimiter: data.delimiter, signature: data.signature,
+                    from_preset: !!savedMapping,
                   });
                 } catch (er) { toast.error(apiError(er)); }
                 finally { e.target.value = ""; }
@@ -430,9 +440,21 @@ export default function Coupons() {
         <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-2xl" data-testid="csv-preview-dialog">
           <DialogHeader><DialogTitle>Preview import · {csvPreview?.file?.name}</DialogTitle></DialogHeader>
           <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
-            <div className="text-xs text-[#A1A1AA]">
-              <span className="text-[#CCFF00] font-bold">{csvPreview?.total_valid ?? 0}</span> row{csvPreview?.total_valid === 1 ? "" : "s"} will be created ·{" "}
-              <span className={csvPreview?.errors?.length ? "text-red-400" : ""}>{csvPreview?.errors?.length ?? 0} skipped</span>
+            <div className="text-xs text-[#A1A1AA] flex items-center gap-3 flex-wrap">
+              <span>
+                <span className="text-[#CCFF00] font-bold">{csvPreview?.total_valid ?? 0}</span> row{csvPreview?.total_valid === 1 ? "" : "s"} will be created ·{" "}
+                <span className={csvPreview?.errors?.length ? "text-red-400" : ""}>{csvPreview?.errors?.length ?? 0} skipped</span>
+              </span>
+              {csvPreview?.delimiter && (
+                <span data-testid="csv-preview-delimiter" className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded border border-[#27272A] text-[#71717A]">
+                  Delimiter · {csvPreview.delimiter}
+                </span>
+              )}
+              {csvPreview?.from_preset && (
+                <span data-testid="csv-preview-preset-badge" className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded bg-[#CCFF00]/15 text-[#CCFF00] border border-[#CCFF00]/40">
+                  Mapping restored
+                </span>
+              )}
             </div>
             {(csvPreview?.csv_headers || []).length > 0 && (
               <div className="rounded-md border border-[#27272A] p-3 bg-[#0A0A0A]" data-testid="csv-mapper">

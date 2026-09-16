@@ -242,7 +242,11 @@ def register(api, db, EMERGENT_LLM_KEY, now_iso, get_current_user, require_write
                     raise HTTPException(502, "No image returned")
                 img = images[0]
                 data_url = f"data:{img.get('mime_type', 'image/png')};base64,{img['data']}"
-                return {"field": field, "value": {"type": "image", "value": data_url}}
+                # EU AI Act compliance — surface AI provenance so the studio can badge the asset.
+                return {"field": field, "value": {"type": "image", "value": data_url,
+                                                   "ai_generated": True,
+                                                   "provider": "gemini-3.1-flash-image-preview",
+                                                   "generated_at": now_iso()}}
             except HTTPException:
                 raise
             except Exception as e:

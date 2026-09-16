@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Plus, Megaphone, Trash2, Mail, Timer, Ticket, MessageSquare, UserPlus, Activity, Sparkles, Eye, Star } from "lucide-react";
+import { Loader2, Plus, Megaphone, Trash2, Mail, Timer, Ticket, MessageSquare, UserPlus, Activity, Sparkles, Eye, Star, MessageCircle } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
@@ -122,6 +122,18 @@ export default function Campaigns() {
   const [tplName, setTplName] = useState("");
   const [tplDesc, setTplDesc] = useState("");
   const [tplBusy, setTplBusy] = useState(false);
+  const [commentDrafts, setCommentDrafts] = useState({});
+  const [templateComments, setTemplateComments] = useState({});
+  const [loadingComments, setLoadingComments] = useState(null);
+
+  const loadComments = async (tid) => {
+    if (templateComments[tid]) { setTemplateComments((s) => ({ ...s, [tid]: null })); return; }
+    setLoadingComments(tid);
+    try {
+      const { data } = await api.get(`/journey-templates/${tid}/comments`);
+      setTemplateComments((s) => ({ ...s, [tid]: data.comments || [] }));
+    } catch (e) { toast.error(apiError(e)); } finally { setLoadingComments(null); }
+  };
 
   const saveTemplate = async () => {
     if (!savingFromJourney || !tplName.trim()) { toast.error("Give the template a name"); return; }
@@ -144,8 +156,17 @@ export default function Campaigns() {
   };
   const rateTemplate = async (tpl, stars) => {
     try {
-      await api.post(`/journey-templates/${tpl.id}/rate`, { stars });
-      toast.success(`Thanks — rated ${stars}★`);
+      const comment = (commentDrafts[tpl.id] || "").trim();
+      await api.post(`/journey-templates/${tpl.id}/rate`, { stars, comment: comment || undefined });
+      toast.success(comment ? `Thanks — rated ${stars}★ with a note` : `Thanks — rated ${stars}★`);
+      setCommentDrafts((s) => ({ ...s, [tpl.id]: "" }));
+      // Refresh comments if they're already visible.
+      if (templateComments[tpl.id] != null) {
+        try {
+          const { data } = await api.get(`/journey-templates/${tpl.id}/comments`);
+          setTemplateComments((s) => ({ ...s, [tpl.id]: data.comments || [] }));
+        } catch (_) { /* non-fatal */ }
+      }
       api.get("/journey-templates").then((r) => setTemplates(r.data.templates || [])).catch(() => {});
     } catch (e) { toast.error(apiError(e)); }
   };
@@ -271,6 +292,45 @@ export default function Campaigns() {
                     <span className="text-[10px] text-[#71717A] ml-1">
                       {(t.rating_avg || 0).toFixed(1)} · {t.rating_count || 0}
                     </span>
+                    <button
+                      onClick={() => loadComments(t.id)}
+                      data-testid={`journey-template-comments-toggle-${t.id}`}
+                      title="Toggle qualitative feedback"
+                      className="ml-auto p-1 rounded hover:bg-white/5 text-[#71717A] hover:text-[#CCFF00]"
+                    >
+                      <MessageCircle className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+                {t.source === "marketplace" && (
+                  <div className="mb-2" data-testid={`journey-template-comment-input-${t.id}`}>
+                    <input
+                      type="text" maxLength={200}
+                      value={commentDrafts[t.id] || ""}
+                      onChange={(e) => setCommentDrafts((s) => ({ ...s, [t.id]: e.target.value }))}
+                      placeholder="Add a one-line note (optional) then tap stars…"
+                      data-testid={`journey-template-comment-text-${t.id}`}
+                      className="w-full h-7 rounded bg-[#141414] border border-[#27272A] px-2 text-[11px] text-white placeholder:text-[#3F3F46] focus:border-[#CCFF00]/40 focus:outline-none"
+                    />
+                  </div>
+                )}
+                {t.source === "marketplace" && templateComments[t.id] != null && (
+                  <div className="mb-2 rounded-md border border-[#27272A] bg-[#0A0A0A] p-2 max-h-32 overflow-y-auto space-y-1" data-testid={`journey-template-comments-${t.id}`}>
+                    {loadingComments === t.id ? (
+                      <div className="text-[10px] text-[#71717A]">Loading…</div>
+                    ) : templateComments[t.id].length === 0 ? (
+                      <div className="text-[10px] text-[#71717A]">No notes yet — be first to leave one.</div>
+                    ) : (
+                      templateComments[t.id].map((c, i) => (
+                        <div key={i} className="text-[10px] flex items-start gap-2" data-testid={`journey-template-comment-${t.id}-${i}`}>
+                          <span className="text-[#CCFF00] font-bold shrink-0">{c.stars}★</span>
+                          <div className="min-w-0">
+                            <div className="text-[#A1A1AA] break-words">{c.comment}</div>
+                            <div className="text-[9px] text-[#71717A]">— {c.workspace_name}</div>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 )}
                 <div className="text-xs text-[#A1A1AA] mb-3">{t.description}</div>

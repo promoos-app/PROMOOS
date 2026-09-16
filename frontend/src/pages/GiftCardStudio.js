@@ -20,12 +20,22 @@ function CardPreview({ tpl, design, small }) {
   const accent = design?.accent || tpl.accent;
   const fg = design?.text_color || tpl.text_color;
   const font = design?.font || tpl.font;
+  const aiGenerated = bg?.ai_generated;
   return (
     <div
       className="relative rounded-2xl overflow-hidden shadow-2xl"
       style={{ width: small ? 240 : CARD_WIDTH, height: small ? 150 : CARD_HEIGHT, ...style, fontFamily: font, color: fg }}
       data-testid="giftcard-preview"
     >
+      {aiGenerated && !small && (
+        <span
+          data-testid="giftcard-ai-generated-badge"
+          title={`AI-generated · ${bg.provider || "Gemini"}`}
+          className="absolute top-2 left-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/70 backdrop-blur-sm border border-white/30 text-[9px] font-bold uppercase tracking-widest text-white"
+        >
+          ✨ AI-generated
+        </span>
+      )}
       <div className="absolute inset-0 p-6 flex flex-col justify-between">
         <div className="flex items-center justify-between">
           <div className="text-[10px] tracking-[0.2em] uppercase opacity-70" style={{ color: accent }}>Gift Card</div>
