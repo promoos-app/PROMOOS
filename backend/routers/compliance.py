@@ -39,7 +39,15 @@ def unsubscribe_token_for(email: str, secret: str) -> str:
     return h[:32]
 
 
-def register(api, db, now_iso, get_current_user, jwt_secret: str):
+def register(api, db, now_iso, get_current_user, jwt_secret: str,
+             notify_ctx: Optional[dict] = None):
+    """
+    notify_ctx (optional):
+        {"resend": module, "sender": str, "public_url": str}
+    Used to email superadmins when a deletion request lands so the 30-day GDPR SLA
+    is never invisible.
+    """
+    notify_ctx = notify_ctx or {}
     # ---------------- Error Boundary Reporter ----------------
     @api.post("/errors")
     async def report_error(body: ErrorReportIn, request: Request):
@@ -133,7 +141,54 @@ def register(api, db, now_iso, get_current_user, jwt_secret: str):
         await db.users.update_one({"id": user["id"]},
                                   {"$set": {"deletion_requested_at": now_iso(),
                                             "marketing_optout": True}})
+        # DSAR SLA Alert — email every superadmin so the 30-day GDPR/CCPA clock is visible.
+        # Fire-and-forget: never let mail delivery block the response.
+        try:
+            import asyncio as _asyncio
+            _asyncio.create_task(_notify_superadmins_of_deletion(doc, user))
+        except Exception:
+            pass
         return {"ok": True, "request_id": doc["id"], "status": "pending"}
+
+    async def _notify_superadmins_of_deletion(doc: dict, requester: dict) -> None:
+        resend_mod = notify_ctx.get("resend")
+        sender = notify_ctx.get("sender")
+        public_url = (notify_ctx.get("public_url") or "").rstrip("/")
+        if not (resend_mod and getattr(resend_mod, "api_key", None) and sender):
+            return
+        from datetime import datetime, timezone, timedelta
+        deadline = (datetime.now(timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%d")
+        admins = []
+        async for u in db.users.find({"role": "superadmin",
+                                        "$or": [{"suspended": {"$ne": True}},
+                                                {"suspended": {"$exists": False}}],
+                                        "deleted_at": None},
+                                       {"_id": 0, "email": 1}).limit(10):
+            if u.get("email"): admins.append(u["email"])
+        if not admins:
+            return
+        html = f"""<div style="font-family:Helvetica,Arial,sans-serif;background:#0A0A0A;color:#fff;padding:24px">
+<h2 style="color:#CCFF00;margin:0 0 12px">Deletion request queued</h2>
+<p style="color:#A1A1AA;font-size:14px">A workspace member has invoked their GDPR/CCPA right to erasure. You have <b style="color:#fff">until {deadline}</b> (30 days) to review and action it.</p>
+<table cellpadding="8" style="background:#141414;border:1px solid #27272A;border-radius:8px;font-size:13px;margin-top:12px">
+<tr><td style="color:#71717A">Request ID</td><td style="font-family:monospace">{doc['id']}</td></tr>
+<tr><td style="color:#71717A">Requester</td><td>{doc.get('email','?')}</td></tr>
+<tr><td style="color:#71717A">Workspace</td><td style="font-family:monospace">{doc.get('workspace_id','?')}</td></tr>
+<tr><td style="color:#71717A">Reason</td><td>{(doc.get('reason') or '—')[:200]}</td></tr>
+<tr><td style="color:#71717A">Deadline</td><td style="color:#F87171;font-weight:700">{deadline}</td></tr>
+</table>
+{f'<p style="margin-top:16px"><a href="{public_url}/admin" style="color:#CCFF00">Open admin console →</a></p>' if public_url else ''}
+</div>"""
+        try:
+            import asyncio as _asyncio
+            await _asyncio.to_thread(resend_mod.Emails.send, {
+                "from": sender, "to": admins,
+                "subject": f"[PromoOS] Deletion request — SLA deadline {deadline}",
+                "html": html,
+            })
+        except Exception:
+            # Never surface mail failures on the compliance path.
+            pass
 
     @api.get("/admin/deletion-requests")
     async def list_deletion_requests(user: dict = Depends(get_current_user)):

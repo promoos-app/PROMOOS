@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Sparkles, Wand2, Loader2, Save, ArrowLeft, Palette, Image as ImageIcon } from "lucide-react";
+import PresetPackFeedback from "@/components/PresetPackFeedback";
 
 const CARD_WIDTH = 420;
 const CARD_HEIGHT = 260;
@@ -257,6 +258,7 @@ export default function GiftCardStudio() {
                 Reset to template
               </button>
             </div>
+            <PresetPackFeedback scope="gift_card" />
           </div>
           <div>
             <Label className="text-xs text-[#A1A1AA]">Accent color</Label>

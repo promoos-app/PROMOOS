@@ -13,6 +13,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Sparkles, Wand2, ArrowLeft, Loader2, Image as ImageIcon, Copy as CopyIcon, Trash2, Download } from "lucide-react";
+import PresetPackFeedback from "@/components/PresetPackFeedback";
 
 // -------------------------------------------------------------------------
 // Bulk unique codes — generate a batch of derived codes for a coupon, select
@@ -313,6 +314,7 @@ export default function CouponEditor() {
                 </button>
               ))}
             </div>
+            <PresetPackFeedback scope="coupon" />
           </div>
 
           {/* Details */}

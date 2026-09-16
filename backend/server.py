@@ -2203,7 +2203,9 @@ journey_worker = _journeys_ctx["worker"]
 
 # Compliance router — DSAR, error reporter, unsubscribe, security.txt.
 from routers.compliance import register as register_compliance
-register_compliance(api, db, now_iso, get_current_user, JWT_SECRET)
+register_compliance(api, db, now_iso, get_current_user, JWT_SECRET, {
+    "resend": resend, "sender": SENDER_EMAIL, "public_url": PUBLIC_APP_URL,
+})
 
 app.include_router(api)
 
@@ -2352,6 +2354,9 @@ async def startup():
         await db.error_reports.create_index([("created_at", -1)])
         await db.journey_template_ratings.create_index(
             [("template_id", 1), ("workspace_id", 1)], unique=True)
+        await db.preset_pack_ratings.create_index(
+            [("pack_id", 1), ("workspace_id", 1)], unique=True)
+        await db.deletion_requests.create_index([("status", 1), ("created_at", -1)])
         # Initialize object storage (best-effort).
         try:
             extras_ctx["init_storage"]()

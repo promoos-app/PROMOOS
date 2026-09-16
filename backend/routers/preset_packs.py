@@ -132,4 +132,50 @@ def register(api, db, now_iso, get_current_user, require_superadmin):
         return [{
             "id": d["id"], "name": d["name"], "scope": d["scope"],
             "presets": d.get("presets", []),
+            "rating_avg": d.get("rating_avg", 0.0),
+            "rating_count": d.get("rating_count", 0),
         } for d in docs]
+
+    class PresetRateIn(BaseModel):
+        stars: int  # 1..5
+        comment: Optional[str] = None  # optional one-line qualitative feedback
+
+    @api.post("/preset-packs/{pid}/rate")
+    async def rate_preset_pack(pid: str, body: PresetRateIn,
+                                 user: dict = Depends(get_current_user)):
+        """Marketplace rating for coupon/gift-card preset packs. One vote per workspace, overwritable."""
+        if body.stars < 1 or body.stars > 5:
+            raise HTTPException(400, "stars must be 1..5")
+        pack = await db.preset_packs.find_one({"id": pid, "is_public": True},
+                                              {"_id": 0, "id": 1})
+        if not pack:
+            raise HTTPException(404, "Preset pack not found")
+        ws = await db.workspaces.find_one({"id": user["workspace_id"]},
+                                          {"_id": 0, "name": 1}) or {}
+        comment = (body.comment or "").strip()[:200] or None
+        await db.preset_pack_ratings.update_one(
+            {"pack_id": pid, "workspace_id": user["workspace_id"]},
+            {"$set": {"pack_id": pid, "workspace_id": user["workspace_id"],
+                      "workspace_name": ws.get("name", "Agency"),
+                      "stars": int(body.stars), "comment": comment,
+                      "rated_at": now_iso()}},
+            upsert=True)
+        agg = await db.preset_pack_ratings.aggregate([
+            {"$match": {"pack_id": pid}},
+            {"$group": {"_id": "$pack_id", "avg": {"$avg": "$stars"},
+                         "count": {"$sum": 1}}},
+        ]).to_list(1)
+        avg = round(agg[0]["avg"], 2) if agg else 0.0
+        cnt = agg[0]["count"] if agg else 0
+        await db.preset_packs.update_one({"id": pid},
+                                         {"$set": {"rating_avg": avg, "rating_count": cnt}})
+        return {"ok": True, "avg": avg, "count": cnt}
+
+    @api.get("/preset-packs/{pid}/comments")
+    async def list_pack_comments(pid: str, user: dict = Depends(get_current_user)):
+        """Return the most-recent qualitative notes for a preset pack."""
+        rows = await db.preset_pack_ratings.find(
+            {"pack_id": pid, "comment": {"$ne": None}},
+            {"_id": 0, "stars": 1, "comment": 1, "workspace_name": 1, "rated_at": 1}
+        ).sort("rated_at", -1).to_list(20)
+        return {"comments": rows}
