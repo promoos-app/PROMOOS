@@ -2207,9 +2207,6 @@ register_compliance(api, db, now_iso, get_current_user, JWT_SECRET, {
     "resend": resend, "sender": SENDER_EMAIL, "public_url": PUBLIC_APP_URL,
 })
 
-app.include_router(api)
-
-# CORS: reflect incoming Origin with credentials. Wildcard "*" is browser-rejected
 # alongside credentials, so we echo whichever Origin the request presents (or the
 # explicit list from CORS_ORIGINS when set to something other than "*").
 _cors_env = os.environ.get('CORS_ORIGINS', '*')
@@ -2225,6 +2222,100 @@ else:
         allow_origins=_cors_env.split(','),
         allow_methods=["*"], allow_headers=["*"],
     )
+
+# Public API rate limiter — per-IP token bucket for /api/public/* endpoints.
+from middleware.rate_limit import RateLimitMiddleware
+app.add_middleware(RateLimitMiddleware, db=db)
+
+
+# Daily Mongo backup runner — shells out to /app/scripts/backup_mongo.sh at 03:15 UTC.
+BACKUP_SCRIPT = ROOT_DIR.parent / "scripts" / "backup_mongo.sh"
+_backup_state = {"disabled": False, "last_run": None, "last_status": None, "last_error": None}
+
+
+async def _run_backup_once() -> dict:
+    """Execute the backup script and record the result. Safe to call ad-hoc."""
+    if _backup_state["disabled"]:
+        return {"ok": False, "skipped": "disabled after previous failure"}
+    if not BACKUP_SCRIPT.exists():
+        _backup_state["disabled"] = True
+        _backup_state["last_error"] = f"{BACKUP_SCRIPT} not found"
+        logger.warning(_backup_state["last_error"])
+        return {"ok": False, "error": _backup_state["last_error"]}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bash", str(BACKUP_SCRIPT),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "MONGO_URL": os.environ["MONGO_URL"]})
+        stdout, stderr = await proc.communicate()
+        _backup_state["last_run"] = now_iso()
+        if proc.returncode == 0:
+            _backup_state["last_status"] = "ok"
+            _backup_state["last_error"] = None
+            logger.info(f"Mongo backup OK: {stdout.decode(errors='replace').splitlines()[-1] if stdout else ''}")
+            return {"ok": True, "stdout": stdout.decode(errors="replace")[-800:]}
+        # mongodump missing (exit 3) → disable further attempts silently.
+        _backup_state["last_status"] = "fail"
+        _backup_state["last_error"] = stderr.decode(errors="replace")[-400:]
+        if proc.returncode == 3:
+            _backup_state["disabled"] = True
+            logger.warning("mongodump not installed — daily backup disabled")
+        else:
+            logger.error(f"Backup failed rc={proc.returncode}: {_backup_state['last_error']}")
+        return {"ok": False, "rc": proc.returncode, "error": _backup_state["last_error"]}
+    except Exception as e:
+        _backup_state["last_run"] = now_iso()
+        _backup_state["last_status"] = "fail"
+        _backup_state["last_error"] = str(e)[:400]
+        logger.exception("Backup subprocess crashed")
+        return {"ok": False, "error": str(e)[:400]}
+
+
+async def _daily_backup_loop() -> None:
+    """Sleep until next 03:15 UTC, run backup, repeat. Bounded log noise on disable."""
+    while True:
+        if _backup_state["disabled"]:
+            # Re-check every 6h in case an operator installs mongodump mid-flight.
+            await asyncio.sleep(6 * 3600)
+            _backup_state["disabled"] = False
+            continue
+        now = datetime.now(timezone.utc)
+        target = now.replace(hour=3, minute=15, second=0, microsecond=0)
+        if target <= now:
+            target = target + timedelta(days=1)
+        wait_seconds = max(60, int((target - now).total_seconds()))
+        await asyncio.sleep(wait_seconds)
+        await _run_backup_once()
+
+
+@api.post("/admin/run-backup")
+async def admin_run_backup(user: dict = Depends(get_current_user)):
+    """Superadmin — trigger a Mongo backup right now (proves the loop works without waiting 24h)."""
+    require_superadmin(user)
+    result = await _run_backup_once()
+    return {**result, "state": _backup_state}
+
+
+@api.get("/admin/backup-status")
+async def admin_backup_status(user: dict = Depends(get_current_user)):
+    require_superadmin(user)
+    return {"state": _backup_state, "script_present": BACKUP_SCRIPT.exists(),
+            "script_path": str(BACKUP_SCRIPT)}
+
+
+@api.get("/admin/rate-limit-events")
+async def admin_rate_limit_events(user: dict = Depends(get_current_user), limit: int = 100):
+    """Superadmin — recent 429 hits so you can spot abusers."""
+    require_superadmin(user)
+    rows = await db.rate_limit_events.find({}, {"_id": 0}).sort("at", -1).to_list(min(limit, 500))
+    # Aggregate top offenders in the last 24h
+    from collections import Counter
+    ip_counter = Counter()
+    for r in rows: ip_counter[r.get("ip", "unknown")] += 1
+    return {"events": rows, "top_offenders": ip_counter.most_common(10)}
+
+
+app.include_router(api)
 
 
 # ---------------- Seed ----------------
@@ -2370,6 +2461,8 @@ async def startup():
         except Exception as e:
             logger.warning(f"Marketplace seed skipped: {e}")
         asyncio.create_task(journey_worker())
+        # Daily Mongo backup — runs at 03:15 UTC, no-ops gracefully if mongodump is missing.
+        asyncio.create_task(_daily_backup_loop())
         # Rotation-nudge worker — daily loop that emails workspace owners when an OAuth token turns 55 days old.
         if _rotation_nudge_worker:
             asyncio.create_task(_rotation_nudge_worker())

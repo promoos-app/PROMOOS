@@ -1,3 +1,32 @@
+## Iteration 25 (Feb 2026) — Public API Rate Limits + Daily Auto-Backup
+
+### Public API rate limits ✅
+- New `/app/backend/middleware/rate_limit.py` — Starlette middleware, per-IP token bucket, three tiers auto-classified by route:
+  - **strict** 30/min → `POST /public/coupons/validate`, `POST /public/coupons/redeem`, `POST /public/products/checkout`
+  - **standard** 120/min → other `/api/public/*` GETs + `POST /public/f/{slug}/optin`
+  - **loose** 300/min → `POST /public/f/{slug}/track` (analytics beacons)
+- Emits `X-RateLimit-Limit / -Remaining / -Tier` headers on every request.
+- Returns `429` with `Retry-After` header when depleted; persists to `db.rate_limit_events` throttled to 1 event per (ip, tier) per minute so the table stays readable under an attack.
+- Uses `x-forwarded-for` first, falls back to `request.client.host`. Buckets are swept every 60s to bound memory.
+
+### Daily Mongo auto-backup ✅
+- In-process `asyncio.create_task(_daily_backup_loop())` runs at 03:15 UTC daily via `bash /app/scripts/backup_mongo.sh`.
+- Records state in `_backup_state` dict — last run, status, error, disabled flag.
+- If `mongodump` is missing (exit code 3), auto-disables and re-checks every 6h in case an operator installs it later.
+- Manual trigger: `POST /api/admin/run-backup` (superadmin) — proves the loop works without waiting 24h. Verified: successful 1.61 MB dump in local test.
+
+### Admin Ops surface ✅
+- New Admin → **Ops** tab renders:
+  - Daily Backup card with Script/Last Run/Status/Scheduler + one-click "Run now" trigger + surfaced error message
+  - Rate-limit events table + top-offenders pills for quick triage
+
+### Testing ✅
+- Rate limit verified via curl: 30 passes + 10 blocks per burst as expected (bucket size = 30, refill = 30/60 tokens/sec). `Retry-After` header present.
+- Persistence verified: 1 event stored per attack burst, correctly attributed to the spoofed `X-Forwarded-For` IP.
+- Backup verified: manual trigger produces a valid gzip archive; state dict updates.
+- Frontend Ops panel screenshotted with real data.
+
+
 ## Iteration 24 (Feb 2026) — Go-Live Automation: Seed Marketplace + Health-Check + Backups
 
 Implemented everything that could be done without human-supplied credentials or DNS.

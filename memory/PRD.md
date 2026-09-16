@@ -2,6 +2,13 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 25, Feb 2026) — Public API Rate Limits + Daily Auto-Backup
+- `/api/public/*` middleware with 3-tier per-IP token buckets (strict 30/min · standard 120/min · loose 300/min); emits `X-RateLimit-*` + `Retry-After` headers; persists throttled 429 events
+- Daily 03:15 UTC in-process Mongo backup via `/app/scripts/backup_mongo.sh`; auto-disables if `mongodump` missing; superadmin can trigger manually
+- Admin → **Ops** tab surfaces backup status + rate-limit events + top-offenders
+
+
+
 ## Latest (Iter 24, Feb 2026) — Go-Live Automation
 - Seeded marketplace preset packs — 7 curated packs (4 coupon + 3 gift-card, 28 tap-to-apply presets) via `routers/marketplace_seed.py`, idempotent on startup
 - Admin Health-Check endpoint + UI tab — 20 checks across env, integrations, Mongo indexes, content, compliance; flags `ready_for_launch` when zero criticals + ≤2 warnings

@@ -17,6 +17,7 @@ import {
 const TABS = [
   { k: "stats", label: "Stats", icon: BarChart3 },
   { k: "health", label: "Health Check", icon: HeartPulse },
+  { k: "ops", label: "Ops", icon: Shield },
   { k: "users", label: "Users", icon: Users },
   { k: "workspaces", label: "Workspaces", icon: Building2 },
   { k: "payments", label: "Payments", icon: CreditCard },
@@ -361,6 +362,7 @@ export default function Admin() {
       )}
 
       {tab === "health" && <HealthCheckPanel />}
+      {tab === "ops" && <OpsPanel />}
 
       {tab === "users" && (
         <div className="surface rounded-lg overflow-hidden">
@@ -603,6 +605,162 @@ function HealthCheckPanel() {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+
+function OpsPanel() {
+  const [backup, setBackup] = useState(null);
+  const [rateEvents, setRateEvents] = useState(null);
+  const [busy, setBusy] = useState(null);
+
+  const loadBackup = async () => {
+    try {
+      const { data } = await api.get("/admin/backup-status");
+      setBackup(data);
+    } catch (e) { toast.error(apiError(e)); }
+  };
+  const loadRateEvents = async () => {
+    try {
+      const { data } = await api.get("/admin/rate-limit-events?limit=50");
+      setRateEvents(data);
+    } catch (e) { toast.error(apiError(e)); }
+  };
+  useEffect(() => { loadBackup(); loadRateEvents(); }, []);
+
+  const runBackup = async () => {
+    setBusy("backup");
+    try {
+      const { data } = await api.post("/admin/run-backup");
+      if (data.ok) toast.success("Backup completed");
+      else toast.error(data.error || data.skipped || "Backup failed");
+      loadBackup();
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(null); }
+  };
+
+  return (
+    <div className="space-y-6" data-testid="ops-panel">
+      <div className="surface rounded-lg p-5">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-[#005CEE]/20 flex items-center justify-center">
+            <Shield className="w-5 h-5 text-[#005CEE]" />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-display font-bold text-lg">Daily Mongo backup</h2>
+            <p className="text-xs text-[#71717A]">
+              Runs at 03:15 UTC via in-process scheduler. Archives to <span className="font-mono text-[#A1A1AA]">/app/backups/</span>,
+              14-day retention.
+            </p>
+          </div>
+          <Button data-testid="ops-run-backup" onClick={runBackup} disabled={busy === "backup"}
+            className="btn-primary rounded-md gap-2">
+            {busy === "backup" ? <Loader2 className="w-4 h-4 spin" /> : <Play className="w-4 h-4" />}
+            Run now
+          </Button>
+        </div>
+        {backup && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs" data-testid="ops-backup-state">
+            <div className="rounded-md p-3 bg-[#0A0A0A] border border-[#27272A]">
+              <div className="text-[#71717A] uppercase tracking-widest text-[10px]">Script</div>
+              <div className={`font-bold ${backup.script_present ? "text-emerald-400" : "text-red-400"}`}>
+                {backup.script_present ? "present" : "missing"}
+              </div>
+            </div>
+            <div className="rounded-md p-3 bg-[#0A0A0A] border border-[#27272A]">
+              <div className="text-[#71717A] uppercase tracking-widest text-[10px]">Last run</div>
+              <div className="font-mono text-[#A1A1AA] text-[11px]">
+                {backup.state.last_run ? new Date(backup.state.last_run).toLocaleString() : "never"}
+              </div>
+            </div>
+            <div className="rounded-md p-3 bg-[#0A0A0A] border border-[#27272A]">
+              <div className="text-[#71717A] uppercase tracking-widest text-[10px]">Status</div>
+              <div className={`font-bold ${
+                backup.state.last_status === "ok" ? "text-emerald-400" :
+                backup.state.last_status === "fail" ? "text-red-400" : "text-[#71717A]"
+              }`}>
+                {backup.state.last_status || "—"}
+              </div>
+            </div>
+            <div className="rounded-md p-3 bg-[#0A0A0A] border border-[#27272A]">
+              <div className="text-[#71717A] uppercase tracking-widest text-[10px]">Scheduler</div>
+              <div className={`font-bold ${backup.state.disabled ? "text-amber-400" : "text-emerald-400"}`}>
+                {backup.state.disabled ? "paused" : "active"}
+              </div>
+            </div>
+          </div>
+        )}
+        {backup?.state?.last_error && (
+          <div className="mt-3 rounded-md p-3 bg-red-500/10 border border-red-500/30 text-[11px] font-mono text-red-300 break-all">
+            {backup.state.last_error}
+          </div>
+        )}
+      </div>
+
+      <div className="surface rounded-lg p-5">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
+            <AlertTriangle className="w-5 h-5 text-amber-400" />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-display font-bold text-lg">Rate-limit events</h2>
+            <p className="text-xs text-[#71717A]">
+              429s emitted by the public API middleware. Persisted at ≤1 event per (IP, tier)
+              per minute so this table stays readable under an attack.
+            </p>
+          </div>
+          <Button data-testid="ops-refresh-rate" onClick={loadRateEvents}
+            className="btn-ghost rounded-md gap-2 border border-[#27272A]">
+            <RotateCcw className="w-4 h-4" /> Refresh
+          </Button>
+        </div>
+        {rateEvents && rateEvents.top_offenders.length > 0 && (
+          <div className="mb-3" data-testid="ops-top-offenders">
+            <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Top offenders</div>
+            <div className="flex flex-wrap gap-2">
+              {rateEvents.top_offenders.map(([ip, n]) => (
+                <span key={ip} className="text-xs font-mono px-2 py-1 rounded bg-red-500/10 border border-red-500/30 text-red-300">
+                  {ip} · {n}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {rateEvents && rateEvents.events.length === 0 ? (
+          <div className="text-xs text-[#71717A] py-4 text-center">
+            No rate-limit events yet — nothing is being blocked. 🎉
+          </div>
+        ) : rateEvents ? (
+          <div className="rounded-md border border-[#27272A] overflow-hidden">
+            <table className="w-full text-xs" data-testid="ops-rate-table">
+              <thead className="bg-[#0A0A0A] text-[10px] uppercase tracking-widest text-[#71717A]">
+                <tr>
+                  <th className="text-left px-3 py-2">When</th>
+                  <th className="text-left px-3 py-2">IP</th>
+                  <th className="text-left px-3 py-2">Tier</th>
+                  <th className="text-left px-3 py-2">Path</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rateEvents.events.slice(0, 30).map((e, i) => (
+                  <tr key={i} className="border-t border-[#27272A]">
+                    <td className="px-3 py-1.5 font-mono text-[#A1A1AA]">{e.at}</td>
+                    <td className="px-3 py-1.5 font-mono">{e.ip}</td>
+                    <td className="px-3 py-1.5">
+                      <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${
+                        e.tier === "strict" ? "bg-red-500/15 text-red-400" :
+                        e.tier === "standard" ? "bg-amber-500/15 text-amber-400" :
+                        "bg-[#71717A]/15 text-[#A1A1AA]"
+                      }`}>{e.tier}</span>
+                    </td>
+                    <td className="px-3 py-1.5 font-mono text-[#71717A] truncate max-w-xs">{e.path}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
