@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Shield, Users, Building2, ScrollText, CreditCard, BarChart3, Plus, Loader2,
-  Pause, Play, RotateCcw, Trash2, Palette, HeartPulse, CheckCircle2, XCircle, AlertTriangle, Rocket, Copy, TrendingUp,
+  Pause, Play, RotateCcw, Trash2, Palette, HeartPulse, CheckCircle2, XCircle, AlertTriangle, Rocket, Copy, TrendingUp, Send, Download,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
@@ -933,6 +933,17 @@ function BatchOnboardPanel() {
     const rows = parseCsv(csvText);
     if (!rows.length) { toast.error("CSV needs a header row + at least one data row"); return; }
     if (rows.length > 200) { toast.error("Max 200 rows per batch"); return; }
+    // Client-side email validation — fail fast before hitting the API.
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const invalid = [];
+    rows.forEach((r, i) => {
+      const em = (r.owner_email || "").trim();
+      if (!em || !emailRegex.test(em)) invalid.push(`row ${i + 2}: "${em || "(blank)"}"`);
+    });
+    if (invalid.length) {
+      toast.error(`Fix ${invalid.length} invalid email${invalid.length > 1 ? "s" : ""}: ${invalid.slice(0, 3).join("; ")}${invalid.length > 3 ? "…" : ""}`);
+      return;
+    }
     setBusy(true); setReport(null);
     try {
       const { data } = await api.post("/admin/onboard-batch", {
@@ -941,6 +952,14 @@ function BatchOnboardPanel() {
       toast.success(`Batch done: ${data.summary.created} created, ${data.summary.errors} errors`);
     } catch (e) { toast.error(apiError(e)); }
     finally { setBusy(false); }
+  };
+
+  const downloadStarter = () => {
+    const blob = new Blob([example], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "promoos-onboard-template.csv"; a.click();
+    URL.revokeObjectURL(url);
   };
 
   const downloadReport = () => {
@@ -972,6 +991,10 @@ function BatchOnboardPanel() {
         Columns: <code className="text-[#CCFF00]">merchant_name,owner_name,owner_email,owner_password</code>.
         Password is optional — we generate one if blank. Each row gets a workspace + owner + optional
         starter publication + magic-link welcome email.
+        <button onClick={downloadStarter} data-testid="batch-onboard-template"
+          className="ml-2 inline-flex items-center gap-1 text-[#CCFF00] hover:underline">
+          <Download className="w-3 h-3" /> Download starter template
+        </button>
       </p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
@@ -1023,13 +1046,43 @@ function BatchOnboardPanel() {
 function OnboardingFunnelPanel() {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(true);
+  const [drawer, setDrawer] = useState(null);      // merchant summary or null
+  const [drawerBusy, setDrawerBusy] = useState(false);
+  const [stalled, setStalled] = useState(null);
+  const [nudging, setNudging] = useState(false);
   const load = async () => {
     setBusy(true);
     try { const { data } = await api.get("/admin/onboarding-funnel"); setData(data); }
     catch (e) { toast.error(apiError(e)); }
     finally { setBusy(false); }
   };
-  useEffect(() => { load(); }, []);
+  const openDrawer = async (uid) => {
+    setDrawer({ loading: true });
+    setDrawerBusy(true);
+    try {
+      const { data } = await api.get(`/admin/merchant-summary/${uid}`);
+      setDrawer(data);
+    } catch (e) { toast.error(apiError(e)); setDrawer(null); }
+    finally { setDrawerBusy(false); }
+  };
+  const loadStalled = async () => {
+    try {
+      const { data } = await api.get("/admin/stalled-merchants?hours=72");
+      setStalled(data);
+    } catch (e) { toast.error(apiError(e)); }
+  };
+  const sendNudge = async () => {
+    setNudging(true);
+    try {
+      const { data } = await api.post("/admin/stalled-nudge?hours=72");
+      toast.success(data.email_sent
+        ? `Digest emailed (${data.count} stalled)`
+        : `Found ${data.count} stalled — email not sent (Resend not configured)`);
+      setStalled({ threshold_hours: 72, count: data.count, rows: data.rows });
+    } catch (e) { toast.error(apiError(e)); }
+    finally { setNudging(false); }
+  };
+  useEffect(() => { load(); loadStalled(); }, []);
   if (busy && !data) return (
     <div className="py-12 text-center text-[#71717A]" data-testid="funnel-loading">
       <Loader2 className="w-6 h-6 spin mx-auto" />
@@ -1064,12 +1117,32 @@ function OnboardingFunnelPanel() {
             Median time-to-first-send: <strong>{fmtH(data.median_time_to_first_send_hours)}</strong>
           </span>
         )}
-        <button onClick={load} disabled={busy}
+        <button onClick={() => { load(); loadStalled(); }} disabled={busy}
           data-testid="funnel-refresh"
           className="ml-auto px-3 py-1 rounded-md border border-[#27272A] text-xs hover:border-[#CCFF00] disabled:opacity-60">
           {busy ? <Loader2 className="w-3 h-3 spin inline" /> : "Refresh"}
         </button>
       </div>
+      {stalled && stalled.count > 0 && (
+        <div className="rounded-md border border-orange-500/40 bg-orange-500/10 p-4 flex items-center gap-3"
+          data-testid="funnel-stalled-banner">
+          <AlertTriangle className="w-5 h-5 text-orange-300 shrink-0" />
+          <div className="flex-1">
+            <div className="text-sm font-semibold text-orange-200">
+              {stalled.count} merchant{stalled.count > 1 ? "s" : ""} stalled &gt; {stalled.threshold_hours}h with no magic click
+            </div>
+            <div className="text-xs text-orange-100/80">
+              {stalled.rows.slice(0, 3).map((r) => r.merchant).join(", ")}
+              {stalled.count > 3 ? ` and ${stalled.count - 3} more` : ""}
+            </div>
+          </div>
+          <Button data-testid="funnel-stalled-nudge" onClick={sendNudge} disabled={nudging}
+            className="rounded-md gap-1.5 h-9 bg-orange-500 hover:bg-orange-600 text-white text-xs">
+            {nudging ? <Loader2 className="w-3.5 h-3.5 spin" /> : <Send className="w-3.5 h-3.5" />}
+            Email me the digest
+          </Button>
+        </div>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {stages.map((s, i) => (
           <div key={s.key} className="surface rounded-lg p-5" data-testid={`funnel-stage-${s.key}`}>
@@ -1110,8 +1183,11 @@ function OnboardingFunnelPanel() {
                 : r.stage === "magic_opened" ? "bg-sky-500/10 text-sky-300 border-sky-500/40"
                 : "bg-blue-500/10 text-blue-300 border-blue-500/40";
               return (
-                <tr key={r.user_id} className="hover:bg-white/5">
-                  <td className="px-4 py-2 font-medium">{r.merchant || r.name}</td>
+                <tr key={r.user_id}
+                  onClick={() => openDrawer(r.user_id)}
+                  data-testid={`funnel-row-${r.user_id}`}
+                  className="hover:bg-white/5 cursor-pointer">
+                  <td className="px-4 py-2 font-medium text-[#CCFF00]">{r.merchant || r.name}</td>
                   <td className="px-3 py-2 text-xs text-[#A1A1AA] font-mono">{r.email}</td>
                   <td className="px-3 py-2 text-xs text-[#A1A1AA]">{fmt(r.onboarded_at)}</td>
                   <td className="px-3 py-2 text-xs text-[#A1A1AA]">{fmt(r.magic_opened_at)}</td>
@@ -1129,6 +1205,66 @@ function OnboardingFunnelPanel() {
           </tbody>
         </table>
       </div>
+      <Dialog open={!!drawer} onOpenChange={(o) => !o && setDrawer(null)}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-2xl max-h-[85vh] overflow-y-auto"
+          data-testid="merchant-drawer">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="w-5 h-5 text-[#CCFF00]" />
+              {drawerBusy || !drawer || drawer.loading ? "Loading merchant…" : (drawer.workspace?.name || drawer.user?.name)}
+            </DialogTitle>
+          </DialogHeader>
+          {drawerBusy || !drawer || drawer.loading ? (
+            <div className="py-12 text-center text-[#71717A]"><Loader2 className="w-6 h-6 spin mx-auto" /></div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  ["Coupons", drawer.stats.coupons, "text-[#CCFF00]"],
+                  ["Redemptions", drawer.stats.redemptions, "text-fuchsia-300"],
+                  ["Emails sent", drawer.stats.emails_sent, "text-sky-300"],
+                  ["Subscribers", drawer.stats.newsletter_subscribers, "text-emerald-300"],
+                ].map(([label, val, cls]) => (
+                  <div key={label} className="surface rounded-lg p-3">
+                    <div className="text-[10px] uppercase tracking-widest text-[#71717A]">{label}</div>
+                    <div className={`text-3xl font-bold ${cls}`}>{val}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-md border border-[#27272A] bg-[#0A0A0A] p-4 text-xs space-y-1">
+                <div className="flex justify-between"><span className="text-[#71717A]">Owner</span><span className="font-mono">{drawer.user?.name} · {drawer.user?.email}</span></div>
+                <div className="flex justify-between"><span className="text-[#71717A]">Workspace ID</span><span className="font-mono">{drawer.workspace?.id || "—"}</span></div>
+                <div className="flex justify-between"><span className="text-[#71717A]">Onboarded</span><span>{drawer.user?.created_at ? new Date(drawer.user.created_at).toLocaleString() : "—"}</span></div>
+                <div className="flex justify-between"><span className="text-[#71717A]">Email opened</span><span>{drawer.onboarding.magic_first_open_at ? new Date(drawer.onboarding.magic_first_open_at).toLocaleString() : "—"}</span></div>
+                <div className="flex justify-between"><span className="text-[#71717A]">Magic clicked</span><span>{drawer.onboarding.magic_first_signin_at ? new Date(drawer.onboarding.magic_first_signin_at).toLocaleString() : "—"}</span></div>
+                <div className="flex justify-between"><span className="text-[#71717A]">Last activity</span><span>{drawer.last_activity_at ? `${new Date(drawer.last_activity_at).toLocaleString()} (${drawer.last_activity_source})` : "—"}</span></div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Recent coupons</div>
+                {drawer.recent_coupons.length === 0 ? (
+                  <div className="text-xs text-[#71717A] italic">No coupons yet.</div>
+                ) : (
+                  <div className="divide-y divide-[#27272A] rounded-md border border-[#27272A]">
+                    {drawer.recent_coupons.map((c) => (
+                      <div key={c.id} className="px-4 py-2 flex items-center gap-3 text-xs"
+                        data-testid={`drawer-coupon-${c.id}`}>
+                        <span className="font-mono text-[#CCFF00] w-24 truncate">{c.code}</span>
+                        <span className="flex-1 truncate">{c.name}</span>
+                        <span className="text-[#71717A]">{c.type} · {c.discount_value}</span>
+                        <span className={`px-2 py-0.5 rounded-full border text-[9px] uppercase tracking-widest ${
+                          c.state === "live" ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/40" :
+                          c.state === "draft" ? "bg-blue-500/10 text-blue-300 border-blue-500/40" :
+                          "bg-[#27272A] text-[#71717A]"
+                        }`}>{c.state}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

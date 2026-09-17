@@ -2376,6 +2376,52 @@ async def _daily_backup_loop() -> None:
         await _run_backup_once()
 
 
+async def _daily_stalled_nudge_loop() -> None:
+    """Once per day at 14:00 UTC, email each superadmin a stalled-merchant digest."""
+    while True:
+        now = datetime.now(timezone.utc)
+        target = now.replace(hour=14, minute=0, second=0, microsecond=0)
+        if target <= now:
+            target = target + timedelta(days=1)
+        await asyncio.sleep(max(60, int((target - now).total_seconds())))
+        if not (RESEND_API_KEY and PUBLIC_APP_URL):
+            continue
+        try:
+            # Reuse the endpoint's internal logic by calling the finder directly.
+            from routers.admin import register as _r  # noqa: F401 keeps import cached
+            # Simpler: query directly here to avoid pulling closure state.
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+            logs = await db.admin_logs.find(
+                {"action": "merchant.onboard", "created_at": {"$lt": cutoff}},
+                {"_id": 0}).to_list(500)
+            uids = [l.get("target") for l in logs if l.get("target")]
+            if not uids: continue
+            stalled = []
+            async for uu in db.users.find(
+                {"id": {"$in": uids}, "magic_first_signin_at": {"$exists": False},
+                 "deleted_at": None, "suspended": {"$ne": True}},
+                {"_id": 0, "id": 1, "email": 1}):
+                stalled.append(uu["email"])
+            if not stalled: continue
+            supers = await db.users.find(
+                {"role": "superadmin", "deleted_at": None, "suspended": {"$ne": True}},
+                {"_id": 0, "email": 1}).to_list(10)
+            body = ("Stalled merchants (>72h, no magic click): "
+                    + ", ".join(stalled[:50])
+                    + f"\n\nOpen Admin → Funnel: {PUBLIC_APP_URL}/admin")
+            for sa in supers:
+                try:
+                    await asyncio.to_thread(resend.Emails.send, {
+                        "from": SENDER_EMAIL, "to": [sa["email"]],
+                        "subject": f"[PromoOS] {len(stalled)} stalled merchant(s)",
+                        "text": body,
+                    })
+                except Exception as e:
+                    logger.warning(f"stalled digest to {sa['email']} failed: {e}")
+        except Exception as e:
+            logger.exception(f"stalled nudge loop iteration crashed: {e}")
+
+
 @api.post("/admin/run-backup")
 async def admin_run_backup(user: dict = Depends(get_current_user)):
     """Superadmin — trigger a Mongo backup right now (proves the loop works without waiting 24h)."""
@@ -2569,6 +2615,8 @@ async def startup():
         asyncio.create_task(_newsletter_worker())
         # Daily Mongo backup — runs at 03:15 UTC, no-ops gracefully if mongodump is missing.
         asyncio.create_task(_daily_backup_loop())
+        # Daily stalled-merchant digest — runs at 14:00 UTC.
+        asyncio.create_task(_daily_stalled_nudge_loop())
         # Rotation-nudge worker — daily loop that emails workspace owners when an OAuth token turns 55 days old.
         if _rotation_nudge_worker:
             asyncio.create_task(_rotation_nudge_worker())

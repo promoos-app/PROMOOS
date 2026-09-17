@@ -644,3 +644,156 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
             "generated_at": now_iso(),
         }
 
+    @api.get("/admin/merchant-summary/{uid}")
+    async def merchant_summary(uid: str, user: dict = Depends(get_current_user)):
+        """Superadmin — everything about a merchant in one payload for the funnel drawer."""
+        require_superadmin(user)
+        u = await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
+        if not u:
+            raise HTTPException(404, "user not found")
+        wid = u.get("workspace_id")
+        ws = await db.workspaces.find_one({"id": wid}, {"_id": 0}) if wid else None
+        coupons_total = await db.coupons.count_documents({"workspace_id": wid}) if wid else 0
+        coupons_recent = await db.coupons.find(
+            {"workspace_id": wid} if wid else {"_id": None},
+            {"_id": 0, "id": 1, "code": 1, "name": 1, "state": 1, "type": 1,
+             "created_at": 1, "discount_value": 1}
+        ).sort("created_at", -1).to_list(5) if wid else []
+        redemptions_total = await db.redemptions.count_documents({"workspace_id": wid}) if wid else 0
+        emails_total = await db.email_events.count_documents({"workspace_id": wid}) if wid else 0
+        subscribers_total = (await db.newsletter_subscribers.count_documents({"workspace_id": wid})
+                              if wid else 0)
+        # Last activity across a few key collections.
+        candidates = []
+        for coll in ("coupons", "redemptions", "email_events", "publications"):
+            try:
+                doc = await db[coll].find_one({"workspace_id": wid} if wid else {"_id": None},
+                                                {"_id": 0, "created_at": 1},
+                                                sort=[("created_at", -1)])
+                if doc and doc.get("created_at"):
+                    candidates.append((doc["created_at"], coll))
+            except Exception:
+                pass
+        last_activity = max(candidates)[0] if candidates else u.get("created_at")
+        last_activity_source = max(candidates)[1] if candidates else "user_created"
+        return {
+            "user": u, "workspace": ws,
+            "stats": {"coupons": coupons_total, "redemptions": redemptions_total,
+                      "emails_sent": emails_total, "newsletter_subscribers": subscribers_total},
+            "recent_coupons": coupons_recent,
+            "last_activity_at": last_activity,
+            "last_activity_source": last_activity_source,
+            "onboarding": {
+                "magic_first_open_at": u.get("magic_first_open_at"),
+                "magic_first_signin_at": u.get("magic_first_signin_at"),
+            },
+        }
+
+    async def _find_stalled(threshold_hours: int = 72):
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=threshold_hours)).isoformat()
+        onboard_logs = await db.admin_logs.find(
+            {"action": "merchant.onboard", "created_at": {"$lt": cutoff}},
+            {"_id": 0}).sort("created_at", -1).to_list(500)
+        uids = [l.get("target") for l in onboard_logs if l.get("target")]
+        if not uids: return []
+        users_by_id = {}
+        async for uu in db.users.find(
+            {"id": {"$in": uids}, "magic_first_signin_at": {"$exists": False},
+             "deleted_at": None, "suspended": {"$ne": True}},
+            {"_id": 0, "id": 1, "email": 1, "name": 1, "workspace_id": 1,
+             "created_at": 1, "magic_first_open_at": 1}):
+            users_by_id[uu["id"]] = uu
+        out = []
+        from datetime import datetime as _dt
+        def _p(s):
+            try: return _dt.fromisoformat((s or "").replace("Z", "+00:00"))
+            except Exception: return None
+        now = datetime.now(timezone.utc)
+        for lg in onboard_logs:
+            uu = users_by_id.get(lg.get("target"))
+            if not uu: continue
+            onboarded_at = lg.get("created_at") or uu.get("created_at")
+            pa = _p(onboarded_at)
+            hours = round((now - pa).total_seconds() / 3600, 1) if pa else None
+            out.append({
+                "user_id": uu["id"], "email": uu.get("email"), "name": uu.get("name"),
+                "workspace_id": uu.get("workspace_id"),
+                "merchant": (lg.get("meta") or {}).get("merchant") or uu.get("name"),
+                "onboarded_at": onboarded_at, "hours_since_onboard": hours,
+                "opened_email": bool(uu.get("magic_first_open_at")),
+            })
+        return out
+
+    @api.get("/admin/stalled-merchants")
+    async def stalled_merchants(user: dict = Depends(get_current_user),
+                                  hours: int = 72):
+        """List merchants onboarded > N hours ago who never clicked their magic link."""
+        require_superadmin(user)
+        hours = max(1, min(720, int(hours)))
+        rows = await _find_stalled(hours)
+        return {"threshold_hours": hours, "count": len(rows), "rows": rows,
+                "generated_at": now_iso()}
+
+    @api.post("/admin/stalled-nudge")
+    async def stalled_nudge(user: dict = Depends(get_current_user),
+                              hours: int = 72):
+        """Send a digest email to the superadmin with the current stalled list.
+
+        No-op (returns list only) when Resend isn't configured — the caller
+        can still see the rows in the response.
+        """
+        require_superadmin(user)
+        hours = max(1, min(720, int(hours)))
+        rows = await _find_stalled(hours)
+        sent = False
+        email_id = None
+        if rows and _resend and _resend_key:
+            base = _public_url or "https://app.promoos.com"
+            rows_html = "".join(
+                f'<tr><td style="padding:6px 10px;border-bottom:1px solid #E4E4E7">'
+                f'<strong>{r["merchant"]}</strong><br>'
+                f'<span style="font-family:monospace;color:#71717A;font-size:12px">{r["email"]}</span></td>'
+                f'<td style="padding:6px 10px;border-bottom:1px solid #E4E4E7;color:#71717A;font-size:12px">'
+                f'{r["hours_since_onboard"]}h ago · '
+                f'{"opened" if r["opened_email"] else "no open"}</td></tr>'
+                for r in rows[:50])
+            html = f"""
+<!doctype html><html><body style="margin:0;padding:0;background:#0A0A0A;font-family:Helvetica,Arial,sans-serif;color:#0A0A0A">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0A0A0A;padding:32px 0">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#FFFFFF;border-radius:12px;overflow:hidden">
+        <tr><td style="padding:22px 28px;background:#F97316;color:#FFFFFF;font-weight:700;font-size:14px;letter-spacing:1px;text-transform:uppercase">Stalled merchant digest</td></tr>
+        <tr><td style="padding:28px">
+          <h2 style="margin:0 0 10px 0;font-size:22px">{len(rows)} merchant(s) stalled &gt; {hours}h</h2>
+          <p style="margin:0 0 18px 0;color:#3F3F46;font-size:14px">
+            These merchants were onboarded but haven't clicked their magic sign-in link yet.
+            Consider a personal follow-up.
+          </p>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:14px">
+            <thead><tr style="background:#FAFAFA">
+              <th align="left" style="padding:6px 10px;border-bottom:2px solid #E4E4E7">Merchant</th>
+              <th align="left" style="padding:6px 10px;border-bottom:2px solid #E4E4E7">Age</th>
+            </tr></thead>
+            <tbody>{rows_html}</tbody>
+          </table>
+          <p style="margin:20px 0 0 0;font-size:12px;color:#71717A">
+            <a href="{base}/admin" style="color:#005CEE">Open Admin → Funnel</a>
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+            try:
+                r = await asyncio.to_thread(_resend.Emails.send, {
+                    "from": _sender, "to": [user.get("email")],
+                    "subject": f"[PromoOS] {len(rows)} merchant(s) stalled > {hours}h",
+                    "html": html,
+                })
+                email_id = r.get("id") if isinstance(r, dict) else None
+                sent = True
+            except Exception as e:
+                logger.warning(f"stalled digest send failed: {e}")
+        return {"ok": True, "count": len(rows), "email_sent": sent,
+                "email_id": email_id, "rows": rows[:100]}
+

@@ -2,6 +2,11 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 32, Feb 2026) — Merchant Drawer + Stalled Nudge + CSV UX
+- **Merchant deep-link drawer**: `GET /api/admin/merchant-summary/{uid}` returns workspace, stats (coupons/redemptions/emails/subs), 5 recent coupons, onboarding timestamps, and last-activity source. Funnel table rows are now clickable and open a drawer Dialog with all this in one glance
+- **Stalled-merchant alerts**: `GET /api/admin/stalled-merchants?hours=72` lists onboarded owners with no magic click; `POST /api/admin/stalled-nudge` emails the calling superadmin a digest via Resend. Background loop `_daily_stalled_nudge_loop` runs at 14:00 UTC to email all superadmins automatically. Orange alert banner appears in the Funnel tab when any merchants are stalled
+- **CSV UX polish**: "Download starter template" link in the batch panel + client-side email regex validation before submit (surfaces `row N: "bad@"` in a single toast)
+
 ## Latest (Iter 31, Feb 2026) — Email Opens + Time-to-First-Send + Batch CSV
 - **Magic-link open tracking**: 1x1 GIF pixel `GET /api/auth/magic-open/{hash}.gif` stamps `magic_first_open_at` on the user via 32-char sha256 slice of the token. Welcome email now embeds the pixel; funnel adds a 4th "Email opened" stage between Onboarded and Magic Clicked
 - **Time-to-first-send**: funnel returns `median_time_to_first_send_hours` + per-merchant `time_to_first_send_hours`; UI shows a pill badge in the header and a TTFS column in the merchant table (auto-formatted m/h/d)
