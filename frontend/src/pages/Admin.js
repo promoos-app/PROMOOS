@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Shield, Users, Building2, ScrollText, CreditCard, BarChart3, Plus, Loader2,
-  Pause, Play, RotateCcw, Trash2, Palette, HeartPulse, CheckCircle2, XCircle, AlertTriangle, Rocket, Copy, TrendingUp, Send, Download,
+  Pause, Play, RotateCcw, Trash2, Palette, HeartPulse, CheckCircle2, XCircle, AlertTriangle, Rocket, Copy, TrendingUp, Send, Download, UserCheck,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
@@ -1050,6 +1050,7 @@ function OnboardingFunnelPanel() {
   const [drawerBusy, setDrawerBusy] = useState(false);
   const [stalled, setStalled] = useState(null);
   const [nudging, setNudging] = useState(false);
+  const [impersonating, setImpersonating] = useState(false);
   const load = async () => {
     setBusy(true);
     try { const { data } = await api.get("/admin/onboarding-funnel"); setData(data); }
@@ -1081,6 +1082,38 @@ function OnboardingFunnelPanel() {
       setStalled({ threshold_hours: 72, count: data.count, rows: data.rows });
     } catch (e) { toast.error(apiError(e)); }
     finally { setNudging(false); }
+  };
+  const impersonate = async (uid) => {
+    if (!uid) return;
+    setImpersonating(true);
+    try {
+      const { data } = await api.post(`/admin/impersonate/${uid}`);
+      // Copy the link for logs and pop it in a new tab so the superadmin's own
+      // session isn't clobbered.
+      try { await navigator.clipboard.writeText(data.magic_link); } catch (_) {}
+      const win = window.open(data.magic_link, "_blank", "noopener,noreferrer");
+      if (!win) toast.error("Pop-up blocked — magic link copied to clipboard");
+      else toast.success(`Signed in as ${data.target.email} (new tab)`);
+    } catch (e) { toast.error(apiError(e)); }
+    finally { setImpersonating(false); }
+  };
+  const exportCsv = () => {
+    if (!data || !data.rows) return;
+    const header = "merchant,email,workspace_id,onboarded_at,magic_opened_at,magic_clicked_at,first_email_sent_at,time_to_first_send_hours,stage\n";
+    const body = data.rows.map((r) => [
+      r.merchant || r.name || "", r.email || "", r.workspace_id || "",
+      r.onboarded_at || "", r.magic_opened_at || "", r.magic_clicked_at || "",
+      r.first_email_sent_at || "",
+      r.time_to_first_send_hours == null ? "" : r.time_to_first_send_hours,
+      r.stage || "",
+    ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([header + body], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `promoos-funnel-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
   useEffect(() => { load(); loadStalled(); }, []);
   if (busy && !data) return (
@@ -1121,6 +1154,11 @@ function OnboardingFunnelPanel() {
           data-testid="funnel-refresh"
           className="ml-auto px-3 py-1 rounded-md border border-[#27272A] text-xs hover:border-[#CCFF00] disabled:opacity-60">
           {busy ? <Loader2 className="w-3 h-3 spin inline" /> : "Refresh"}
+        </button>
+        <button onClick={exportCsv} disabled={!data || !data.rows || data.rows.length === 0}
+          data-testid="funnel-export-csv"
+          className="px-3 py-1 rounded-md border border-[#CCFF00]/40 text-[#CCFF00] text-xs hover:bg-[#CCFF00]/10 inline-flex items-center gap-1 disabled:opacity-40">
+          <Download className="w-3 h-3" /> Export CSV
         </button>
       </div>
       {stalled && stalled.count > 0 && (
@@ -1260,6 +1298,44 @@ function OnboardingFunnelPanel() {
                     ))}
                   </div>
                 )}
+              </div>
+              {drawer.recent_activity && drawer.recent_activity.length > 0 && (
+                <div data-testid="drawer-activity">
+                  <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Recent activity</div>
+                  <ol className="relative border-l border-[#27272A] pl-4 space-y-2">
+                    {drawer.recent_activity.map((ev, idx) => {
+                      const dot = ev.type === "coupon_created" ? "bg-[#CCFF00]"
+                        : ev.type === "redemption" ? "bg-fuchsia-400"
+                        : ev.type === "email_sent" ? "bg-sky-400"
+                        : "bg-emerald-400";
+                      const label = ev.type.replace(/_/g, " ");
+                      return (
+                        <li key={idx} className="relative" data-testid={`drawer-activity-${idx}`}>
+                          <span className={`absolute -left-[19px] top-1 w-2 h-2 rounded-full ${dot}`} />
+                          <div className="flex items-baseline gap-2 flex-wrap">
+                            <span className="text-[9px] uppercase tracking-widest text-[#71717A]">{label}</span>
+                            <span className="text-[10px] text-[#52525B]">
+                              {ev.at ? new Date(ev.at).toLocaleString(undefined,
+                                { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                            </span>
+                          </div>
+                          <div className="text-xs text-[#D4D4D8] break-all">{ev.title}</div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </div>
+              )}
+              <div className="pt-2 border-t border-[#27272A] flex items-center justify-between gap-2">
+                <span className="text-[11px] text-[#71717A]">
+                  Impersonation logs to <span className="font-mono">admin_logs</span> and expires in 60 min.
+                </span>
+                <Button data-testid="drawer-impersonate" onClick={() => impersonate(drawer.user?.id)}
+                  disabled={impersonating}
+                  className="rounded-md gap-1.5 h-9 bg-fuchsia-500/20 hover:bg-fuchsia-500/30 border border-fuchsia-500/50 text-white text-xs">
+                  {impersonating ? <Loader2 className="w-3.5 h-3.5 spin" /> : <UserCheck className="w-3.5 h-3.5" />}
+                  Sign in as this merchant
+                </Button>
               </div>
             </div>
           )}

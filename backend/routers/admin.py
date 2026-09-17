@@ -676,11 +676,42 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
                 pass
         last_activity = max(candidates)[0] if candidates else u.get("created_at")
         last_activity_source = max(candidates)[1] if candidates else "user_created"
+        # Merged activity feed — last 10 events across coupons, redemptions,
+        # email sends, and newsletter subscribers.
+        activity = []
+        if wid:
+            async for c in db.coupons.find(
+                {"workspace_id": wid}, {"_id": 0, "id": 1, "code": 1, "name": 1, "created_at": 1}
+            ).sort("created_at", -1).limit(10):
+                activity.append({"type": "coupon_created", "at": c.get("created_at"),
+                                  "title": f"Coupon {c.get('code', '')} · {c.get('name', '')}",
+                                  "ref_id": c.get("id")})
+            async for r in db.redemptions.find(
+                {"workspace_id": wid}, {"_id": 0, "code": 1, "customer": 1,
+                                          "revenue": 1, "created_at": 1}
+            ).sort("created_at", -1).limit(10):
+                activity.append({"type": "redemption", "at": r.get("created_at"),
+                                  "title": f"Redemption {r.get('code', '')} · "
+                                           f"{r.get('customer', 'anon')} · ${r.get('revenue', 0)}"})
+            async for e in db.email_events.find(
+                {"workspace_id": wid}, {"_id": 0, "subject": 1, "to": 1, "created_at": 1}
+            ).sort("created_at", -1).limit(10):
+                to = e.get("to")
+                to_s = ", ".join(to) if isinstance(to, list) else str(to or "")
+                activity.append({"type": "email_sent", "at": e.get("created_at"),
+                                  "title": f"Email to {to_s[:40]}{'…' if len(to_s) > 40 else ''} · {e.get('subject', '')[:60]}"})
+            async for s in db.newsletter_subscribers.find(
+                {"workspace_id": wid}, {"_id": 0, "email": 1, "created_at": 1, "status": 1}
+            ).sort("created_at", -1).limit(10):
+                activity.append({"type": "subscriber_added", "at": s.get("created_at"),
+                                  "title": f"Subscriber {s.get('email', '')} ({s.get('status', 'active')})"})
+        activity.sort(key=lambda x: x.get("at") or "", reverse=True)
         return {
             "user": u, "workspace": ws,
             "stats": {"coupons": coupons_total, "redemptions": redemptions_total,
                       "emails_sent": emails_total, "newsletter_subscribers": subscribers_total},
             "recent_coupons": coupons_recent,
+            "recent_activity": activity[:10],
             "last_activity_at": last_activity,
             "last_activity_source": last_activity_source,
             "onboarding": {
@@ -688,6 +719,30 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
                 "magic_first_signin_at": u.get("magic_first_signin_at"),
             },
         }
+
+    @api.post("/admin/impersonate/{uid}")
+    async def admin_impersonate(uid: str, user: dict = Depends(get_current_user)):
+        """Mint a 30-minute magic sign-in link for the target user (hands-on support)."""
+        require_superadmin(user)
+        target = await db.users.find_one({"id": uid},
+                                           {"_id": 0, "id": 1, "email": 1, "name": 1,
+                                            "role": 1, "suspended": 1, "deleted_at": 1})
+        if not target:
+            raise HTTPException(404, "user not found")
+        if target.get("deleted_at"):
+            raise HTTPException(400, "Cannot impersonate a deleted account")
+        if target.get("suspended"):
+            raise HTTPException(400, "Cannot impersonate a suspended account")
+        if target.get("role") == "superadmin" and target["id"] != user["id"]:
+            raise HTTPException(400, "Cannot impersonate another superadmin")
+        base = _public_url or "https://app.promoos.com"
+        tok = _magic_token(target["id"], target["email"], ttl_hours=1)  # 60 min ceiling
+        magic_url = f"{base}/login?magic={tok}"
+        await admin_log(user, "user.impersonate", target=target["id"],
+                         meta={"email": target["email"]})
+        return {"ok": True, "magic_link": magic_url,
+                "target": {"id": target["id"], "email": target["email"], "name": target["name"]},
+                "expires_in_minutes": 60}
 
     async def _find_stalled(threshold_hours: int = 72):
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=threshold_hours)).isoformat()

@@ -2,6 +2,11 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 33, Feb 2026) — Impersonation + CSV Export + Activity Feed
+- **Merchant impersonation**: `POST /api/admin/impersonate/{uid}` mints a 60-min `kind=magic` JWT for the target user (audit-logged as `user.impersonate`; blocks impersonating other superadmins or deleted/suspended accounts). Drawer button opens the magic link in a new tab and copies it to clipboard so the superadmin's own session survives
+- **Funnel CSV export**: client-side "Export CSV" button emits `promoos-funnel-YYYY-MM-DD.csv` with merchant, email, workspace, all four milestone timestamps, TTFS hours, and stage — ready to share weekly
+- **Drawer activity feed**: `merchant-summary` now returns `recent_activity` — top-10 merged events across coupons, redemptions, email_events, and newsletter_subscribers, rendered as a colored timeline in the drawer (green/fuchsia/sky/emerald dots by type)
+
 ## Latest (Iter 32, Feb 2026) — Merchant Drawer + Stalled Nudge + CSV UX
 - **Merchant deep-link drawer**: `GET /api/admin/merchant-summary/{uid}` returns workspace, stats (coupons/redemptions/emails/subs), 5 recent coupons, onboarding timestamps, and last-activity source. Funnel table rows are now clickable and open a drawer Dialog with all this in one glance
 - **Stalled-merchant alerts**: `GET /api/admin/stalled-merchants?hours=72` lists onboarded owners with no magic click; `POST /api/admin/stalled-nudge` emails the calling superadmin a digest via Resend. Background loop `_daily_stalled_nudge_loop` runs at 14:00 UTC to email all superadmins automatically. Orange alert banner appears in the Funnel tab when any merchants are stalled
