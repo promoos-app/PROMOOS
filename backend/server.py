@@ -2214,6 +2214,7 @@ _newsletter_ctx = register_newsletter(api, db, now_iso, get_current_user, requir
     "resend": resend, "sender_default": SENDER_EMAIL,
     "public_url": PUBLIC_APP_URL, "jwt_secret": JWT_SECRET,
     "unsubscribe_token_for": _uh_token_fn,
+    "emergent_llm_key": EMERGENT_LLM_KEY,
 })
 _newsletter_worker = _newsletter_ctx["worker"]
 

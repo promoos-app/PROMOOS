@@ -8,8 +8,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   ArrowLeft, Save, Send, Trash2, Plus, ChevronUp, ChevronDown, Loader2,
-  Heading, Type, Image as ImageIcon, MousePointerClick, Ticket, Gift, Rocket, Minus, Share2, Users,
+  Heading, Type, Image as ImageIcon, MousePointerClick, Ticket, Gift, Rocket, Minus, Share2, Users, Sparkles, Upload,
 } from "lucide-react";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
+} from "@/components/ui/dialog";
 
 const BLOCK_LIB = [
   { t: "heading", label: "Heading", icon: Heading, defaults: { level: "h2", text: "Section title" } },
@@ -30,6 +33,9 @@ export default function NewsletterPostEditor() {
   const [post, setPost] = useState(null);
   const [saving, setSaving] = useState(false);
   const [sendTo, setSendTo] = useState("");
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiBrief, setAiBrief] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
 
   useEffect(() => {
     api.get(`/newsletter/publications/${pubId}/posts/${postId}`)
@@ -76,6 +82,21 @@ export default function NewsletterPostEditor() {
     } catch (e) { toast.error(apiError(e)); }
   };
 
+  const draftWithAI = async () => {
+    if (!aiBrief.trim()) { toast.error("Give AI a one-line brief"); return; }
+    setAiBusy(true);
+    try {
+      const { data } = await api.post(`/newsletter/publications/${pubId}/ai-draft`,
+        { brief: aiBrief });
+      // Overwrite in-memory draft; user must Save to persist.
+      setPost((p) => ({ ...p, title: data.title || p.title,
+                          subtitle: data.subtitle || p.subtitle,
+                          blocks: data.blocks || p.blocks }));
+      toast.success(`AI drafted ${data.blocks?.length || 0} block${data.blocks?.length === 1 ? "" : "s"} — Save to persist`);
+      setAiOpen(false); setAiBrief("");
+    } catch (e) { toast.error(apiError(e)); } finally { setAiBusy(false); }
+  };
+
   if (!post) return <div className="text-[#71717A] py-12 text-center">Loading…</div>;
 
   return (
@@ -90,7 +111,35 @@ export default function NewsletterPostEditor() {
           post.status === "scheduled" ? "bg-amber-500/15 text-amber-400" :
           "bg-[#27272A] text-[#A1A1AA]"
         }`}>{post.status}</span>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
+          <Dialog open={aiOpen} onOpenChange={setAiOpen}>
+            <DialogTrigger asChild>
+              <Button data-testid="editor-ai-draft" disabled={post.status === "sent"}
+                className="rounded-md gap-2 h-9 text-xs bg-gradient-to-r from-fuchsia-500/20 to-cyan-500/20 border border-fuchsia-500/40 hover:border-fuchsia-400 text-white">
+                <Sparkles className="w-3.5 h-3.5" /> Draft with AI
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="bg-[#141414] border-[#27272A] text-white" data-testid="ai-draft-dialog">
+              <DialogHeader><DialogTitle>Draft this post with AI</DialogTitle></DialogHeader>
+              <div className="space-y-2">
+                <Label className="text-xs text-[#A1A1AA]">One-line brief</Label>
+                <Textarea data-testid="ai-brief-input" value={aiBrief} onChange={(e) => setAiBrief(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. Announce our summer swim capsule drop with 25% off for readers only for 48 hours"
+                  className="bg-[#0A0A0A] border-[#27272A] text-white" />
+                <div className="text-[10px] text-[#71717A]">
+                  AI produces title + subtitle + 5-9 blocks. Coupons and gift cards you'll add manually.
+                </div>
+              </div>
+              <DialogFooter>
+                <Button data-testid="ai-draft-submit" onClick={draftWithAI} disabled={aiBusy}
+                  className="btn-primary rounded-md gap-2">
+                  {aiBusy ? <Loader2 className="w-4 h-4 spin" /> : <Sparkles className="w-4 h-4" />}
+                  Generate draft
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           <Input placeholder="you@example.com" value={sendTo} onChange={(e) => setSendTo(e.target.value)}
             data-testid="editor-test-email"
             className="h-9 w-56 bg-[#0A0A0A] border-[#27272A] text-white text-xs" />
@@ -172,9 +221,7 @@ function BlockEditor({ b, i, disabled, onChange, onRemove, onMove }) {
           className="bg-transparent border-0 text-sm p-0 focus-visible:ring-0 text-[#E4E4E7] resize-y" />
       )}
       {b.type === "image" && (
-        <Input value={p.url || ""} onChange={(e) => onChange({ url: e.target.value })}
-          placeholder="https://…" disabled={disabled} data-testid={`block-image-url-${i}`}
-          className="bg-[#141414] border-[#27272A] text-white text-xs font-mono" />
+        <ImageBlockEditor p={p} onChange={onChange} disabled={disabled} i={i} />
       )}
       {b.type === "button" && (
         <div className="grid grid-cols-2 gap-2">
@@ -212,3 +259,92 @@ function BlockEditor({ b, i, disabled, onChange, onRemove, onMove }) {
     </div>
   );
 }
+
+function ImageBlockEditor({ p, onChange, disabled, i }) {
+  const [uploading, setUploading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+
+  const uploadFile = async (file) => {
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) { toast.error("Max 8 MB"); return; }
+    setUploading(true);
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const { data } = await api.post("/uploads", fd,
+        { headers: { "Content-Type": "multipart/form-data" } });
+      const abs = data.url.startsWith("http") ? data.url
+        : `${process.env.REACT_APP_BACKEND_URL}${data.url}`;
+      onChange({ url: abs, ai_generated: false });
+      toast.success("Image uploaded");
+    } catch (e) { toast.error(apiError(e)); } finally { setUploading(false); }
+  };
+
+  const generateAI = async () => {
+    if (!aiPrompt.trim()) { toast.error("Describe the image first"); return; }
+    setGenerating(true);
+    try {
+      const { data } = await api.post("/ai/image", { prompt: aiPrompt });
+      onChange({ url: data.image_url, ai_generated: !!data.ai_generated,
+                   ai_provider: data.provider, ai_prompt: aiPrompt });
+      toast.success("AI generated a graphic");
+      setAiPrompt("");
+    } catch (e) { toast.error(apiError(e, "Image generation failed")); }
+    finally { setGenerating(false); }
+  };
+
+  return (
+    <div className="space-y-2" data-testid={`block-image-${i}`}>
+      {p.url ? (
+        <div className="relative">
+          <img src={p.url} alt={p.alt || ""}
+            className="w-full max-h-64 object-cover rounded-md border border-[#27272A]" />
+          {p.ai_generated && (
+            <span className="absolute top-2 left-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/70 backdrop-blur-sm border border-fuchsia-400/50 text-[9px] font-bold uppercase tracking-widest text-fuchsia-300"
+              data-testid={`block-image-ai-badge-${i}`}>
+              <Sparkles className="w-3 h-3" /> AI-generated
+            </span>
+          )}
+          <button onClick={() => onChange({ url: "", ai_generated: false, ai_provider: null, ai_prompt: null })}
+            disabled={disabled}
+            data-testid={`block-image-clear-${i}`}
+            className="absolute top-2 right-2 px-2 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-red-500/70">
+            Replace
+          </button>
+        </div>
+      ) : (
+        <div className="rounded-md border border-dashed border-[#27272A] p-4 text-center">
+          <ImageIcon className="w-6 h-6 text-[#71717A] mx-auto mb-2" />
+          <div className="text-[11px] text-[#71717A] mb-3">Upload a custom graphic or generate one with AI</div>
+          <div className="flex gap-2 justify-center flex-wrap">
+            <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-[#27272A] hover:border-[#CCFF00] hover:text-[#CCFF00] cursor-pointer text-[11px] ${uploading ? "opacity-60 pointer-events-none" : ""}`}
+              data-testid={`block-image-upload-btn-${i}`}>
+              {uploading ? <Loader2 className="w-3 h-3 spin" /> : <Upload className="w-3 h-3" />}
+              {uploading ? "Uploading…" : "Upload"}
+              <input type="file" accept="image/*" className="hidden" disabled={disabled || uploading}
+                onChange={(e) => { uploadFile(e.target.files?.[0]); e.target.value = ""; }} />
+            </label>
+          </div>
+        </div>
+      )}
+      <div className="flex gap-2 items-stretch">
+        <Input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)}
+          placeholder="or describe an image for AI to generate…"
+          disabled={disabled || generating}
+          data-testid={`block-image-ai-prompt-${i}`}
+          className="flex-1 bg-[#141414] border-[#27272A] text-white text-xs h-8" />
+        <Button data-testid={`block-image-ai-generate-${i}`}
+          onClick={generateAI} disabled={disabled || generating || !aiPrompt.trim()}
+          className="rounded-md gap-1 h-8 text-[11px] px-3 bg-gradient-to-r from-fuchsia-500/20 to-cyan-500/20 border border-fuchsia-500/40 hover:border-fuchsia-400 text-white">
+          {generating ? <Loader2 className="w-3 h-3 spin" /> : <Sparkles className="w-3 h-3" />}
+          {generating ? "…" : "AI"}
+        </Button>
+      </div>
+      <Input value={p.alt || ""} onChange={(e) => onChange({ alt: e.target.value })}
+        placeholder="Alt text (accessibility)" disabled={disabled}
+        data-testid={`block-image-alt-${i}`}
+        className="bg-[#141414] border-[#27272A] text-white text-xs h-8" />
+    </div>
+  );
+}
+

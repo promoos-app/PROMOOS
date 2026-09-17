@@ -2,6 +2,15 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 27, Feb 2026) — Newsletter Polish
+- AI Post Writer (`POST /newsletter/publications/{id}/ai-draft`, Claude Sonnet 5)
+- Image blocks now support Upload (Object Storage) and AI generate (Gemini) with AI-generated badge
+- `POST /newsletter/publications/{id}/import-customers` — one-click import from workspace customers collection
+- Custom Sending Domain — Resend Domains API integration with DNS record UI, verify, and remove
+- Confirmed: Coupons, Gift Cards, Funnels embed natively into posts and mass-send via Resend
+
+
+
 ## Latest (Iter 26, Feb 2026) — Newsletter System (Beehiiv-style)
 - Publications + Subscribers + Posts + Send worker (Resend) + Tracking (open pixel / click redirect / unsubscribe) + Analytics
 - 10-block post editor: heading, text, image, button, coupon, giftcard, funnel, subscribe_form, referral_cta, divider

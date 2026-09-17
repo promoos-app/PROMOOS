@@ -107,6 +107,15 @@ class SendTestIn(BaseModel):
     email: EmailStr
 
 
+class AIDraftIn(BaseModel):
+    brief: str
+    tone: Optional[str] = "friendly, punchy, brand-aware"
+
+
+class DomainIn(BaseModel):
+    name: str  # e.g. mail.acme.com
+
+
 def register(api, db, now_iso, get_current_user, require_writer, ctx):
     """
     ctx: {resend, sender_default, public_url, jwt_secret, unsubscribe_token_for}
@@ -116,6 +125,7 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
     PUBLIC_URL = (ctx["public_url"] or "").rstrip("/")
     JWT_SECRET = ctx["jwt_secret"]
     unsub_token = ctx["unsubscribe_token_for"]
+    EMERGENT_LLM_KEY = ctx.get("emergent_llm_key")
 
     async def _uniq_pub_slug(base: str) -> str:
         existing = {d["slug"] async for d in db.publications.find({}, {"_id": 0, "slug": 1})}
@@ -863,5 +873,199 @@ h1{{font-size:22px;margin:0 0 8px}}p{{color:#A1A1AA;font-size:14px}}</style></he
 h1{font-size:22px;margin:0 0 8px}p{color:#A1A1AA;font-size:14px}</style></head>
 <body><div class="card"><h1>You're unsubscribed</h1><p>We won't email you again from this list.</p></div></body></html>"""
         return Response(content=html, media_type="text/html")
+
+    # ============ Import customers → subscribers ============
+    @api.post("/newsletter/publications/{pid}/import-customers")
+    async def import_from_customers(pid: str,
+                                      user: dict = Depends(get_current_user)):
+        """Bulk-import every customer in this workspace as a subscriber.
+
+        Idempotent — existing subscribers are updated (not duplicated) and any
+        who previously unsubscribed stay unsubscribed unless they resubscribe themselves.
+        Adds tag ["customer_import"] so merchants can segment later.
+        """
+        require_writer(user)
+        pub = await _get_pub(pid, user["workspace_id"])
+        created, skipped, resubbed = 0, 0, 0
+        async for c in db.customers.find(
+                {"workspace_id": user["workspace_id"]},
+                {"_id": 0, "email": 1, "name": 1}):
+            email = ((c.get("email") or "").strip().lower())
+            if not email or "@" not in email:
+                skipped += 1; continue
+            existing = await db.newsletter_subscribers.find_one(
+                {"publication_id": pid, "email": email},
+                {"_id": 0, "id": 1, "status": 1, "tags": 1})
+            if existing:
+                if existing["status"] == "unsubscribed":
+                    skipped += 1  # respect their prior choice
+                    continue
+                # ensure the tag is present without duplicating
+                if "customer_import" not in (existing.get("tags") or []):
+                    await db.newsletter_subscribers.update_one(
+                        {"id": existing["id"]},
+                        {"$addToSet": {"tags": "customer_import"}})
+                skipped += 1
+                continue
+            await _create_subscriber(pub, email, c.get("name", "") or "",
+                                        "customer_import", ["customer_import"],
+                                        "subscribed", None)
+            created += 1
+        return {"created": created, "skipped": skipped, "resubbed": resubbed}
+
+    # ============ AI post drafter ============
+    @api.post("/newsletter/publications/{pid}/ai-draft")
+    async def ai_draft_post(pid: str, body: AIDraftIn,
+                              user: dict = Depends(get_current_user)):
+        """Turn a one-line brief into a full post draft with title + blocks.
+
+        Returns the SAME shape as GET /posts/{id} so the frontend can preview
+        or overwrite an existing draft. Does NOT persist — caller decides.
+        """
+        require_writer(user)
+        pub = await _get_pub(pid, user["workspace_id"])
+        if not EMERGENT_LLM_KEY:
+            raise HTTPException(400, "EMERGENT_LLM_KEY not configured")
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        system = (
+            "You are an elite email newsletter writer for e-commerce brands. "
+            "Given a one-line brief, produce a JSON object matching this exact schema:\n"
+            '{ "title": "<punchy subject line, max 60 chars>",\n'
+            '  "subtitle": "<one-sentence preheader, max 120 chars>",\n'
+            '  "blocks": [\n'
+            '    {"type":"heading","props":{"level":"h2","text":"..."}},\n'
+            '    {"type":"text","props":{"text":"..."}},\n'
+            '    {"type":"button","props":{"label":"...","url":"https://"}},\n'
+            '    ... (5-9 blocks total)\n'
+            '  ]\n'
+            '}\n'
+            "Rules: use only these block types: heading, text, image, button, "
+            "subscribe_form, referral_cta, divider. Do NOT include coupon/giftcard/funnel "
+            "blocks — merchants will add those manually. Alternate heading/text/button. "
+            "Include one subscribe_form and one referral_cta near the end. "
+            f"Tone: {body.tone}. Respond with ONLY the JSON object.")
+        import uuid as _uuid
+        chat = LlmChat(api_key=EMERGENT_LLM_KEY,
+                       session_id=f"nl-draft-{_uuid.uuid4()}",
+                       system_message=system).with_model("anthropic", "claude-sonnet-5")
+        try:
+            resp = await chat.send_message(UserMessage(text=body.brief))
+        except Exception as e:
+            raise HTTPException(502, f"AI draft failed: {e}")
+        import re as _re, json as _json
+        text = resp if isinstance(resp, str) else str(resp)
+        m = _re.search(r"\{[\s\S]*\}", text)
+        if not m:
+            raise HTTPException(502, "AI returned unparseable response")
+        try:
+            data = _json.loads(m.group(0))
+        except Exception:
+            raise HTTPException(502, "AI returned invalid JSON")
+        data["blocks"] = _sanitize_blocks(data.get("blocks", []))
+        # Normalize AI-produced quirks so the render matches expectations.
+        for b in data["blocks"]:
+            b["id"] = b.get("id") or str(_uuid.uuid4())[:8]
+            pr = b.get("props") or {}
+            if b["type"] == "image" and "src" in pr and "url" not in pr:
+                pr["url"] = pr.pop("src")
+            if b["type"] == "button" and "text" in pr and "label" not in pr:
+                pr["label"] = pr.pop("text")
+            if b["type"] == "button" and "buttonLabel" in pr and "label" not in pr:
+                pr["label"] = pr.pop("buttonLabel")
+            b["props"] = pr
+        return data
+
+    # ============ Custom sending domain (Resend) ============
+    def _resend_configured():
+        return bool(getattr(resend, "api_key", None))
+
+    @api.get("/newsletter/publications/{pid}/domain")
+    async def get_domain_status(pid: str,
+                                  user: dict = Depends(get_current_user)):
+        require_writer(user)
+        pub = await _get_pub(pid, user["workspace_id"])
+        d = pub.get("sending_domain")
+        if not d: return {"configured": False}
+        if not _resend_configured():
+            return {"configured": True, **d,
+                    "warning": "Resend API key not present — cannot refresh status"}
+        # Poll Resend for current status.
+        try:
+            resp = await asyncio.to_thread(resend.Domains.get, d.get("resend_id"))
+            info = getattr(resp, "data", resp) or {}
+            status = (info.get("status") if isinstance(info, dict) else None) or d.get("status")
+            records = (info.get("records") if isinstance(info, dict) else None) or d.get("records")
+            await db.publications.update_one(
+                {"id": pid},
+                {"$set": {"sending_domain.status": status,
+                          "sending_domain.records": records,
+                          "sending_domain.last_checked_at": now_iso()}})
+            return {"configured": True, "name": d["name"], "resend_id": d.get("resend_id"),
+                    "status": status, "records": records}
+        except Exception as e:
+            return {"configured": True, **d,
+                    "warning": f"Could not fetch fresh status: {str(e)[:200]}"}
+
+    @api.post("/newsletter/publications/{pid}/domain")
+    async def add_domain(pid: str, body: DomainIn,
+                          user: dict = Depends(get_current_user)):
+        require_writer(user)
+        pub = await _get_pub(pid, user["workspace_id"])
+        if not _resend_configured():
+            raise HTTPException(400, "Resend API key not configured — set RESEND_API_KEY")
+        name = body.name.strip().lower()
+        if not name or "." not in name:
+            raise HTTPException(400, "Invalid domain")
+        try:
+            resp = await asyncio.to_thread(resend.Domains.create, {"name": name})
+            info = getattr(resp, "data", resp) or {}
+            if not isinstance(info, dict):
+                raise HTTPException(502, "Unexpected Resend response")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"Resend add-domain failed: {e}")
+        domain_doc = {
+            "name": name,
+            "resend_id": info.get("id"),
+            "status": info.get("status", "pending"),
+            "records": info.get("records", []),
+            "created_at": now_iso(),
+            "last_checked_at": now_iso(),
+        }
+        await db.publications.update_one(
+            {"id": pid}, {"$set": {"sending_domain": domain_doc,
+                                     "updated_at": now_iso()}})
+        return {"configured": True, **domain_doc}
+
+    @api.post("/newsletter/publications/{pid}/domain/verify")
+    async def verify_domain(pid: str,
+                              user: dict = Depends(get_current_user)):
+        require_writer(user)
+        pub = await _get_pub(pid, user["workspace_id"])
+        d = pub.get("sending_domain")
+        if not d or not d.get("resend_id"):
+            raise HTTPException(400, "No domain to verify")
+        if not _resend_configured():
+            raise HTTPException(400, "Resend API key not configured")
+        try:
+            await asyncio.to_thread(resend.Domains.verify, d["resend_id"])
+        except Exception as e:
+            raise HTTPException(502, f"Verify request failed: {e}")
+        return await get_domain_status(pid, user)
+
+    @api.delete("/newsletter/publications/{pid}/domain")
+    async def remove_domain(pid: str,
+                              user: dict = Depends(get_current_user)):
+        require_writer(user)
+        pub = await _get_pub(pid, user["workspace_id"])
+        d = pub.get("sending_domain")
+        if d and d.get("resend_id") and _resend_configured():
+            try: await asyncio.to_thread(resend.Domains.remove, d["resend_id"])
+            except Exception: pass  # remove locally even if Resend fails
+        await db.publications.update_one(
+            {"id": pid}, {"$unset": {"sending_domain": ""},
+                           "$set": {"updated_at": now_iso()}})
+        return {"ok": True}
 
     return {"worker": _send_scheduled_posts}

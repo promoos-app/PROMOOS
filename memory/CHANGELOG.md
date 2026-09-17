@@ -1,3 +1,39 @@
+## Iteration 27 (Feb 2026) — Newsletter Polish: AI Writer + Image Upload + Custom Domain + Customer Import
+
+Answering all 4 follow-up requests to make the Newsletter System production-grade.
+
+### AI Post Writer ✅
+- `POST /api/newsletter/publications/{pid}/ai-draft` — takes a one-line brief, returns `{title, subtitle, blocks[]}` via Claude Sonnet 5. Sanitizes + auto-fixes AI quirks (image `src`→`url`, button `text`→`label`, etc.).
+- Frontend: fuchsia-gradient **Draft with AI** button in the post editor toolbar opens a dialog; result populates the in-memory draft (user Saves to persist).
+
+### Custom + AI graphics in image blocks ✅
+- New `ImageBlockEditor` component in `NewsletterPostEditor.js`:
+  - **Upload** button → hits existing `/api/uploads` (Emergent Object Storage, 8 MB max)
+  - **AI generate** input + fuchsia AI button → hits existing `/api/ai/image` (Gemini nano-banana), badges the resulting image as `AI-generated` (EU AI Act metadata carried through from server iter-22)
+  - Alt-text field for accessibility
+  - Preview with **Replace** control
+
+### Import from Customers ✅
+- `POST /api/newsletter/publications/{pid}/import-customers` — bulk-inserts every workspace `customers` document as a `subscribed` subscriber with tag `["customer_import"]`. Idempotent (existing rows updated, unsubscribed customers respected).
+- Frontend: **Import from Customers** button next to CSV import in the Subscribers tab.
+
+### Custom Sending Domain (Resend Domains API) ✅
+- `POST /api/newsletter/publications/{pid}/domain` — calls `resend.Domains.create` with the domain name, stores `resend_id`, `status`, `records[]` on the publication.
+- `POST /api/newsletter/publications/{pid}/domain/verify` — triggers Resend verification and refreshes local status.
+- `GET  /api/newsletter/publications/{pid}/domain` — refreshes from Resend on every read (falls back to cached state if Resend errors).
+- `DELETE /api/newsletter/publications/{pid}/domain` — removes from both PromoOS and Resend.
+- Frontend: new **Custom sending domain** section under Design tab — add domain input → status badge (verified/pending/failed) → DNS records table with copy-to-clipboard buttons → Re-check + Remove.
+
+### Verified integrations (already working, confirmed)
+- **Coupons / Gift Cards / Funnels are natively embedded** in newsletter posts via block editor + hydrated with real workspace data at send time + delivered through Resend send worker with tracking pixel + click redirect.
+- Mass mailing works end-to-end when `RESEND_API_KEY` is set; without it, `send-now` queues the post and the worker logs a warning (documented behaviour).
+
+### Testing ✅
+- 3 new backend endpoints smoke-tested via curl end-to-end.
+- Frontend screenshot verified: Design tab shows domain section with input + Add button; Post editor shows Draft-with-AI dialog trigger + upgraded Image block with Upload + AI generate + alt-text.
+- AI draft produced a real 9-block post from the brief "Weekly VIP-only preview of the fall linen collection" in ~4 seconds.
+
+
 ## Iteration 26 (Feb 2026) — Newsletter System (Beehiiv-style)
 
 ### Backend `/app/backend/routers/newsletter.py` (NEW, 867 lines)

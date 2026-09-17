@@ -198,9 +198,21 @@ function SubscribersTab({ pub }) {
       qc.invalidateQueries({ queryKey: ["subs", pub.id] });
     } catch (e) { toast.error(apiError(e)); }
   };
+  const importCustomers = async () => {
+    if (!window.confirm("Import every customer in this workspace as a subscriber? Previously unsubscribed customers will be respected.")) return;
+    try {
+      const { data } = await api.post(`/newsletter/publications/${pub.id}/import-customers`);
+      toast.success(`Imported ${data.created} new · Skipped ${data.skipped}`);
+      qc.invalidateQueries({ queryKey: ["subs", pub.id] });
+    } catch (e) { toast.error(apiError(e)); }
+  };
   return (
     <div>
-      <div className="flex justify-end gap-2 mb-3">
+      <div className="flex justify-end gap-2 mb-3 flex-wrap">
+        <Button data-testid="import-customers-btn" onClick={importCustomers} variant="ghost"
+          className="btn-ghost rounded-md gap-2 border border-[#27272A] hover:border-[#CCFF00] h-9 text-sm">
+          <Users className="w-4 h-4" /> Import from Customers
+        </Button>
         <label className="btn-ghost rounded-md cursor-pointer gap-2 inline-flex items-center px-3 h-9 text-sm border border-[#27272A] hover:border-[#CCFF00]"
           data-testid="import-subs-csv">
           <Upload className="w-4 h-4" /> Import CSV
@@ -371,31 +383,169 @@ function DesignTab({ pub, onSaved }) {
     } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
   };
   return (
-    <div className="surface rounded-lg p-5 space-y-4 max-w-2xl" data-testid="design-tab">
-      <div><Label className="text-xs text-[#A1A1AA]">Subscribe headline</Label>
-        <Input value={f.subscribe_headline} onChange={(e) => setF({ ...f, subscribe_headline: e.target.value })}
-          data-testid="design-subscribe-headline"
-          className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" /></div>
-      <div><Label className="text-xs text-[#A1A1AA]">Subscribe subline</Label>
-        <Input value={f.subscribe_body} onChange={(e) => setF({ ...f, subscribe_body: e.target.value })}
-          className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" /></div>
-      <div><Label className="text-xs text-[#A1A1AA]">Thanks headline</Label>
-        <Input value={f.thanks_headline} onChange={(e) => setF({ ...f, thanks_headline: e.target.value })}
-          className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" /></div>
-      <div><Label className="text-xs text-[#A1A1AA]">Thanks body</Label>
-        <Textarea value={f.thanks_body} onChange={(e) => setF({ ...f, thanks_body: e.target.value })}
-          rows={2} className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" /></div>
-      <div><Label className="text-xs text-[#A1A1AA]">Brand color</Label>
-        <div className="flex gap-2 mt-1">
-          <Input type="color" value={f.primary_color} onChange={(e) => setF({ ...f, primary_color: e.target.value })}
-            className="w-14 h-10 p-1 bg-[#0A0A0A] border-[#27272A]" />
-          <Input value={f.primary_color} onChange={(e) => setF({ ...f, primary_color: e.target.value })}
-            className="flex-1 bg-[#0A0A0A] border-[#27272A] text-white font-mono text-xs" />
+    <div className="space-y-5 max-w-2xl" data-testid="design-tab">
+      <div className="surface rounded-lg p-5 space-y-4">
+        <h3 className="font-display font-bold text-sm">Landing page copy</h3>
+        <div><Label className="text-xs text-[#A1A1AA]">Subscribe headline</Label>
+          <Input value={f.subscribe_headline} onChange={(e) => setF({ ...f, subscribe_headline: e.target.value })}
+            data-testid="design-subscribe-headline"
+            className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" /></div>
+        <div><Label className="text-xs text-[#A1A1AA]">Subscribe subline</Label>
+          <Input value={f.subscribe_body} onChange={(e) => setF({ ...f, subscribe_body: e.target.value })}
+            className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" /></div>
+        <div><Label className="text-xs text-[#A1A1AA]">Thanks headline</Label>
+          <Input value={f.thanks_headline} onChange={(e) => setF({ ...f, thanks_headline: e.target.value })}
+            className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" /></div>
+        <div><Label className="text-xs text-[#A1A1AA]">Thanks body</Label>
+          <Textarea value={f.thanks_body} onChange={(e) => setF({ ...f, thanks_body: e.target.value })}
+            rows={2} className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" /></div>
+        <div><Label className="text-xs text-[#A1A1AA]">Brand color</Label>
+          <div className="flex gap-2 mt-1">
+            <Input type="color" value={f.primary_color} onChange={(e) => setF({ ...f, primary_color: e.target.value })}
+              className="w-14 h-10 p-1 bg-[#0A0A0A] border-[#27272A]" />
+            <Input value={f.primary_color} onChange={(e) => setF({ ...f, primary_color: e.target.value })}
+              className="flex-1 bg-[#0A0A0A] border-[#27272A] text-white font-mono text-xs" />
+          </div>
         </div>
+        <Button data-testid="design-save" onClick={save} disabled={busy} className="btn-primary rounded-md gap-2">
+          {busy && <Loader2 className="w-4 h-4 spin" />} Save design
+        </Button>
       </div>
-      <Button data-testid="design-save" onClick={save} disabled={busy} className="btn-primary rounded-md gap-2">
-        {busy && <Loader2 className="w-4 h-4 spin" />} Save design
-      </Button>
+      <SendingDomainPanel pub={pub} onChanged={onSaved} />
+    </div>
+  );
+}
+
+function SendingDomainPanel({ pub, onChanged }) {
+  const [domain, setDomain] = useState(null);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(null);
+  const [copied, setCopied] = useState(null);
+
+  const load = async () => {
+    try {
+      const { data } = await api.get(`/newsletter/publications/${pub.id}/domain`);
+      setDomain(data);
+    } catch (e) { toast.error(apiError(e)); }
+  };
+  useEffect(() => { load(); }, [pub.id]);
+
+  const add = async () => {
+    if (!name.trim() || !name.includes(".")) { toast.error("Enter a valid domain"); return; }
+    setBusy("add");
+    try {
+      const { data } = await api.post(`/newsletter/publications/${pub.id}/domain`, { name });
+      setDomain(data); setName("");
+      toast.success("Domain added — now publish the DNS records below");
+      onChanged?.();
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(null); }
+  };
+  const verify = async () => {
+    setBusy("verify");
+    try {
+      const { data } = await api.post(`/newsletter/publications/${pub.id}/domain/verify`);
+      setDomain(data);
+      toast.success(data.status === "verified" ? "Domain verified ✓" : `Status: ${data.status}`);
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(null); }
+  };
+  const remove = async () => {
+    if (!window.confirm("Remove this sending domain?")) return;
+    setBusy("remove");
+    try {
+      await api.delete(`/newsletter/publications/${pub.id}/domain`);
+      setDomain({ configured: false });
+      toast.success("Domain removed");
+      onChanged?.();
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(null); }
+  };
+  const copyValue = (v, k) => {
+    navigator.clipboard.writeText(v);
+    setCopied(k); setTimeout(() => setCopied(null), 1200);
+  };
+
+  return (
+    <div className="surface rounded-lg p-5" data-testid="sending-domain-panel">
+      <h3 className="font-display font-bold text-sm mb-1">Custom sending domain</h3>
+      <p className="text-xs text-[#71717A] mb-4">
+        Send from <span className="font-mono">hello@yourdomain.com</span> instead of the shared PromoOS
+        sender. Requires Resend + DNS access.
+      </p>
+      {!domain?.configured ? (
+        <div className="flex gap-2 flex-wrap">
+          <Input value={name} onChange={(e) => setName(e.target.value)}
+            placeholder="mail.yourdomain.com"
+            data-testid="domain-name-input"
+            className="flex-1 min-w-[220px] bg-[#0A0A0A] border-[#27272A] text-white font-mono text-sm" />
+          <Button data-testid="domain-add-btn" onClick={add} disabled={busy === "add"} className="btn-primary rounded-md gap-2">
+            {busy === "add" && <Loader2 className="w-4 h-4 spin" />} Add domain
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-3" data-testid="domain-status">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="font-mono text-sm">{domain.name}</span>
+            <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+              domain.status === "verified" ? "bg-emerald-500/15 text-emerald-400" :
+              domain.status === "pending" ? "bg-amber-500/15 text-amber-400" :
+              "bg-red-500/15 text-red-400"
+            }`}>{domain.status || "unknown"}</span>
+            <div className="ml-auto flex gap-2">
+              <Button data-testid="domain-verify-btn" onClick={verify} disabled={busy === "verify"}
+                className="btn-ghost rounded-md gap-2 border border-[#27272A] hover:border-[#CCFF00] h-8 text-xs">
+                {busy === "verify" ? <Loader2 className="w-3.5 h-3.5 spin" /> : null} Re-check
+              </Button>
+              <Button data-testid="domain-remove-btn" onClick={remove} disabled={busy === "remove"}
+                className="rounded-md gap-2 bg-red-500/10 text-red-300 border border-red-500/40 hover:bg-red-500/20 h-8 text-xs">
+                Remove
+              </Button>
+            </div>
+          </div>
+          {domain.warning && (
+            <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded p-2">
+              {domain.warning}
+            </div>
+          )}
+          {(domain.records || []).length > 0 && (
+            <div className="rounded-md border border-[#27272A] overflow-hidden" data-testid="domain-records">
+              <div className="bg-[#0A0A0A] px-3 py-2 text-[10px] uppercase tracking-widest text-[#71717A]">
+                DNS records to publish
+              </div>
+              <table className="w-full text-xs">
+                <thead className="text-[9px] uppercase tracking-widest text-[#71717A]">
+                  <tr>
+                    <th className="text-left px-3 py-1.5">Type</th>
+                    <th className="text-left px-3 py-1.5">Name</th>
+                    <th className="text-left px-3 py-1.5">Value</th>
+                    <th className="w-10"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {domain.records.map((r, i) => (
+                    <tr key={i} className="border-t border-[#27272A]">
+                      <td className="px-3 py-1.5 font-mono">{r.type || r.record}</td>
+                      <td className="px-3 py-1.5 font-mono text-[#A1A1AA] break-all">{r.name}</td>
+                      <td className="px-3 py-1.5 font-mono text-[#A1A1AA] break-all max-w-md truncate" title={r.value}>{r.value}</td>
+                      <td className="px-2 py-1.5">
+                        <button onClick={() => copyValue(r.value, `${i}`)}
+                          data-testid={`domain-copy-${i}`}
+                          title="Copy value"
+                          className="text-[#71717A] hover:text-[#CCFF00]">
+                          <Copy className="w-3.5 h-3.5" />
+                          {copied === `${i}` && <span className="ml-1 text-[9px] text-emerald-400">✓</span>}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="text-[10px] text-[#71717A]">
+            After publishing the records at your DNS provider, wait 10-20 minutes then hit "Re-check".
+            Once <b>verified</b>, set the "Sender email" in Settings to use this domain.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
