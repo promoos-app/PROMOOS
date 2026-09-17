@@ -82,6 +82,7 @@ class PublicationIn(BaseModel):
 class SubscriberIn(BaseModel):
     email: EmailStr
     name: Optional[str] = ""
+    phone: Optional[str] = ""
     tags: Optional[List[str]] = None
     source: Optional[str] = "owner_add"
 
@@ -97,6 +98,8 @@ class PostIn(BaseModel):
     subtitle: Optional[str] = ""
     slug: Optional[str] = None
     blocks: Optional[List[dict]] = None
+    channels: Optional[List[str]] = None  # ["email", "sms", "whatsapp"]
+    sms_body: Optional[str] = ""
 
 
 class ScheduleIn(BaseModel):
@@ -126,6 +129,13 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
     JWT_SECRET = ctx["jwt_secret"]
     unsub_token = ctx["unsubscribe_token_for"]
     EMERGENT_LLM_KEY = ctx.get("emergent_llm_key")
+    twilio_send_one = ctx.get("twilio_send_one")
+
+    def _sanitize_channels(chs):
+        if not chs: return ["email"]
+        allowed = {"email", "sms", "whatsapp"}
+        out = [c for c in chs if c in allowed]
+        return out or ["email"]
 
     async def _uniq_pub_slug(base: str) -> str:
         existing = {d["slug"] async for d in db.publications.find({}, {"_id": 0, "slug": 1})}
@@ -229,8 +239,10 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
         return rows
 
     async def _create_subscriber(pub: dict, email: str, name: str, source: str,
-                                   tags: list, status: str, referred_by: Optional[str]) -> dict:
+                                   tags: list, status: str, referred_by: Optional[str],
+                                   phone: str = "") -> dict:
         email = email.strip().lower()
+        phone = (phone or "").strip()[:32] or None
         existing = await db.newsletter_subscribers.find_one(
             {"publication_id": pub["id"], "email": email}, {"_id": 0})
         if existing:
@@ -240,6 +252,10 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
                     {"$set": {"status": status, "unsubscribed_at": None,
                               "subscribed_at": now_iso()}})
                 existing["status"] = status
+            if phone and not existing.get("phone"):
+                await db.newsletter_subscribers.update_one(
+                    {"id": existing["id"]}, {"$set": {"phone": phone}})
+                existing["phone"] = phone
             return existing
         doc = {
             "id": str(uuid.uuid4()),
@@ -247,6 +263,7 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             "workspace_id": pub["workspace_id"],
             "email": email,
             "name": (name or "").strip()[:120],
+            "phone": phone,
             "tags": tags or [],
             "source": source,
             "status": status,  # subscribed | pending | unsubscribed
@@ -330,7 +347,8 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
         pub = await _get_pub(pid, user["workspace_id"])
         doc = await _create_subscriber(pub, body.email, body.name or "",
                                           body.source or "owner_add",
-                                          body.tags or [], "subscribed", None)
+                                          body.tags or [], "subscribed", None,
+                                          phone=body.phone or "")
         return doc
 
     @api.post("/newsletter/publications/{pid}/subscribers/import-csv")
@@ -349,9 +367,10 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             email = ((row.get("email") or row.get("Email") or "").strip().lower())
             if not email or "@" not in email: skipped += 1; continue
             name = (row.get("name") or row.get("Name") or "").strip()
+            phone = (row.get("phone") or row.get("Phone") or row.get("mobile") or "").strip()
             try:
                 await _create_subscriber(pub, email, name, "csv_import",
-                                            [], "subscribed", None)
+                                            [], "subscribed", None, phone=phone)
                 created += 1
             except Exception:
                 skipped += 1
@@ -390,6 +409,8 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
                 {"type": "heading", "props": {"level": "h1", "text": body.title.strip()}},
                 {"type": "text", "props": {"text": "Start writing…"}},
             ]),
+            "channels": _sanitize_channels(body.channels),
+            "sms_body": (body.sms_body or "")[:300],
             "status": "draft",
             "scheduled_at": None,
             "sent_at": None,
@@ -397,7 +418,8 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             "created_at": now_iso(),
             "updated_at": now_iso(),
             "stats": {"sent": 0, "opens": 0, "unique_opens": 0,
-                       "clicks": 0, "unique_clicks": 0, "unsubscribes": 0},
+                       "clicks": 0, "unique_clicks": 0, "unsubscribes": 0,
+                       "sms_sent": 0, "whatsapp_sent": 0},
         }
         await db.newsletter_posts.insert_one({**doc})
         return doc
@@ -425,6 +447,8 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
         upd = {"title": body.title.strip()[:200],
                "subtitle": (body.subtitle or "")[:280],
                "blocks": _sanitize_blocks(body.blocks or []),
+               "channels": _sanitize_channels(body.channels),
+               "sms_body": (body.sms_body or "")[:300],
                "updated_at": now_iso()}
         r = await db.newsletter_posts.update_one(
             {"id": post_id, "publication_id": pid,
@@ -639,43 +663,84 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             await db.newsletter_posts.update_one(
                 {"id": post["id"]}, {"$set": {"status": "cancelled"}})
             return
-        if not getattr(resend, "api_key", None):
-            logger.warning(f"Resend not configured — post {post['id']} cannot send")
+        channels = post.get("channels") or ["email"]
+        want_email = "email" in channels
+        want_sms = "sms" in channels
+        want_whatsapp = "whatsapp" in channels
+        if want_email and not getattr(resend, "api_key", None):
+            logger.warning(f"Resend not configured — email channel skipped for post {post['id']}")
+            want_email = False
+        if (want_sms or want_whatsapp) and not twilio_send_one:
+            logger.warning(f"Twilio not configured — sms/whatsapp channels skipped for post {post['id']}")
+            want_sms = want_whatsapp = False
+        if not (want_email or want_sms or want_whatsapp):
+            # nothing to do — mark sent so we don't loop forever, but with a zero count.
+            await db.newsletter_posts.update_one(
+                {"id": post["id"]},
+                {"$set": {"status": "sent", "sent_at": now_iso(), "stats.sent": 0,
+                          "delivery_note": "No configured channels available"}})
             return
         subs = await db.newsletter_subscribers.find(
             {"publication_id": pub["id"], "status": "subscribed"},
-            {"_id": 0, "id": 1, "email": 1}).to_list(50000)
-        sent = 0
+            {"_id": 0, "id": 1, "email": 1, "phone": 1}).to_list(50000)
+        sent_email = sent_sms = sent_wa = 0
+        # SMS body — fallback derived from title if not provided.
+        sms_text = (post.get("sms_body") or "").strip() or _derive_sms(post, pub)
         for s in subs:
-            try:
-                html = await _render_post_html(pub, post, subscriber_id=s["id"],
-                                                 for_email=True, test=False)
-                headers = {}
-                # Reuse platform List-Unsubscribe token
+            # Email
+            if want_email and s.get("email"):
                 try:
-                    tok = unsub_token(s["email"], JWT_SECRET)
-                    if PUBLIC_URL:
-                        headers = {
-                            "List-Unsubscribe": f"<{PUBLIC_URL}/api/unsubscribe/{tok}>",
-                            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-                        }
-                except Exception: pass
-                await asyncio.to_thread(resend.Emails.send, {
-                    "from": pub.get("sender_email") or SENDER_DEFAULT,
-                    "to": [s["email"]],
-                    "subject": post["title"],
-                    "html": html,
-                    "headers": headers,
-                })
-                sent += 1
-                # small pacing so we stay under Resend rate limits (~2/sec per acct)
-                await asyncio.sleep(0.05)
-            except Exception:
-                pass  # continue with next subscriber
+                    html = await _render_post_html(pub, post, subscriber_id=s["id"],
+                                                     for_email=True, test=False)
+                    headers = {}
+                    try:
+                        tok = unsub_token(s["email"], JWT_SECRET)
+                        if PUBLIC_URL:
+                            headers = {
+                                "List-Unsubscribe": f"<{PUBLIC_URL}/api/unsubscribe/{tok}>",
+                                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+                            }
+                    except Exception: pass
+                    await asyncio.to_thread(resend.Emails.send, {
+                        "from": pub.get("sender_email") or SENDER_DEFAULT,
+                        "to": [s["email"]], "subject": post["title"],
+                        "html": html, "headers": headers,
+                    })
+                    sent_email += 1
+                    await asyncio.sleep(0.05)
+                except Exception:
+                    pass
+            # SMS
+            if want_sms and (s.get("phone") or "").strip():
+                try:
+                    await twilio_send_one(s["phone"].strip(), sms_text, "sms")
+                    sent_sms += 1
+                    await asyncio.sleep(0.05)
+                except Exception:
+                    pass
+            # WhatsApp
+            if want_whatsapp and (s.get("phone") or "").strip():
+                try:
+                    await twilio_send_one(s["phone"].strip(), sms_text, "whatsapp")
+                    sent_wa += 1
+                    await asyncio.sleep(0.05)
+                except Exception:
+                    pass
         await db.newsletter_posts.update_one(
             {"id": post["id"]},
             {"$set": {"status": "sent", "sent_at": now_iso(),
-                       "stats.sent": sent}})
+                       "stats.sent": sent_email,
+                       "stats.sms_sent": sent_sms,
+                       "stats.whatsapp_sent": sent_wa}})
+
+    def _derive_sms(post: dict, pub: dict) -> str:
+        """When merchant doesn't supply an sms_body, synthesise a compact one from title
+        + a permalink to the web archive. Keeps under ~150 chars so carriers don't split it."""
+        base = post["title"][:80]
+        if PUBLIC_URL:
+            url = f"{PUBLIC_URL}/n/{pub['slug']}/p/{post.get('slug', '')}"
+            return f"{pub['name']}: {base} — {url}"
+        return f"{pub['name']}: {base}"
 
     # ============ Analytics ============
     @api.get("/newsletter/publications/{pid}/analytics")

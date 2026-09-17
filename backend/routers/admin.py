@@ -64,6 +64,85 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
         await admin_log(user, "user.create", target=uid, meta={"email": body.email})
         return {"ok": True, "user_id": uid, "workspace_id": wid}
 
+    class OnboardMerchantIn(BaseModel):
+        merchant_name: str          # workspace / brand name
+        owner_name: str
+        owner_email: EmailStr
+        owner_password: str
+        primary_color: Optional[str] = "#005CEE"
+        secondary_color: Optional[str] = "#CCFF00"
+        currency: Optional[str] = "USD"
+        create_demo_publication: bool = True
+
+    @api.post("/admin/onboard-merchant")
+    async def admin_onboard_merchant(body: OnboardMerchantIn,
+                                       user: dict = Depends(get_current_user)):
+        """One-click merchant onboarding wizard.
+
+        Creates the workspace, owner account, and (optionally) a demo newsletter
+        publication so the merchant lands on something rather than blank state.
+        Idempotent by owner_email — running twice returns the existing IDs.
+        """
+        require_superadmin(user)
+        existing = await db.users.find_one({"email": body.owner_email.lower()},
+                                             {"_id": 0, "id": 1, "workspace_id": 1})
+        if existing:
+            return {"ok": True, "already_exists": True,
+                    "user_id": existing["id"],
+                    "workspace_id": existing["workspace_id"]}
+        wid = str(uuid.uuid4())
+        await db.workspaces.insert_one({
+            "id": wid, "name": body.merchant_name,
+            "primary_color": body.primary_color or "#005CEE",
+            "secondary_color": body.secondary_color or "#CCFF00",
+            "currency": body.currency or "USD",
+            "created_at": now_iso(),
+        })
+        uid = str(uuid.uuid4())
+        await db.users.insert_one({
+            "id": uid, "name": body.owner_name,
+            "email": body.owner_email.lower(),
+            "password_hash": hash_password(body.owner_password),
+            "role": "owner", "workspace_id": wid,
+            "suspended": False, "deleted_at": None,
+            "created_at": now_iso(), "created_by_admin": user["id"],
+        })
+        pub_id = None
+        if body.create_demo_publication:
+            import re as _re
+            slug_base = _re.sub(r"[^a-z0-9]+", "-",
+                                 body.merchant_name.lower()).strip("-")[:40] or f"pub-{uid[:6]}"
+            existing_slugs = {d["slug"] async for d in db.publications.find(
+                {}, {"_id": 0, "slug": 1})}
+            slug = slug_base; i = 2
+            while slug in existing_slugs: slug = f"{slug_base}-{i}"; i += 1
+            pub_id = str(uuid.uuid4())
+            await db.publications.insert_one({
+                "id": pub_id, "workspace_id": wid,
+                "name": f"{body.merchant_name} Newsletter",
+                "slug": slug,
+                "description": f"Deals, drops, and news from {body.merchant_name}.",
+                "sender_name": body.merchant_name,
+                "sender_email": None,
+                "primary_color": body.primary_color or "#005CEE",
+                "subscribe_headline": "Join the list",
+                "subscribe_body": f"Get {body.merchant_name} updates in your inbox.",
+                "thanks_headline": "You're in ✓",
+                "thanks_body": "Check your inbox to confirm your address.",
+                "referral_rewards": [
+                    {"count": 3, "coupon_percent": 10},
+                    {"count": 10, "coupon_percent": 20},
+                    {"count": 25, "coupon_percent": 30},
+                ],
+                "created_by": uid, "created_at": now_iso(), "updated_at": now_iso(),
+            })
+        await admin_log(user, "merchant.onboard", target=uid,
+                         meta={"email": body.owner_email, "merchant": body.merchant_name})
+        return {"ok": True, "already_exists": False,
+                "user_id": uid, "workspace_id": wid,
+                "publication_id": pub_id}
+
+
     @api.post("/admin/users/{uid}/suspend")
     async def admin_suspend(uid: str, user: dict = Depends(get_current_user)):
         require_superadmin(user)

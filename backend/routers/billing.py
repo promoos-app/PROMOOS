@@ -517,4 +517,6 @@ def register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso, get_curr
 
     return {
         "init_storage": _init_storage,
+        "put_object": _put_object,
+        "app_name": APP_NAME,
     }

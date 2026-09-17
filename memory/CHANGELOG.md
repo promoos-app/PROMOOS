@@ -1,3 +1,30 @@
+## Iteration 28 (Feb 2026) — Onboarding Wizard + AI Image Library + SMS/WhatsApp Broadcast
+
+### Onboard-Merchant Wizard ✅
+- `POST /api/admin/onboard-merchant` — one call creates workspace + owner + starter newsletter publication + brand kit. Idempotent by `owner_email`.
+- Admin UI: new **Onboard** tab with form + result panel showing login email, temp password, workspace/owner/publication IDs, all copyable to clipboard.
+- Converts `PROVISIONING_RUNBOOK.md` Phase 5 from a curl chain into a 60-second UI action.
+
+### AI Image Library ✅
+- `POST /api/ai/image` now persists every generated image to Object Storage (`db.uploads` with `ai_generated:true`, `ai_provider`, `ai_prompt`), returning `storage_url` + `upload_id` alongside the base64 data URL.
+- `billing.register_extras()` now exposes `put_object` + `app_name` in its return context so server.py can reuse the same object-store client without duplicating auth.
+- Post editor image block gets a **Gallery** button that opens a picker of every past workspace image (uploads + AI-generated), with a fuchsia "AI" badge on synthetic media. Uploading or generating invalidates the gallery cache so the newest asset appears on next open.
+
+### Newsletter → SMS / WhatsApp broadcast ✅
+- Post model extended: `channels: ["email"|"sms"|"whatsapp"]` (default `["email"]`) + `sms_body: str` (≤300 chars, auto-derived from title + web permalink when empty).
+- Subscriber model extended: optional `phone` field. Owner-add dialog accepts it. CSV import parses `phone|Phone|mobile` columns. Existing subs get their phone backfilled on re-add.
+- Send worker `_fanout_post` now iterates channels, uses Resend for email and existing `_twilio_send_one` for SMS/WhatsApp, per-subscriber, with 50ms pacing. Skips a channel gracefully when the corresponding integration is not configured, and records per-channel stats (`stats.sent`, `stats.sms_sent`, `stats.whatsapp_sent`).
+- Post editor: **Channel chips** row + character-count SMS/WhatsApp body textarea (shows 160-char sweet spot warning).
+- Subscribers table gains a **Phone** column.
+
+### Testing ✅
+- All 3 backend flows smoke-tested via curl end-to-end:
+  - Onboard created workspace + user + publication in one call and returned all IDs.
+  - AI image returned `storage_url=/api/uploads/…` alongside data URL; upload record persisted with `ai_generated:true`.
+  - Post created with `channels:[email,sms,whatsapp]` + `sms_body`; subscriber added with `phone:"+1555…"` correctly stored.
+- Frontend screenshot verified: Admin → Onboard tab renders full form + brand color pickers + generate-password button.
+
+
 ## Iteration 27 (Feb 2026) — Newsletter Polish: AI Writer + Image Upload + Custom Domain + Customer Import
 
 Answering all 4 follow-up requests to make the Newsletter System production-grade.

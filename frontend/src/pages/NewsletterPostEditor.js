@@ -37,6 +37,14 @@ export default function NewsletterPostEditor() {
   const [aiBrief, setAiBrief] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
 
+  const toggleChannel = (ch) => {
+    setPost((p) => {
+      const cur = p.channels || ["email"];
+      const next = cur.includes(ch) ? cur.filter((c) => c !== ch) : [...cur, ch];
+      return { ...p, channels: next.length ? next : ["email"] };
+    });
+  };
+
   useEffect(() => {
     api.get(`/newsletter/publications/${pubId}/posts/${postId}`)
       .then((r) => setPost(r.data)).catch((e) => toast.error(apiError(e)));
@@ -60,7 +68,8 @@ export default function NewsletterPostEditor() {
     setSaving(true);
     try {
       await api.put(`/newsletter/publications/${pubId}/posts/${postId}`,
-        { title: post.title, subtitle: post.subtitle, blocks: post.blocks });
+        { title: post.title, subtitle: post.subtitle, blocks: post.blocks,
+          channels: post.channels, sms_body: post.sms_body });
       toast.success("Draft saved");
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
   };
@@ -160,6 +169,41 @@ export default function NewsletterPostEditor() {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_240px] gap-4">
         <div className="surface rounded-lg p-6 space-y-3">
+          <div className="flex items-center gap-2 flex-wrap pb-3 border-b border-[#27272A]" data-testid="channel-chips">
+            <span className="text-[10px] uppercase tracking-widest text-[#71717A] mr-1">Channels</span>
+            {[
+              { k: "email", label: "Email", icon: "✉" },
+              { k: "sms", label: "SMS", icon: "💬" },
+              { k: "whatsapp", label: "WhatsApp", icon: "🟢" },
+            ].map((c) => {
+              const on = (post.channels || ["email"]).includes(c.k);
+              return (
+                <button key={c.k} onClick={() => toggleChannel(c.k)} disabled={post.status === "sent"}
+                  data-testid={`channel-toggle-${c.k}`}
+                  className={`text-[11px] px-2.5 py-1 rounded-full border transition ${
+                    on ? "bg-[#CCFF00]/20 border-[#CCFF00] text-[#CCFF00]"
+                       : "border-[#27272A] text-[#71717A] hover:border-[#CCFF00]/40"
+                  }`}>
+                  {c.icon} {c.label}
+                </button>
+              );
+            })}
+          </div>
+          {((post.channels || []).includes("sms") || (post.channels || []).includes("whatsapp")) && (
+            <div data-testid="sms-body-row" className="pb-3 border-b border-[#27272A]">
+              <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-1 flex justify-between">
+                <span>SMS / WhatsApp body</span>
+                <span className={(post.sms_body || "").length > 160 ? "text-amber-400" : "text-[#71717A]"}>
+                  {(post.sms_body || "").length} / 160
+                </span>
+              </div>
+              <Textarea data-testid="sms-body-input" value={post.sms_body || ""}
+                onChange={(e) => set("sms_body", e.target.value)}
+                maxLength={300} rows={2} disabled={post.status === "sent"}
+                placeholder="If empty, we'll auto-derive a message from your title + a link to the web version."
+                className="bg-[#0A0A0A] border-[#27272A] text-white text-sm" />
+            </div>
+          )}
           <Input data-testid="editor-title" value={post.title} onChange={(e) => set("title", e.target.value)}
             placeholder="Post title" disabled={post.status === "sent"}
             className="bg-transparent border-0 text-3xl font-display font-bold text-white p-0 focus-visible:ring-0 h-auto" />
@@ -264,6 +308,26 @@ function ImageBlockEditor({ p, onChange, disabled, i }) {
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [gallery, setGallery] = useState(null);
+
+  const openGallery = async () => {
+    setGalleryOpen(true);
+    if (gallery) return;
+    try {
+      const { data } = await api.get("/uploads");
+      // Filter to images only
+      const imgs = (data || []).filter((u) => (u.content_type || "").startsWith("image/"));
+      setGallery(imgs);
+    } catch (e) { toast.error(apiError(e)); }
+  };
+  const pickFromGallery = (u) => {
+    const abs = u.url.startsWith("http") ? u.url
+      : `${process.env.REACT_APP_BACKEND_URL}${u.url}`;
+    onChange({ url: abs, ai_generated: !!u.ai_generated,
+                 ai_provider: u.ai_provider, ai_prompt: u.ai_prompt });
+    setGalleryOpen(false);
+  };
 
   const uploadFile = async (file) => {
     if (!file) return;
@@ -276,6 +340,7 @@ function ImageBlockEditor({ p, onChange, disabled, i }) {
       const abs = data.url.startsWith("http") ? data.url
         : `${process.env.REACT_APP_BACKEND_URL}${data.url}`;
       onChange({ url: abs, ai_generated: false });
+      setGallery(null);  // invalidate gallery cache
       toast.success("Image uploaded");
     } catch (e) { toast.error(apiError(e)); } finally { setUploading(false); }
   };
@@ -285,8 +350,13 @@ function ImageBlockEditor({ p, onChange, disabled, i }) {
     setGenerating(true);
     try {
       const { data } = await api.post("/ai/image", { prompt: aiPrompt });
-      onChange({ url: data.image_url, ai_generated: !!data.ai_generated,
+      // Prefer the persisted storage URL so it works in email; fall back to data URL.
+      const useUrl = data.storage_url
+        ? `${process.env.REACT_APP_BACKEND_URL}${data.storage_url}`
+        : data.image_url;
+      onChange({ url: useUrl, ai_generated: !!data.ai_generated,
                    ai_provider: data.provider, ai_prompt: aiPrompt });
+      setGallery(null);  // invalidate so the new image appears next open
       toast.success("AI generated a graphic");
       setAiPrompt("");
     } catch (e) { toast.error(apiError(e, "Image generation failed")); }
@@ -324,9 +394,45 @@ function ImageBlockEditor({ p, onChange, disabled, i }) {
               <input type="file" accept="image/*" className="hidden" disabled={disabled || uploading}
                 onChange={(e) => { uploadFile(e.target.files?.[0]); e.target.value = ""; }} />
             </label>
+            <button onClick={openGallery} disabled={disabled}
+              data-testid={`block-image-gallery-btn-${i}`}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-[#27272A] hover:border-[#CCFF00] hover:text-[#CCFF00] text-[11px]">
+              <ImageIcon className="w-3 h-3" /> Gallery
+            </button>
           </div>
         </div>
       )}
+      <Dialog open={galleryOpen} onOpenChange={setGalleryOpen}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-3xl max-h-[80vh] overflow-y-auto"
+          data-testid={`block-image-gallery-dialog-${i}`}>
+          <DialogHeader><DialogTitle>Pick from your image library</DialogTitle></DialogHeader>
+          {!gallery ? (
+            <div className="py-12 text-center text-[#71717A]"><Loader2 className="w-6 h-6 spin mx-auto" /></div>
+          ) : gallery.length === 0 ? (
+            <div className="py-12 text-center text-[#71717A]">
+              No images yet. Upload one or generate with AI to start your library.
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+              {gallery.map((u) => {
+                const src = u.url.startsWith("http") ? u.url : `${process.env.REACT_APP_BACKEND_URL}${u.url}`;
+                return (
+                  <button key={u.id} onClick={() => pickFromGallery(u)}
+                    data-testid={`gallery-pick-${u.id}`}
+                    className="relative rounded-md overflow-hidden border border-[#27272A] hover:border-[#CCFF00] transition group">
+                    <img src={src} alt="" className="w-full h-24 object-cover" loading="lazy" />
+                    {u.ai_generated && (
+                      <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded-full bg-black/70 backdrop-blur-sm border border-fuchsia-400/50 text-[8px] font-bold uppercase tracking-widest text-fuchsia-300">
+                        <Sparkles className="w-2 h-2 inline mr-0.5" /> AI
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
       <div className="flex gap-2 items-stretch">
         <Input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)}
           placeholder="or describe an image for AI to generate…"

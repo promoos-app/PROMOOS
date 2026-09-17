@@ -2,6 +2,13 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 28, Feb 2026) — Onboarding + AI Library + SMS/WhatsApp
+- **Onboard-Merchant wizard**: `POST /api/admin/onboard-merchant` + Admin → Onboard tab (workspace + owner + starter publication in one click)
+- **AI Image Library**: `/api/ai/image` persists to Object Storage; new Gallery picker in the post editor image block with AI-generated badge
+- **SMS/WhatsApp broadcast**: post `channels` + `sms_body`; subscriber `phone`; send worker fans out via Resend + Twilio; per-channel stats
+
+
+
 ## Latest (Iter 27, Feb 2026) — Newsletter Polish
 - AI Post Writer (`POST /newsletter/publications/{id}/ai-draft`, Claude Sonnet 5)
 - Image blocks now support Upload (Object Storage) and AI generate (Gemini) with AI-generated badge

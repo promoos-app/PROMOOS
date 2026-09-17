@@ -804,8 +804,37 @@ async def ai_image(body: AIImageIn, user: dict = Depends(get_current_user)):
     if not images:
         raise HTTPException(502, "No image generated")
     img = images[0]
+    data_url = f"data:{img['mime_type']};base64,{img['data']}"
+    # Persist to Object Storage so the image can live in the workspace's asset library.
+    # Non-fatal — if storage fails we still return the data-URL.
+    storage_url = None
+    upload_id = None
+    try:
+        import base64 as _b64
+        put_object = extras_ctx.get("put_object") if isinstance(extras_ctx, dict) else None
+        app_name = extras_ctx.get("app_name", "promoos") if isinstance(extras_ctx, dict) else "promoos"
+        if put_object:
+            raw = _b64.b64decode(img["data"])
+            ext = (img.get("mime_type", "image/png").split("/")[-1] or "png").split("+")[0]
+            fid = str(uuid.uuid4())
+            path = f"{app_name}/uploads/{user['workspace_id']}/{fid}.{ext}"
+            result = await asyncio.to_thread(put_object, path, raw, img.get("mime_type", "image/png"))
+            await db.uploads.insert_one({
+                "id": fid, "workspace_id": user["workspace_id"], "user_id": user["id"],
+                "storage_path": result["path"], "original_filename": f"ai-{fid[:8]}.{ext}",
+                "content_type": img.get("mime_type", "image/png"),
+                "size": result.get("size", len(raw)),
+                "is_deleted": False, "created_at": now_iso(),
+                "ai_generated": True, "ai_provider": "gemini-3.1-flash-image-preview",
+                "ai_prompt": body.prompt[:400],
+            })
+            upload_id = fid
+            storage_url = f"/api/uploads/{fid}"
+    except Exception as e:
+        logger.warning(f"AI image storage save skipped: {e}")
     # EU AI Act §50(2) / Coalition for Content Provenance: mark synthetic media with metadata.
-    return {"image_url": f"data:{img['mime_type']};base64,{img['data']}",
+    return {"image_url": data_url,
+            "storage_url": storage_url, "upload_id": upload_id,
             "ai_generated": True, "provider": "gemini-3.1-flash-image-preview",
             "generated_at": now_iso()}
 
@@ -2215,6 +2244,7 @@ _newsletter_ctx = register_newsletter(api, db, now_iso, get_current_user, requir
     "public_url": PUBLIC_APP_URL, "jwt_secret": JWT_SECRET,
     "unsubscribe_token_for": _uh_token_fn,
     "emergent_llm_key": EMERGENT_LLM_KEY,
+    "twilio_send_one": _twilio_send_one,
 })
 _newsletter_worker = _newsletter_ctx["worker"]
 

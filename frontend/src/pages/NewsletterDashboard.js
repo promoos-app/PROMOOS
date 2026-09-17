@@ -167,6 +167,7 @@ function SubscribersTab({ pub }) {
   const [addOpen, setAddOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const { data: subs = [] } = useQuery({
     queryKey: ["subs", pub.id],
     queryFn: async () => (await api.get(`/newsletter/publications/${pub.id}/subscribers`)).data,
@@ -174,8 +175,8 @@ function SubscribersTab({ pub }) {
   const add = async () => {
     if (!email.includes("@")) { toast.error("Valid email required"); return; }
     try {
-      await api.post(`/newsletter/publications/${pub.id}/subscribers`, { email, name });
-      toast.success("Subscriber added"); setAddOpen(false); setEmail(""); setName("");
+      await api.post(`/newsletter/publications/${pub.id}/subscribers`, { email, name, phone });
+      toast.success("Subscriber added"); setAddOpen(false); setEmail(""); setName(""); setPhone("");
       qc.invalidateQueries({ queryKey: ["subs", pub.id] });
     } catch (e) { toast.error(apiError(e)); }
   };
@@ -231,6 +232,9 @@ function SubscribersTab({ pub }) {
             <div className="space-y-3">
               <Input data-testid="add-sub-email" placeholder="email@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className="bg-[#0A0A0A] border-[#27272A] text-white" />
               <Input data-testid="add-sub-name" placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} className="bg-[#0A0A0A] border-[#27272A] text-white" />
+              <Input data-testid="add-sub-phone" placeholder="Phone (optional, for SMS/WhatsApp)"
+                value={phone} onChange={(e) => setPhone(e.target.value)}
+                className="bg-[#0A0A0A] border-[#27272A] text-white font-mono text-xs" />
             </div>
             <DialogFooter>
               <Button data-testid="add-sub-submit" onClick={add} className="btn-primary rounded-md">Add subscriber</Button>
@@ -247,6 +251,7 @@ function SubscribersTab({ pub }) {
               <tr>
                 <th className="text-left px-4 py-2">Email</th>
                 <th className="text-left px-4 py-2">Name</th>
+                <th className="text-left px-4 py-2">Phone</th>
                 <th className="text-left px-4 py-2">Status</th>
                 <th className="text-left px-4 py-2">Source</th>
                 <th className="text-right px-4 py-2">Refs</th>
@@ -258,6 +263,7 @@ function SubscribersTab({ pub }) {
                 <tr key={s.id} className="border-t border-[#27272A]" data-testid={`sub-row-${s.id}`}>
                   <td className="px-4 py-2 font-mono text-xs">{s.email}</td>
                   <td className="px-4 py-2 text-[#A1A1AA]">{s.name || "—"}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-[#A1A1AA]">{s.phone || "—"}</td>
                   <td className="px-4 py-2">
                     <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
                       s.status === "subscribed" ? "bg-emerald-500/15 text-emerald-400" :

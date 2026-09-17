@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Shield, Users, Building2, ScrollText, CreditCard, BarChart3, Plus, Loader2,
-  Pause, Play, RotateCcw, Trash2, Palette, HeartPulse, CheckCircle2, XCircle, AlertTriangle,
+  Pause, Play, RotateCcw, Trash2, Palette, HeartPulse, CheckCircle2, XCircle, AlertTriangle, Rocket, Copy,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
@@ -17,6 +17,7 @@ import {
 const TABS = [
   { k: "stats", label: "Stats", icon: BarChart3 },
   { k: "health", label: "Health Check", icon: HeartPulse },
+  { k: "onboard", label: "Onboard", icon: Rocket },
   { k: "ops", label: "Ops", icon: Shield },
   { k: "users", label: "Users", icon: Users },
   { k: "workspaces", label: "Workspaces", icon: Building2 },
@@ -362,6 +363,7 @@ export default function Admin() {
       )}
 
       {tab === "health" && <HealthCheckPanel />}
+      {tab === "onboard" && <OnboardMerchantPanel />}
       {tab === "ops" && <OpsPanel />}
 
       {tab === "users" && (
@@ -761,6 +763,136 @@ function OpsPanel() {
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+
+function OnboardMerchantPanel() {
+  const [form, setForm] = useState({
+    merchant_name: "", owner_name: "", owner_email: "", owner_password: "",
+    primary_color: "#005CEE", secondary_color: "#CCFF00",
+    currency: "USD", create_demo_publication: true,
+  });
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const gen = () => Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 8).toUpperCase() + "!";
+  const submit = async () => {
+    if (!form.merchant_name.trim() || !form.owner_name.trim() ||
+        !form.owner_email.includes("@") || form.owner_password.length < 8) {
+      toast.error("Fill every field (password ≥ 8 chars)");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { data } = await api.post("/admin/onboard-merchant", form);
+      setResult({ ...data, credentials: { email: form.owner_email, password: form.owner_password } });
+      toast.success(data.already_exists ? "Merchant already existed — pulled IDs" : "Merchant onboarded");
+    } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
+  };
+  const copy = (v) => { navigator.clipboard.writeText(v); toast.success("Copied"); };
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_1fr] gap-4" data-testid="onboard-panel">
+      <div className="surface rounded-lg p-5 space-y-3">
+        <div className="flex items-center gap-2 mb-2">
+          <Rocket className="w-5 h-5 text-[#CCFF00]" />
+          <h2 className="font-display font-bold text-lg">Onboard a merchant</h2>
+        </div>
+        <p className="text-xs text-[#71717A]">
+          Creates workspace + owner + starter newsletter in one click. Follow Phase 5 of
+          <span className="font-mono"> PROVISIONING_RUNBOOK.md</span>.
+        </p>
+        <div className="grid grid-cols-1 gap-3">
+          <div><label className="text-xs text-[#A1A1AA]">Merchant / brand name</label>
+            <input data-testid="onboard-merchant-name" value={form.merchant_name}
+              onChange={(e) => set("merchant_name", e.target.value)}
+              placeholder="Acme Swimwear"
+              className="mt-1 w-full h-10 px-3 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white text-sm" /></div>
+          <div><label className="text-xs text-[#A1A1AA]">Owner name</label>
+            <input data-testid="onboard-owner-name" value={form.owner_name}
+              onChange={(e) => set("owner_name", e.target.value)}
+              placeholder="Jane Doe"
+              className="mt-1 w-full h-10 px-3 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white text-sm" /></div>
+          <div><label className="text-xs text-[#A1A1AA]">Owner email</label>
+            <input data-testid="onboard-owner-email" type="email" value={form.owner_email}
+              onChange={(e) => set("owner_email", e.target.value)}
+              placeholder="jane@acme.com"
+              className="mt-1 w-full h-10 px-3 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white text-sm font-mono" /></div>
+          <div><label className="text-xs text-[#A1A1AA]">Temporary password (owner will rotate)</label>
+            <div className="flex gap-2 mt-1">
+              <input data-testid="onboard-owner-password" value={form.owner_password}
+                onChange={(e) => set("owner_password", e.target.value)}
+                placeholder="AtLeast8Chars!"
+                className="flex-1 h-10 px-3 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white text-sm font-mono" />
+              <button type="button" onClick={() => set("owner_password", gen())}
+                data-testid="onboard-generate-password"
+                className="px-3 rounded-md border border-[#27272A] text-xs hover:border-[#CCFF00]">Generate</button>
+            </div></div>
+          <div className="grid grid-cols-3 gap-2">
+            <div><label className="text-xs text-[#A1A1AA]">Primary</label>
+              <input type="color" value={form.primary_color} onChange={(e) => set("primary_color", e.target.value)}
+                className="mt-1 h-10 w-full p-1 rounded-md bg-[#0A0A0A] border border-[#27272A]" /></div>
+            <div><label className="text-xs text-[#A1A1AA]">Accent</label>
+              <input type="color" value={form.secondary_color} onChange={(e) => set("secondary_color", e.target.value)}
+                className="mt-1 h-10 w-full p-1 rounded-md bg-[#0A0A0A] border border-[#27272A]" /></div>
+            <div><label className="text-xs text-[#A1A1AA]">Currency</label>
+              <input value={form.currency} onChange={(e) => set("currency", e.target.value.toUpperCase().slice(0, 3))}
+                className="mt-1 h-10 w-full px-3 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white text-sm font-mono" /></div>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-[#A1A1AA] cursor-pointer">
+            <input type="checkbox" checked={form.create_demo_publication}
+              data-testid="onboard-create-demo-pub"
+              onChange={(e) => set("create_demo_publication", e.target.checked)} />
+            Create a starter newsletter publication
+          </label>
+        </div>
+        <Button data-testid="onboard-submit" onClick={submit} disabled={busy}
+          className="btn-primary rounded-md gap-2 w-full h-10 mt-2">
+          {busy ? <Loader2 className="w-4 h-4 spin" /> : <Rocket className="w-4 h-4" />}
+          Onboard merchant
+        </Button>
+      </div>
+
+      {result && (
+        <div className="surface rounded-lg p-5 space-y-3" data-testid="onboard-result">
+          <div className="flex items-center gap-2 mb-2">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+            <h3 className="font-display font-bold text-lg">
+              {result.already_exists ? "Already exists" : "Merchant ready"}
+            </h3>
+          </div>
+          <p className="text-xs text-[#A1A1AA]">
+            Share these credentials with the merchant. They should rotate the password on first sign-in.
+          </p>
+          <div className="rounded-md border border-[#27272A] bg-[#0A0A0A] p-4 space-y-2">
+            <RowKV label="Login email" value={result.credentials?.email} onCopy={copy} />
+            <RowKV label="Temp password" value={result.credentials?.password} onCopy={copy} secret />
+            <RowKV label="Workspace ID" value={result.workspace_id} onCopy={copy} mono />
+            <RowKV label="Owner ID" value={result.user_id} onCopy={copy} mono />
+            {result.publication_id && (
+              <RowKV label="Newsletter ID" value={result.publication_id} onCopy={copy} mono />
+            )}
+          </div>
+          <div className="text-[11px] text-[#71717A]">
+            Next: send the merchant their login link, ask them to add their Stripe live key and Resend
+            sending domain via Settings → Integrations.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RowKV({ label, value, onCopy, mono, secret }) {
+  if (!value) return null;
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[10px] uppercase tracking-widest text-[#71717A] w-24 shrink-0">{label}</span>
+      <span className={`flex-1 text-xs break-all ${mono || secret ? "font-mono" : ""}`}>{value}</span>
+      <button onClick={() => onCopy(value)} className="text-[#71717A] hover:text-[#CCFF00]">
+        <Copy className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }
