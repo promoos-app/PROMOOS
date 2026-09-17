@@ -2,6 +2,12 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 29, Feb 2026) — Magic-Link Onboarding + Gallery Search
+- **Merchant welcome email**: onboarding now auto-emails a "Your workspace is ready" mail via Resend with a 72h magic sign-in link (falls back to returning link + temp password if Resend not configured)
+- **Magic sign-in**: `POST /api/auth/magic` exchanges a `kind=magic` JWT for a 7-day session; `Login.js` handles `?magic=...` param transparently
+- **Admin UI**: onboarding result panel now shows the magic link with copy button + "Email sent" badge when Resend delivered
+- **Gallery Search + Tag Filter**: `GET /api/uploads?q=&tag=ai|user|all` (regex over filename + AI prompt); newsletter editor's image library adds a search box + All/AI/Uploads chips with debounced re-fetch
+
 ## Latest (Iter 28, Feb 2026) — Onboarding + AI Library + SMS/WhatsApp
 - **Onboard-Merchant wizard**: `POST /api/admin/onboard-merchant` + Admin → Onboard tab (workspace + owner + starter publication in one click)
 - **AI Image Library**: `/api/ai/image` persists to Object Storage; new Gallery picker in the post editor image block with AI-generated badge

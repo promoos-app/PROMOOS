@@ -400,10 +400,32 @@ def register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso, get_curr
                         headers={"Cache-Control": "public, max-age=3600"})
 
     @api.get("/uploads")
-    async def list_uploads(user: dict = Depends(get_current_user)):
+    async def list_uploads(user: dict = Depends(get_current_user),
+                             q: Optional[str] = None, tag: Optional[str] = None,
+                             limit: int = 200):
+        """List workspace uploads.
+
+        - `q`  → case-insensitive substring search over `original_filename`
+                 and (for AI images) `ai_prompt`.
+        - `tag` → `ai` shows only AI-generated, `user` shows only uploaded,
+                 `all` (default) shows everything.
+        """
+        query = {"workspace_id": user["workspace_id"], "is_deleted": False}
+        if tag == "ai":
+            query["ai_generated"] = True
+        elif tag == "user":
+            query["ai_generated"] = {"$ne": True}
+        if q and q.strip():
+            import re as _re
+            rx = _re.compile(_re.escape(q.strip()), _re.IGNORECASE)
+            query["$or"] = [{"original_filename": {"$regex": rx}},
+                            {"ai_prompt": {"$regex": rx}}]
+        try:
+            limit = max(1, min(500, int(limit)))
+        except Exception:
+            limit = 200
         docs = await db.uploads.find(
-            {"workspace_id": user["workspace_id"], "is_deleted": False},
-            {"_id": 0, "storage_path": 0}).sort("created_at", -1).to_list(200)
+            query, {"_id": 0, "storage_path": 0}).sort("created_at", -1).to_list(limit)
         for d in docs:
             d["url"] = f"/api/uploads/{d['id']}"
         return docs

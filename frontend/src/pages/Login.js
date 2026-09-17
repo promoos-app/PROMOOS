@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { apiError } from "@/lib/api";
@@ -6,19 +6,36 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Sparkles, Ticket, Bot, Wand2 } from "lucide-react";
+import { Sparkles, Ticket, Bot, Wand2, Loader2 } from "lucide-react";
 import Footer from "@/components/Footer";
 
 export default function Login() {
-  const { login, register } = useAuth();
+  const { login, loginWithMagic, register } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const qs = new URLSearchParams(location.search);
   const wantsAdmin = qs.get("admin") === "1";
   const nextParam = qs.get("next") || "";
+  const magicParam = qs.get("magic") || "";
   const [mode, setMode] = useState("login");
   const [form, setForm] = useState({ name: "", email: "", password: "", workspace_name: "" });
   const [loading, setLoading] = useState(false);
+  const [magicBusy, setMagicBusy] = useState(!!magicParam);
+
+  useEffect(() => {
+    if (!magicParam) return;
+    (async () => {
+      try {
+        await loginWithMagic(magicParam);
+        toast.success("Signed in with magic link");
+        navigate(nextParam || "/");
+      } catch (err) {
+        toast.error(apiError(err, "Magic link invalid or expired"));
+        setMagicBusy(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -75,6 +92,14 @@ export default function Login() {
       {/* Right form */}
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-sm fade-up">
+          {magicBusy ? (
+            <div className="text-center py-16" data-testid="magic-link-loading">
+              <Loader2 className="w-8 h-8 spin mx-auto text-[#CCFF00] mb-4" />
+              <h2 className="font-display font-bold text-2xl mb-2">Signing you in…</h2>
+              <p className="text-sm text-[#A1A1AA]">Exchanging your magic link for a session.</p>
+            </div>
+          ) : (
+          <>
           <h2 className="font-display font-bold text-3xl mb-1">
             {mode === "login" ? "Welcome back" : "Create your workspace"}
           </h2>
@@ -129,6 +154,8 @@ export default function Login() {
                 Forgot password?
               </Link>
             </div>
+          )}
+          </>
           )}
         </div>
       </div>

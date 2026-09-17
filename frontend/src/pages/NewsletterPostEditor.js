@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { toast } from "sonner";
@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   ArrowLeft, Save, Send, Trash2, Plus, ChevronUp, ChevronDown, Loader2,
-  Heading, Type, Image as ImageIcon, MousePointerClick, Ticket, Gift, Rocket, Minus, Share2, Users, Sparkles, Upload,
+  Heading, Type, Image as ImageIcon, MousePointerClick, Ticket, Gift, Rocket, Minus, Share2, Users, Sparkles, Upload, Search,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
@@ -310,17 +310,37 @@ function ImageBlockEditor({ p, onChange, disabled, i }) {
   const [aiPrompt, setAiPrompt] = useState("");
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [gallery, setGallery] = useState(null);
+  const [galleryQuery, setGalleryQuery] = useState("");
+  const [galleryTag, setGalleryTag] = useState("all");    // all | ai | user
+  const [galleryLoading, setGalleryLoading] = useState(false);
 
-  const openGallery = async () => {
-    setGalleryOpen(true);
-    if (gallery) return;
+  const fetchGallery = async (opts = {}) => {
+    setGalleryLoading(true);
     try {
-      const { data } = await api.get("/uploads");
-      // Filter to images only
+      const params = {};
+      const q = opts.q ?? galleryQuery;
+      const tag = opts.tag ?? galleryTag;
+      if (q && q.trim()) params.q = q.trim();
+      if (tag && tag !== "all") params.tag = tag;
+      const { data } = await api.get("/uploads", { params });
       const imgs = (data || []).filter((u) => (u.content_type || "").startsWith("image/"));
       setGallery(imgs);
     } catch (e) { toast.error(apiError(e)); }
+    finally { setGalleryLoading(false); }
   };
+
+  const openGallery = async () => {
+    setGalleryOpen(true);
+    if (gallery === null) await fetchGallery();
+  };
+  // Debounced re-fetch on search/tag change while dialog is open.
+  React.useEffect(() => {
+    if (!galleryOpen) return;
+    const t = setTimeout(() => { fetchGallery(); }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [galleryQuery, galleryTag, galleryOpen]);
+
   const pickFromGallery = (u) => {
     const abs = u.url.startsWith("http") ? u.url
       : `${process.env.REACT_APP_BACKEND_URL}${u.url}`;
@@ -406,11 +426,37 @@ function ImageBlockEditor({ p, onChange, disabled, i }) {
         <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-3xl max-h-[80vh] overflow-y-auto"
           data-testid={`block-image-gallery-dialog-${i}`}>
           <DialogHeader><DialogTitle>Pick from your image library</DialogTitle></DialogHeader>
-          {!gallery ? (
+          <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center mb-3">
+            <div className="relative flex-1">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[#71717A]" />
+              <Input value={galleryQuery} onChange={(e) => setGalleryQuery(e.target.value)}
+                placeholder="Search filenames or AI prompts…"
+                data-testid={`gallery-search-input-${i}`}
+                className="bg-[#0A0A0A] border-[#27272A] text-white text-xs h-8 pl-8" />
+            </div>
+            <div className="flex gap-1" role="tablist">
+              {[
+                { k: "all", label: "All" },
+                { k: "ai", label: "AI" },
+                { k: "user", label: "Uploads" },
+              ].map((t) => (
+                <button key={t.k} onClick={() => setGalleryTag(t.k)}
+                  data-testid={`gallery-tag-${t.k}-${i}`}
+                  className={`px-3 h-8 rounded-md border text-[11px] font-medium transition ${
+                    galleryTag === t.k
+                      ? "bg-[#CCFF00] text-black border-[#CCFF00]"
+                      : "bg-transparent text-[#A1A1AA] border-[#27272A] hover:border-[#CCFF00]"
+                  }`}>{t.label}</button>
+              ))}
+            </div>
+          </div>
+          {galleryLoading || gallery === null ? (
             <div className="py-12 text-center text-[#71717A]"><Loader2 className="w-6 h-6 spin mx-auto" /></div>
           ) : gallery.length === 0 ? (
-            <div className="py-12 text-center text-[#71717A]">
-              No images yet. Upload one or generate with AI to start your library.
+            <div className="py-12 text-center text-[#71717A]" data-testid={`gallery-empty-${i}`}>
+              {galleryQuery.trim() || galleryTag !== "all"
+                ? "No images match your search. Try a different query or filter."
+                : "No images yet. Upload one or generate with AI to start your library."}
             </div>
           ) : (
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
@@ -419,6 +465,7 @@ function ImageBlockEditor({ p, onChange, disabled, i }) {
                 return (
                   <button key={u.id} onClick={() => pickFromGallery(u)}
                     data-testid={`gallery-pick-${u.id}`}
+                    title={u.ai_prompt || u.original_filename || ""}
                     className="relative rounded-md overflow-hidden border border-[#27272A] hover:border-[#CCFF00] transition group">
                     <img src={src} alt="" className="w-full h-24 object-cover" loading="lazy" />
                     {u.ai_generated && (

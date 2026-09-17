@@ -861,13 +861,25 @@ function OnboardMerchantPanel() {
             <h3 className="font-display font-bold text-lg">
               {result.already_exists ? "Already exists" : "Merchant ready"}
             </h3>
+            {result.email_sent && (
+              <span data-testid="onboard-email-sent-badge"
+                className="ml-auto px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/40 text-[10px] font-bold uppercase tracking-widest text-emerald-300">
+                Email sent
+              </span>
+            )}
           </div>
           <p className="text-xs text-[#A1A1AA]">
-            Share these credentials with the merchant. They should rotate the password on first sign-in.
+            {result.email_sent
+              ? "We emailed the merchant a one-click magic sign-in link plus the temporary password below."
+              : "Share the magic link (or credentials) with the merchant. They should rotate the password on first sign-in."}
           </p>
           <div className="rounded-md border border-[#27272A] bg-[#0A0A0A] p-4 space-y-2">
             <RowKV label="Login email" value={result.credentials?.email} onCopy={copy} />
             <RowKV label="Temp password" value={result.credentials?.password} onCopy={copy} secret />
+            {result.magic_link && (
+              <RowKV label="Magic link" value={result.magic_link} onCopy={copy} mono link
+                testid="onboard-magic-link" />
+            )}
             <RowKV label="Workspace ID" value={result.workspace_id} onCopy={copy} mono />
             <RowKV label="Owner ID" value={result.user_id} onCopy={copy} mono />
             {result.publication_id && (
@@ -875,8 +887,8 @@ function OnboardMerchantPanel() {
             )}
           </div>
           <div className="text-[11px] text-[#71717A]">
-            Next: send the merchant their login link, ask them to add their Stripe live key and Resend
-            sending domain via Settings → Integrations.
+            Magic link expires in 72 hours. Next: ask the merchant to add their Stripe live key and
+            Resend sending domain via Settings → Integrations.
           </div>
         </div>
       )}
@@ -884,12 +896,19 @@ function OnboardMerchantPanel() {
   );
 }
 
-function RowKV({ label, value, onCopy, mono, secret }) {
+function RowKV({ label, value, onCopy, mono, secret, link, testid }) {
   if (!value) return null;
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2" data-testid={testid}>
       <span className="text-[10px] uppercase tracking-widest text-[#71717A] w-24 shrink-0">{label}</span>
-      <span className={`flex-1 text-xs break-all ${mono || secret ? "font-mono" : ""}`}>{value}</span>
+      {link ? (
+        <a href={value} target="_blank" rel="noopener noreferrer"
+          className={`flex-1 text-xs break-all text-[#CCFF00] hover:underline ${mono ? "font-mono" : ""}`}>
+          {value}
+        </a>
+      ) : (
+        <span className={`flex-1 text-xs break-all ${mono || secret ? "font-mono" : ""}`}>{value}</span>
+      )}
       <button onClick={() => onCopy(value)} className="text-[#71717A] hover:text-[#CCFF00]">
         <Copy className="w-3.5 h-3.5" />
       </button>

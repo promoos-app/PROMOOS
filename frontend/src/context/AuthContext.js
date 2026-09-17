@@ -23,6 +23,12 @@ export function AuthProvider({ children }) {
     setUser(data.user);
     return data;
   };
+  const loginWithMagic = async (token) => {
+    const { data } = await api.post("/auth/magic", { token });
+    localStorage.setItem("promoos_token", data.token);
+    setUser(data.user);
+    return data;
+  };
   const register = async (payload) => {
     const { data } = await api.post("/auth/register", payload);
     localStorage.setItem("promoos_token", data.token);
@@ -32,7 +38,7 @@ export function AuthProvider({ children }) {
   const logout = () => { localStorage.removeItem("promoos_token"); setUser(null); };
 
   return (
-    <AuthCtx.Provider value={{ user, loading, login, register, logout }}>
+    <AuthCtx.Provider value={{ user, loading, login, loginWithMagic, register, logout }}>
       {children}
     </AuthCtx.Provider>
   );

@@ -283,6 +283,35 @@ async def me(user: dict = Depends(get_current_user)):
     return user
 
 
+class MagicIn(BaseModel):
+    token: str
+
+
+@api.post("/auth/magic")
+async def auth_magic(body: MagicIn, response: Response):
+    """Exchange a passwordless magic-link token for a full 7-day session."""
+    try:
+        payload = jwt.decode(body.token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "This magic link has expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Invalid magic link")
+    if payload.get("kind") != "magic":
+        raise HTTPException(401, "Not a magic link token")
+    user = await db.users.find_one({"id": payload["sub"]})
+    if not user:
+        raise HTTPException(401, "User not found")
+    if user.get("deleted_at"):
+        raise HTTPException(403, "Account deleted")
+    if user.get("suspended"):
+        raise HTTPException(403, "Account suspended — contact your administrator")
+    token = create_token(user["id"], user["email"])
+    response.set_cookie(
+        key="access_token", value=token, httponly=True, secure=True,
+        samesite="none", max_age=7 * 24 * 3600, path="/")
+    return {"token": token, "user": {k: user[k] for k in ("id", "name", "email", "role", "workspace_id")}}
+
+
 # ---------------- Workspace ----------------
 @api.get("/workspace")
 async def get_workspace(user: dict = Depends(get_current_user)):
@@ -2198,7 +2227,9 @@ register_oauth_ctx = register_oauth(api, db, PUBLIC_APP_URL, now_iso, get_curren
 _rotation_nudge_worker = register_oauth_ctx.get("rotation_nudge_worker") if isinstance(register_oauth_ctx, dict) else None
 register_funnels(api, db, PUBLIC_APP_URL, now_iso, get_current_user, require_writer)
 register_qr(api, db, now_iso, get_current_user, require_writer)
-register_admin(api, db, now_iso, get_current_user, require_superadmin, hash_password, _admin_log)
+register_admin(api, db, now_iso, get_current_user, require_superadmin, hash_password, _admin_log,
+               extras={"resend": resend, "sender_email": SENDER_EMAIL, "public_url": PUBLIC_APP_URL,
+                       "jwt_secret": JWT_SECRET, "resend_api_key": RESEND_API_KEY})
 register_payments_alt(api, db, now_iso, get_current_user)
 register_pos(api, db, PUBLIC_APP_URL, now_iso, get_current_user,
              encrypt_str, decrypt_str, _hmac_ok, _apply_from_pos)

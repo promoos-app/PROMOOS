@@ -1,11 +1,80 @@
 """Admin portal routes — superadmin only. Extracted from server.py in iter-11."""
+import asyncio
+import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import HTTPException, Depends
 from pydantic import BaseModel, EmailStr
+import jwt as _jwt
+
+logger = logging.getLogger("promoos")
 
 
-def register(api, db, now_iso, get_current_user, require_superadmin, hash_password, admin_log):
+def register(api, db, now_iso, get_current_user, require_superadmin, hash_password, admin_log, extras=None):
+    extras = extras or {}
+    _resend = extras.get("resend")
+    _sender = extras.get("sender_email") or "onboarding@resend.dev"
+    _public_url = (extras.get("public_url") or "").rstrip("/")
+    _jwt_secret = extras.get("jwt_secret") or ""
+    _resend_key = extras.get("resend_api_key") or ""
+
+    def _magic_token(user_id: str, email: str, ttl_hours: int = 72) -> str:
+        payload = {
+            "sub": user_id, "email": email, "kind": "magic",
+            "exp": datetime.now(timezone.utc) + timedelta(hours=ttl_hours),
+        }
+        return _jwt.encode(payload, _jwt_secret, algorithm="HS256")
+
+    async def _send_welcome_email(to_email: str, merchant_name: str,
+                                    owner_name: str, magic_url: str,
+                                    login_url: str, temp_password: str) -> bool:
+        if not (_resend and _resend_key):
+            return False
+        subject = f"Your {merchant_name} workspace is ready on PromoOS"
+        html = f"""
+<!doctype html>
+<html><body style="margin:0;padding:0;background:#0A0A0A;font-family:Helvetica,Arial,sans-serif;color:#0A0A0A">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0A0A0A;padding:32px 0">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#FFFFFF;border-radius:12px;overflow:hidden">
+        <tr><td style="padding:22px 28px;background:#005CEE;color:#FFFFFF;font-weight:700;font-size:14px;letter-spacing:1px;text-transform:uppercase">PromoOS</td></tr>
+        <tr><td style="padding:32px 28px 8px 28px">
+          <h1 style="margin:0 0 12px 0;font-size:26px;line-height:1.2;color:#0A0A0A">Welcome, {owner_name} 👋</h1>
+          <p style="margin:0 0 20px 0;font-size:15px;line-height:1.55;color:#3F3F46">
+            Your <strong>{merchant_name}</strong> workspace is live on PromoOS.
+            Sign in with one click below — no password needed.
+          </p>
+          <a href="{magic_url}" style="display:inline-block;background:#005CEE;color:#FFFFFF;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:700;font-size:15px">
+            Sign in to your workspace
+          </a>
+          <p style="margin:24px 0 8px 0;font-size:13px;color:#71717A">
+            The magic link is valid for 72 hours. Prefer classic sign-in?
+            Use <a href="{login_url}" style="color:#005CEE">{login_url}</a> with:
+          </p>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 20px 0;font-family:'Courier New',monospace;font-size:13px">
+            <tr><td style="padding:4px 12px 4px 0;color:#71717A">Email</td><td style="padding:4px 0;color:#0A0A0A">{to_email}</td></tr>
+            <tr><td style="padding:4px 12px 4px 0;color:#71717A">Password</td><td style="padding:4px 0;color:#0A0A0A">{temp_password}</td></tr>
+          </table>
+          <p style="margin:0 0 20px 0;font-size:13px;color:#71717A">Rotate this password from Settings on first sign-in.</p>
+        </td></tr>
+        <tr><td style="padding:16px 28px;background:#FAFAFA;border-top:1px solid #E4E4E7;font-size:11px;color:#71717A">
+          Sent by PromoOS · <a href="{login_url}" style="color:#71717A">{login_url}</a>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+        try:
+            await asyncio.to_thread(_resend.Emails.send, {
+                "from": _sender, "to": [to_email],
+                "subject": subject, "html": html,
+            })
+            return True
+        except Exception as e:
+            logger.warning(f"Welcome email send failed: {e}")
+            return False
+
 
     @api.get("/admin/stats")
     async def admin_stats(user: dict = Depends(get_current_user)):
@@ -87,9 +156,18 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
         existing = await db.users.find_one({"email": body.owner_email.lower()},
                                              {"_id": 0, "id": 1, "workspace_id": 1})
         if existing:
+            base = _public_url or "https://app.promoos.com"
+            magic_url = None
+            try:
+                tok = _magic_token(existing["id"], body.owner_email.lower())
+                magic_url = f"{base}/login?magic={tok}"
+            except Exception:
+                pass
             return {"ok": True, "already_exists": True,
                     "user_id": existing["id"],
-                    "workspace_id": existing["workspace_id"]}
+                    "workspace_id": existing["workspace_id"],
+                    "magic_link": magic_url,
+                    "email_sent": False}
         wid = str(uuid.uuid4())
         await db.workspaces.insert_one({
             "id": wid, "name": body.merchant_name,
@@ -138,9 +216,28 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
             })
         await admin_log(user, "merchant.onboard", target=uid,
                          meta={"email": body.owner_email, "merchant": body.merchant_name})
+        # Magic sign-in link (avoids sharing raw passwords by email).
+        magic_url = None
+        email_sent = False
+        try:
+            tok = _magic_token(uid, body.owner_email.lower())
+            base = _public_url or "https://app.promoos.com"
+            magic_url = f"{base}/login?magic={tok}"
+            email_sent = await _send_welcome_email(
+                to_email=body.owner_email.lower(),
+                merchant_name=body.merchant_name,
+                owner_name=body.owner_name,
+                magic_url=magic_url,
+                login_url=f"{base}/login",
+                temp_password=body.owner_password,
+            )
+        except Exception as e:
+            logger.warning(f"Magic link build failed: {e}")
         return {"ok": True, "already_exists": False,
                 "user_id": uid, "workspace_id": wid,
-                "publication_id": pub_id}
+                "publication_id": pub_id,
+                "magic_link": magic_url,
+                "email_sent": email_sent}
 
 
     @api.post("/admin/users/{uid}/suspend")
