@@ -1,0 +1,35 @@
+{
+  "summary": "Iter-26 Newsletter System (Beehiiv-style) tested end-to-end. Backend: 14/14 pytest cases pass across Publications CRUD, Subscribers (owner-add dedupe/flip, CSV import), Public subscribe + double opt-in confirm + expired token, Posts CRUD + block sanitizer, schedule + repeat-schedule guard, send-now (no-op verified — RESEND_API_KEY empty), Tracking (open/click/unsubscribe with unique-counting), Analytics shape, and Referral flow (bump + progress endpoint). Frontend: /newsletters list + create dialog works; navigates to /newsletters/:id; all 6 tabs render correct panes (Posts, Subscribers[key=subs], Analytics, Referrals, Design, Settings); Add subscriber works; Post editor loads; all 10 block types can be added via block library; save persists; Public /n/:slug loads, subscribe flips to thanks state, Cookie Consent banner present.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter26_newsletter.py",
+    "/app/test_reports/pytest/iter26_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "newsletter.py: schedule_post allows scheduled_at in the past — worker will send immediately. Acceptable for send-now flow but consider validating ISO string and rejecting past times for the explicit /schedule endpoint.",
+    "newsletter.py send_test raises 400 when Resend not configured — good UX. However send_now silently accepts and post remains scheduled forever if RESEND stays unset; consider returning a warning flag in response so UI can inform user.",
+    "newsletter.py _fanout_post rebuilds html via _render_post_html which mutates block props with _hydrated in place — subsequent renders reuse mutated blocks. Not a bug functionally, but breaks idempotency of hydration if a post is re-sent.",
+    "Newsletters.js subscribers tab uses key 'subs' but README/spec says 'Subscribers'. All other tabs use full names — minor inconsistency; documented via data-testid=pub-tab-subs.",
+    "referral_cta block on public /n/:slug/p/:postSlug: backend intentionally hides for test/no-subscriber (returns empty string). Frontend PublicNewsletterPost.js should mirror this — verify it doesn't render an empty box.",
+    "newsletter.py file is 867 lines — approaching the recommended 700-line split threshold. Consider splitting into publications.py, subscribers.py, posts.py, tracking.py, analytics.py sub-modules for maintainability."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter26_newsletter.py"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% of tested flows"},
+  "test_credentials": "admin@promoos.com / admin123 (Owner)",
+  "seed_data_creation": "Created several TEST_-prefixed publications, subscribers, posts during backend runs (auto-cleaned by fixture teardown). UITEST publications from browser tests were left behind — visible on /newsletters list; harmless.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Newsletter subscribers-tab data-testid key is 'pub-tab-subs' (not 'pub-tab-subscribers'). Public link href on dashboard is relative ('/n/<slug>'), so tests must prepend BASE_URL when navigating with page.goto. RESEND_API_KEY is empty in env so send-now/send-test on real sends is no-op — verified by asserting endpoint returns ok and status stays 'scheduled'. Existing 'Acme Weekly' pub from dev may also be present in workspace list.",
+  "rca_of_the_issue": "N/A — no bugs found."
+}

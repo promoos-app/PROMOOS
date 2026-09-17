@@ -2,6 +2,15 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 26, Feb 2026) — Newsletter System (Beehiiv-style)
+- Publications + Subscribers + Posts + Send worker (Resend) + Tracking (open pixel / click redirect / unsubscribe) + Analytics
+- 10-block post editor: heading, text, image, button, coupon, giftcard, funnel, subscribe_form, referral_cta, divider
+- Public archive at `/n/:slug`, issue permalink at `/n/:slug/p/:postSlug` with Cookie Consent banner
+- Milestone Referral Program — every subscriber gets a `?ref=` link; crossing 3/10/25 refs auto-issues a real workspace coupon
+- Deferred (roadmap): custom sending-domain UI, Boosts/recommendations network, paid subscriptions inside newsletter, advanced segmentation filter builder, AI writing assistant panel
+
+
+
 ## Latest (Iter 25, Feb 2026) — Public API Rate Limits + Daily Auto-Backup
 - `/api/public/*` middleware with 3-tier per-IP token buckets (strict 30/min · standard 120/min · loose 300/min); emits `X-RateLimit-*` + `Retry-After` headers; persists throttled 429 events
 - Daily 03:15 UTC in-process Mongo backup via `/app/scripts/backup_mongo.sh`; auto-disables if `mongodump` missing; superadmin can trigger manually

@@ -1,3 +1,34 @@
+## Iteration 26 (Feb 2026) — Newsletter System (Beehiiv-style)
+
+### Backend `/app/backend/routers/newsletter.py` (NEW, 867 lines)
+- **Publications** — CRUD, multi-pub per workspace, auto-slugged (unique), immutable slug on PUT
+- **Subscribers** — owner-add (dedupe + unsub→resub flip), CSV import (email,name), public double opt-in with per-subscriber `confirmation_token`, `referral_token`, and stats
+- **Posts** — block-based editor with 10 sanitized block types (heading, text, image, button, coupon, giftcard, funnel, subscribe_form, referral_cta, divider); draft/scheduled/sent state machine; send-test + send-now + schedule; hydrates coupon/giftcard/funnel blocks with real workspace data at render time
+- **Send worker** — asyncio, 30s polling, sends via Resend with 50ms pacing, injects `List-Unsubscribe` + `List-Unsubscribe-Post` headers per RFC 8058, embeds 1×1 open pixel + per-link click redirect
+- **Tracking** — `/track/open/…gif`, `/track/click/…?u=`, `/track/unsubscribe/…` — all update post stats with unique-counting semantics
+- **Analytics** — subscribers active/total, posts_sent, 30-day growth series, top_posts by unique_opens, top_referrers
+- **Referral program** — every subscriber gets a unique `?ref=` link; `_bump_referrer` counts; crossing a milestone auto-issues an active coupon in `db.coupons` with `source='newsletter_referral'` and emails the referrer
+- **Public API** — `GET /newsletter/public/{slug}` (archive), `GET /newsletter/public/{slug}/p/{post_slug}` (permalink), `POST /newsletter/public/{slug}/subscribe`, `GET /newsletter/public/confirm/{token}`, `GET /newsletter/public/{slug}/referral/{token}`
+- **Indexes** — 8 new indexes on publications/subscribers/posts/events for scale-out
+
+### Frontend
+- Sidebar **Newsletters** link (Mail icon)
+- `/newsletters` — publication list + create dialog with color picker
+- `/newsletters/:pubId` — 6-tab dashboard: **Posts · Subscribers · Analytics · Referrals · Design · Settings**
+- `/newsletters/:pubId/posts/:postId` — block editor with library of 10 block types, up/down reorder, remove, save, send-test, send-now
+- `/n/:slug` — public subscribe page + archive of past sent issues + Cookie Consent banner
+- `/n/:slug/p/:postSlug` — issue permalink with hydrated coupon/giftcard/funnel blocks
+
+### Referral integration
+- Milestone rewards default to `[{3,10%}, {10,20%}, {25,30%}]`, editable per pub via `PUT /publications/{id}`
+- Coupon auto-issued is a real workspace coupon (redeemable at `/c/CODE`) — merges the newsletter and promotion systems
+
+### Testing ✅
+- 14/14 pytest (`/app/backend/tests/test_iter26_newsletter.py`) — Publications CRUD, Subscribers dedupe + CSV, Public subscribe + confirm + expired-token path, Post CRUD + sanitizer, Schedule + guard, Send-now no-op-verified (Resend unset), Tracking with unique counting, Analytics shape, Referral bump + progress endpoint
+- Frontend flows verified end-to-end via Playwright: list, create, dashboard tabs, block editor with all 10 block types, public page + thanks-state
+- Non-blocking code-review notes: schedule accepts past times (send-now uses it), send-now silent when Resend unset (could return warning), 867-line file approaching 700-line split threshold
+
+
 ## Iteration 25 (Feb 2026) — Public API Rate Limits + Daily Auto-Backup
 
 ### Public API rate limits ✅
