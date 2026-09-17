@@ -2520,6 +2520,8 @@ async def startup():
         # the 20-attempts-per-hour rate limit window).
         await db.magic_attempts.create_index([("token_hash", 1)])
         await db.magic_attempts.create_index("created_at", expireAfterSeconds=3600)
+        # Fast lookup for open-pixel hits (32-char sha256 slice).
+        await db.users.create_index("magic_token_hash", sparse=True)
         await db.payment_transactions.create_index("session_id", unique=True)
         # OAuth state tokens expire after 10 minutes to prevent unbounded accumulation.
         await db.oauth_states.create_index("created_at", expireAfterSeconds=600)

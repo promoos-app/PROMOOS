@@ -894,6 +894,128 @@ function OnboardMerchantPanel() {
           </div>
         </div>
       )}
+      <div className="lg:col-span-2">
+        <BatchOnboardPanel />
+      </div>
+    </div>
+  );
+}
+
+function BatchOnboardPanel() {
+  const [busy, setBusy] = useState(false);
+  const [csvText, setCsvText] = useState("");
+  const [createPub, setCreatePub] = useState(true);
+  const [report, setReport] = useState(null);
+  const example = "merchant_name,owner_name,owner_email,owner_password\n" +
+    "Acme Swim,Jane Doe,jane@acme.com,\n" +
+    "Bolt Coffee,Tom Beans,tom@bolt.io,BeanBoss42!";
+
+  const parseCsv = (text) => {
+    const lines = text.trim().split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length < 2) return [];
+    const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+    return lines.slice(1).map((line) => {
+      // naive CSV — good enough for the 4 known columns; escapes not supported
+      const cells = line.split(",");
+      const row = {};
+      headers.forEach((h, i) => { row[h] = (cells[i] || "").trim(); });
+      return row;
+    });
+  };
+
+  const onFile = async (file) => {
+    if (!file) return;
+    const text = await file.text();
+    setCsvText(text);
+  };
+
+  const submit = async () => {
+    const rows = parseCsv(csvText);
+    if (!rows.length) { toast.error("CSV needs a header row + at least one data row"); return; }
+    if (rows.length > 200) { toast.error("Max 200 rows per batch"); return; }
+    setBusy(true); setReport(null);
+    try {
+      const { data } = await api.post("/admin/onboard-batch", {
+        rows, create_demo_publication: createPub });
+      setReport(data);
+      toast.success(`Batch done: ${data.summary.created} created, ${data.summary.errors} errors`);
+    } catch (e) { toast.error(apiError(e)); }
+    finally { setBusy(false); }
+  };
+
+  const downloadReport = () => {
+    if (!report) return;
+    const header = "row,ok,email,already_existed,workspace_id,user_id,magic_link,temp_password,email_sent,error\n";
+    const rows = report.results.map((r) => [
+      r.row, r.ok, r.email, r.already_existed || false,
+      r.workspace_id || "", r.user_id || "",
+      r.magic_link || "", r.temp_password || "",
+      r.email_sent || false, (r.error || "").replace(/,/g, ";"),
+    ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([header + rows], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `onboard-batch-${Date.now()}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="surface rounded-lg p-5 space-y-3 mt-4" data-testid="batch-onboard-panel">
+      <div className="flex items-center gap-2 mb-2">
+        <Rocket className="w-5 h-5 text-[#CCFF00]" />
+        <h2 className="font-display font-bold text-lg">Batch onboard from CSV</h2>
+        <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-fuchsia-500/10 border border-fuchsia-500/40 text-fuchsia-200 uppercase tracking-widest">
+          Up to 200 rows
+        </span>
+      </div>
+      <p className="text-xs text-[#71717A]">
+        Columns: <code className="text-[#CCFF00]">merchant_name,owner_name,owner_email,owner_password</code>.
+        Password is optional — we generate one if blank. Each row gets a workspace + owner + optional
+        starter publication + magic-link welcome email.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-[#A1A1AA]">Paste CSV or drop a file</label>
+          <textarea data-testid="batch-onboard-csv" value={csvText}
+            onChange={(e) => setCsvText(e.target.value)}
+            placeholder={example} rows={8}
+            className="mt-1 w-full px-3 py-2 rounded-md bg-[#0A0A0A] border border-[#27272A] text-white text-xs font-mono" />
+          <label className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[#27272A] hover:border-[#CCFF00] cursor-pointer text-[11px]"
+            data-testid="batch-onboard-file">
+            <Plus className="w-3 h-3" /> Upload .csv
+            <input type="file" accept=".csv,text/csv" className="hidden"
+              onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
+          </label>
+        </div>
+        <div className="space-y-3">
+          <label className="flex items-center gap-2 text-xs text-[#A1A1AA] cursor-pointer">
+            <input type="checkbox" checked={createPub}
+              data-testid="batch-onboard-create-pub"
+              onChange={(e) => setCreatePub(e.target.checked)} />
+            Create starter newsletter publication for each row
+          </label>
+          <Button data-testid="batch-onboard-submit" onClick={submit}
+            disabled={busy || !csvText.trim()}
+            className="btn-primary rounded-md gap-2 w-full h-10">
+            {busy ? <Loader2 className="w-4 h-4 spin" /> : <Rocket className="w-4 h-4" />}
+            Onboard batch
+          </Button>
+          {report && (
+            <div className="rounded-md border border-[#27272A] bg-[#0A0A0A] p-3 text-xs space-y-1"
+              data-testid="batch-onboard-summary">
+              <div className="flex justify-between"><span className="text-[#A1A1AA]">Total</span><span className="font-mono">{report.summary.total}</span></div>
+              <div className="flex justify-between"><span className="text-emerald-300">Created</span><span className="font-mono text-emerald-300">{report.summary.created}</span></div>
+              <div className="flex justify-between"><span className="text-[#CCFF00]">Emails sent</span><span className="font-mono text-[#CCFF00]">{report.summary.emails_sent}</span></div>
+              <div className="flex justify-between"><span className="text-sky-300">Already existed</span><span className="font-mono text-sky-300">{report.summary.already_existed}</span></div>
+              <div className="flex justify-between"><span className="text-red-300">Errors</span><span className="font-mono text-red-300">{report.summary.errors}</span></div>
+              <button onClick={downloadReport} data-testid="batch-onboard-download"
+                className="mt-2 w-full inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-md border border-[#CCFF00]/40 text-[#CCFF00] hover:bg-[#CCFF00]/10 text-[11px]">
+                Download report CSV
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -917,31 +1039,44 @@ function OnboardingFunnelPanel() {
   const stages = [
     { key: "onboarded", label: "Onboarded", count: data.totals.onboarded, color: "#005CEE",
       pct: 100 },
+    { key: "magic_opened", label: "Email opened", count: data.totals.magic_opened || 0,
+      color: "#38BDF8", pct: data.conversion.onboard_to_open || 0 },
     { key: "magic_clicked", label: "Magic clicked", count: data.totals.magic_clicked,
       color: "#CCFF00", pct: data.conversion.onboard_to_magic },
     { key: "first_email_sent", label: "First email sent", count: data.totals.first_email_sent,
       color: "#F472B6", pct: data.conversion.onboard_to_first_send },
   ];
+  const fmtH = (h) => (h === null || h === undefined) ? "—"
+    : h < 1 ? `${Math.round(h * 60)}m`
+    : h < 48 ? `${h.toFixed(1)}h`
+    : `${(h / 24).toFixed(1)}d`;
   const fmt = (iso) => iso ? new Date(iso).toLocaleString(undefined,
     { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
   return (
     <div className="space-y-4" data-testid="funnel-panel">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <TrendingUp className="w-5 h-5 text-[#CCFF00]" />
         <h2 className="font-display font-bold text-lg">Onboarding funnel</h2>
+        {data.median_time_to_first_send_hours !== null &&
+         data.median_time_to_first_send_hours !== undefined && (
+          <span data-testid="funnel-median-ttfs"
+            className="ml-4 px-3 py-1 rounded-full bg-fuchsia-500/10 border border-fuchsia-500/40 text-xs text-fuchsia-200">
+            Median time-to-first-send: <strong>{fmtH(data.median_time_to_first_send_hours)}</strong>
+          </span>
+        )}
         <button onClick={load} disabled={busy}
           data-testid="funnel-refresh"
           className="ml-auto px-3 py-1 rounded-md border border-[#27272A] text-xs hover:border-[#CCFF00] disabled:opacity-60">
           {busy ? <Loader2 className="w-3 h-3 spin inline" /> : "Refresh"}
         </button>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {stages.map((s, i) => (
           <div key={s.key} className="surface rounded-lg p-5" data-testid={`funnel-stage-${s.key}`}>
             <div className="text-[10px] uppercase tracking-widest text-[#71717A]">{i + 1}. {s.label}</div>
             <div className="mt-1 flex items-baseline gap-2">
               <div className="text-4xl font-bold" style={{ color: s.color }}>{s.count}</div>
-              <div className="text-xs text-[#71717A]">{s.pct}% of onboarded</div>
+              <div className="text-xs text-[#71717A]">{s.pct}%</div>
             </div>
             <div className="mt-3 h-1.5 rounded-full bg-[#27272A] overflow-hidden">
               <div className="h-full rounded-full transition-all"
@@ -957,30 +1092,35 @@ function OnboardingFunnelPanel() {
               <th className="text-left px-4 py-2">Merchant</th>
               <th className="text-left px-3 py-2">Email</th>
               <th className="text-left px-3 py-2">Onboarded</th>
-              <th className="text-left px-3 py-2">Magic clicked</th>
+              <th className="text-left px-3 py-2">Opened</th>
+              <th className="text-left px-3 py-2">Clicked</th>
               <th className="text-left px-3 py-2">First send</th>
+              <th className="text-left px-3 py-2">TTFS</th>
               <th className="text-left px-3 py-2">Stage</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#27272A]">
             {data.rows.length === 0 && (
-              <tr><td colSpan={6} className="text-center py-6 text-[#71717A]" data-testid="funnel-empty">
+              <tr><td colSpan={8} className="text-center py-6 text-[#71717A]" data-testid="funnel-empty">
                 No merchants onboarded yet. Use the Onboard tab to add your first one.</td></tr>
             )}
             {data.rows.map((r) => {
               const stageStyle = r.stage === "first_sent" ? "bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/40"
                 : r.stage === "magic_clicked" ? "bg-[#CCFF00]/10 text-[#CCFF00] border-[#CCFF00]/40"
+                : r.stage === "magic_opened" ? "bg-sky-500/10 text-sky-300 border-sky-500/40"
                 : "bg-blue-500/10 text-blue-300 border-blue-500/40";
               return (
                 <tr key={r.user_id} className="hover:bg-white/5">
                   <td className="px-4 py-2 font-medium">{r.merchant || r.name}</td>
                   <td className="px-3 py-2 text-xs text-[#A1A1AA] font-mono">{r.email}</td>
                   <td className="px-3 py-2 text-xs text-[#A1A1AA]">{fmt(r.onboarded_at)}</td>
+                  <td className="px-3 py-2 text-xs text-[#A1A1AA]">{fmt(r.magic_opened_at)}</td>
                   <td className="px-3 py-2 text-xs text-[#A1A1AA]">{fmt(r.magic_clicked_at)}</td>
                   <td className="px-3 py-2 text-xs text-[#A1A1AA]">{fmt(r.first_email_sent_at)}</td>
+                  <td className="px-3 py-2 text-xs text-fuchsia-300 font-mono">{fmtH(r.time_to_first_send_hours)}</td>
                   <td className="px-3 py-2">
                     <span className={`inline-block px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase tracking-widest ${stageStyle}`}>
-                      {r.stage.replace("_", " ")}
+                      {r.stage.replace(/_/g, " ")}
                     </span>
                   </td>
                 </tr>

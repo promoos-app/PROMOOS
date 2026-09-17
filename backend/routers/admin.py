@@ -26,12 +26,20 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
         }
         return _jwt.encode(payload, _jwt_secret, algorithm="HS256")
 
+    def _token_hash(token: str) -> str:
+        import hashlib
+        return hashlib.sha256(token.encode()).hexdigest()[:32]
+
     async def _send_welcome_email(to_email: str, merchant_name: str,
                                     owner_name: str, magic_url: str,
-                                    login_url: str, temp_password: str) -> bool:
+                                    login_url: str, temp_password: str,
+                                    pixel_url: Optional[str] = None) -> bool:
         if not (_resend and _resend_key):
             return False
         subject = f"Your {merchant_name} workspace is ready on PromoOS"
+        pixel_html = (f'<img src="{pixel_url}" alt="" width="1" height="1" '
+                      f'style="display:block;width:1px;height:1px;border:0" />'
+                      if pixel_url else "")
         html = f"""
 <!doctype html>
 <html><body style="margin:0;padding:0;background:#0A0A0A;font-family:Helvetica,Arial,sans-serif;color:#0A0A0A">
@@ -62,6 +70,7 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
           Sent by PromoOS · <a href="{login_url}" style="color:#71717A">{login_url}</a>
         </td></tr>
       </table>
+      {pixel_html}
     </td></tr>
   </table>
 </body></html>"""
@@ -223,6 +232,9 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
             tok = _magic_token(uid, body.owner_email.lower())
             base = _public_url or "https://app.promoos.com"
             magic_url = f"{base}/login?magic={tok}"
+            th = _token_hash(tok)
+            await db.users.update_one({"id": uid}, {"$set": {"magic_token_hash": th}})
+            pixel_url = f"{base}/api/auth/magic-open/{th}.gif"
             email_sent = await _send_welcome_email(
                 to_email=body.owner_email.lower(),
                 merchant_name=body.merchant_name,
@@ -230,6 +242,7 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
                 magic_url=magic_url,
                 login_url=f"{base}/login",
                 temp_password=body.owner_password,
+                pixel_url=pixel_url,
             )
         except Exception as e:
             logger.warning(f"Magic link build failed: {e}")
@@ -238,6 +251,147 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
                 "publication_id": pub_id,
                 "magic_link": magic_url,
                 "email_sent": email_sent}
+
+
+    @api.get("/auth/magic-open/{token_hash}.gif")
+    async def magic_pixel(token_hash: str):
+        """1x1 open tracking pixel embedded in the welcome email.
+
+        Public (unauthenticated) — the token hash is a 32-char sha256 slice
+        with 2^128 space, so it's not enumerable. On hit we stamp
+        ``magic_first_open_at`` on the matching user (first open only).
+        """
+        from fastapi import Response as _R
+        try:
+            if len(token_hash) == 32 and token_hash.isalnum():
+                await db.users.update_one(
+                    {"magic_token_hash": token_hash,
+                     "magic_first_open_at": {"$exists": False}},
+                    {"$set": {"magic_first_open_at": now_iso()}})
+        except Exception as e:
+            logger.warning(f"magic-pixel stamp failed: {e}")
+        # 1x1 transparent GIF (43 bytes).
+        pixel = bytes([
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00,
+            0x00, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x21, 0xF9, 0x04, 0x01, 0x00,
+            0x00, 0x00, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+            0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3B,
+        ])
+        return _R(content=pixel, media_type="image/gif",
+                  headers={"Cache-Control": "no-store, no-cache, must-revalidate",
+                           "Pragma": "no-cache", "Expires": "0"})
+
+    class BatchOnboardIn(BaseModel):
+        rows: list           # [{merchant_name, owner_name, owner_email, owner_password?}]
+        create_demo_publication: bool = True
+
+    @api.post("/admin/onboard-batch")
+    async def admin_onboard_batch(body: BatchOnboardIn, user: dict = Depends(get_current_user)):
+        """Bulk merchant onboarding — same logic as single-merchant, run per row.
+
+        Non-fatal per row: errors are reported, other rows continue. Returns
+        summary + per-row results so the UI can render a CSV-style report.
+        """
+        require_superadmin(user)
+        results = []
+        summary = {"total": len(body.rows), "created": 0, "already_existed": 0,
+                    "emails_sent": 0, "errors": 0}
+        import re as _re, secrets as _secrets
+        base = _public_url or "https://app.promoos.com"
+
+        for idx, row in enumerate(body.rows[:200]):  # hard cap 200 per batch
+            try:
+                merchant = str(row.get("merchant_name", "")).strip()
+                owner = str(row.get("owner_name", "")).strip()
+                email = str(row.get("owner_email", "")).strip().lower()
+                password = str(row.get("owner_password") or "").strip() or (
+                    _secrets.token_urlsafe(9) + "!")
+                if not (merchant and owner and "@" in email):
+                    results.append({"row": idx + 1, "ok": False,
+                                     "error": "Missing merchant_name / owner_name / owner_email",
+                                     "email": email})
+                    summary["errors"] += 1
+                    continue
+
+                existing = await db.users.find_one({"email": email},
+                                                     {"_id": 0, "id": 1, "workspace_id": 1})
+                if existing:
+                    tok = _magic_token(existing["id"], email)
+                    results.append({"row": idx + 1, "ok": True, "already_existed": True,
+                                     "email": email, "user_id": existing["id"],
+                                     "workspace_id": existing["workspace_id"],
+                                     "magic_link": f"{base}/login?magic={tok}",
+                                     "email_sent": False})
+                    summary["already_existed"] += 1
+                    continue
+
+                wid = str(uuid.uuid4())
+                await db.workspaces.insert_one({
+                    "id": wid, "name": merchant,
+                    "primary_color": "#005CEE", "secondary_color": "#CCFF00",
+                    "currency": "USD", "created_at": now_iso(),
+                })
+                uid_ = str(uuid.uuid4())
+                await db.users.insert_one({
+                    "id": uid_, "name": owner, "email": email,
+                    "password_hash": hash_password(password),
+                    "role": "owner", "workspace_id": wid,
+                    "suspended": False, "deleted_at": None,
+                    "created_at": now_iso(), "created_by_admin": user["id"],
+                })
+                pub_id = None
+                if body.create_demo_publication:
+                    slug_base = _re.sub(r"[^a-z0-9]+", "-",
+                                          merchant.lower()).strip("-")[:40] or f"pub-{uid_[:6]}"
+                    existing_slugs = {d["slug"] async for d in db.publications.find(
+                        {}, {"_id": 0, "slug": 1})}
+                    slug = slug_base; i = 2
+                    while slug in existing_slugs: slug = f"{slug_base}-{i}"; i += 1
+                    pub_id = str(uuid.uuid4())
+                    await db.publications.insert_one({
+                        "id": pub_id, "workspace_id": wid,
+                        "name": f"{merchant} Newsletter", "slug": slug,
+                        "description": f"Deals, drops, and news from {merchant}.",
+                        "sender_name": merchant, "sender_email": None,
+                        "primary_color": "#005CEE",
+                        "subscribe_headline": "Join the list",
+                        "subscribe_body": f"Get {merchant} updates in your inbox.",
+                        "thanks_headline": "You're in ✓",
+                        "thanks_body": "Check your inbox to confirm your address.",
+                        "referral_rewards": [
+                            {"count": 3, "coupon_percent": 10},
+                            {"count": 10, "coupon_percent": 20},
+                            {"count": 25, "coupon_percent": 30},
+                        ],
+                        "created_by": uid_,
+                        "created_at": now_iso(), "updated_at": now_iso(),
+                    })
+                await admin_log(user, "merchant.onboard", target=uid_,
+                                 meta={"email": email, "merchant": merchant, "batch": True})
+
+                tok = _magic_token(uid_, email)
+                magic_url = f"{base}/login?magic={tok}"
+                th = _token_hash(tok)
+                await db.users.update_one({"id": uid_}, {"$set": {"magic_token_hash": th}})
+                email_sent = await _send_welcome_email(
+                    to_email=email, merchant_name=merchant, owner_name=owner,
+                    magic_url=magic_url, login_url=f"{base}/login",
+                    temp_password=password,
+                    pixel_url=f"{base}/api/auth/magic-open/{th}.gif")
+                if email_sent: summary["emails_sent"] += 1
+                summary["created"] += 1
+                results.append({"row": idx + 1, "ok": True, "already_existed": False,
+                                 "email": email, "user_id": uid_, "workspace_id": wid,
+                                 "publication_id": pub_id, "magic_link": magic_url,
+                                 "temp_password": password, "email_sent": email_sent})
+            except Exception as e:
+                logger.exception(f"batch onboard row {idx + 1} failed")
+                results.append({"row": idx + 1, "ok": False, "error": str(e)[:160],
+                                 "email": row.get("owner_email", "")})
+                summary["errors"] += 1
+        return {"ok": True, "summary": summary, "results": results,
+                "generated_at": now_iso()}
+
 
 
     @api.post("/admin/users/{uid}/suspend")
@@ -400,10 +554,11 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
 
     @api.get("/admin/onboarding-funnel")
     async def onboarding_funnel(user: dict = Depends(get_current_user)):
-        """Superadmin funnel: onboarded → magic-clicked → first coupon sent.
+        """Superadmin funnel: onboarded → magic-opened → magic-clicked → first coupon sent.
 
         Reads admin_logs for `merchant.onboard` events and joins against
-        the users + email_events collections.
+        the users + email_events collections. Also computes median
+        time-to-first-send (hours) to identify stalled onboardings.
         """
         require_superadmin(user)
         onboard_logs = await db.admin_logs.find(
@@ -415,17 +570,27 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
         if uids:
             async for u in db.users.find({"id": {"$in": uids}},
                                           {"_id": 0, "id": 1, "email": 1, "name": 1,
-                                           "workspace_id": 1, "magic_first_signin_at": 1,
+                                           "workspace_id": 1,
+                                           "magic_first_open_at": 1,
+                                           "magic_first_signin_at": 1,
                                            "created_at": 1}):
                 users_map[u["id"]] = u
         rows = []
-        onboarded = magic_clicked = first_sent = 0
+        onboarded = magic_opened = magic_clicked = first_sent = 0
+        ttfs_hours = []   # for merchants who reached first_sent
+        from datetime import datetime as _dt
+        def _parse_iso(s):
+            if not s: return None
+            try: return _dt.fromisoformat(s.replace("Z", "+00:00"))
+            except Exception: return None
         for lg in onboard_logs:
             u = users_map.get(lg.get("target"))
             if not u:
                 continue
             onboarded += 1
+            open_at = u.get("magic_first_open_at")
             magic_at = u.get("magic_first_signin_at")
+            if open_at: magic_opened += 1
             if magic_at: magic_clicked += 1
             first_email = None
             if u.get("workspace_id"):
@@ -435,27 +600,46 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
                     sort=[("created_at", 1)])
                 if ev: first_email = ev.get("created_at")
             if first_email: first_sent += 1
+            onboarded_at = lg.get("created_at") or u.get("created_at")
+            hours = None
+            if first_email and onboarded_at:
+                a = _parse_iso(onboarded_at); b = _parse_iso(first_email)
+                if a and b:
+                    hours = round((b - a).total_seconds() / 3600, 2)
+                    if hours >= 0: ttfs_hours.append(hours)
             rows.append({
                 "user_id": u["id"], "email": u.get("email"), "name": u.get("name"),
                 "workspace_id": u.get("workspace_id"),
                 "merchant": (lg.get("meta") or {}).get("merchant") or u.get("name"),
-                "onboarded_at": lg.get("created_at") or u.get("created_at"),
+                "onboarded_at": onboarded_at,
+                "magic_opened_at": open_at,
                 "magic_clicked_at": magic_at,
                 "first_email_sent_at": first_email,
+                "time_to_first_send_hours": hours,
                 "stage": ("first_sent" if first_email else
-                          "magic_clicked" if magic_at else "onboarded"),
+                          "magic_clicked" if magic_at else
+                          "magic_opened" if open_at else "onboarded"),
             })
         def _pct(n, d): return round((n / d * 100), 1) if d else 0.0
+        def _median(vals):
+            if not vals: return None
+            s = sorted(vals); n = len(s)
+            return round((s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2), 2)
         return {
             "totals": {
-                "onboarded": onboarded, "magic_clicked": magic_clicked,
+                "onboarded": onboarded,
+                "magic_opened": magic_opened,
+                "magic_clicked": magic_clicked,
                 "first_email_sent": first_sent,
             },
             "conversion": {
+                "onboard_to_open": _pct(magic_opened, onboarded),
+                "open_to_click": _pct(magic_clicked, magic_opened),
                 "onboard_to_magic": _pct(magic_clicked, onboarded),
                 "magic_to_first_send": _pct(first_sent, magic_clicked),
                 "onboard_to_first_send": _pct(first_sent, onboarded),
             },
+            "median_time_to_first_send_hours": _median(ttfs_hours),
             "rows": rows,
             "generated_at": now_iso(),
         }

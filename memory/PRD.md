@@ -2,6 +2,11 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 31, Feb 2026) — Email Opens + Time-to-First-Send + Batch CSV
+- **Magic-link open tracking**: 1x1 GIF pixel `GET /api/auth/magic-open/{hash}.gif` stamps `magic_first_open_at` on the user via 32-char sha256 slice of the token. Welcome email now embeds the pixel; funnel adds a 4th "Email opened" stage between Onboarded and Magic Clicked
+- **Time-to-first-send**: funnel returns `median_time_to_first_send_hours` + per-merchant `time_to_first_send_hours`; UI shows a pill badge in the header and a TTFS column in the merchant table (auto-formatted m/h/d)
+- **Batch CSV onboarding**: `POST /api/admin/onboard-batch` (≤200 rows) parses `{merchant_name, owner_name, owner_email, owner_password?}` rows, auto-generates missing passwords, sends magic-link emails when Resend is configured, and returns per-row results. New CSV textarea + file upload + summary card + downloadable report CSV in Admin → Onboard
+
 ## Latest (Iter 30, Feb 2026) — Funnel Analytics + Bulk Ops + Rate Limits
 - **Onboarding funnel**: `GET /api/admin/onboarding-funnel` returns stage counts + conversion % (onboarded → magic clicked → first send) + per-merchant table. New Admin → Funnel tab with progress bars and stage badges
 - **Magic-click tracking**: `/api/auth/magic` now stamps `magic_first_signin_at` on the user record on first successful exchange
