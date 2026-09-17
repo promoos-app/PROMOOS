@@ -2,6 +2,12 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 30, Feb 2026) — Funnel Analytics + Bulk Ops + Rate Limits
+- **Onboarding funnel**: `GET /api/admin/onboarding-funnel` returns stage counts + conversion % (onboarded → magic clicked → first send) + per-merchant table. New Admin → Funnel tab with progress bars and stage badges
+- **Magic-click tracking**: `/api/auth/magic` now stamps `magic_first_signin_at` on the user record on first successful exchange
+- **Magic-link rate limit**: `db.magic_attempts` (TTL 1h) caps token exchange at 20/hr; 21st attempt returns HTTP 429. Protects leaked links from offline brute force
+- **Gallery bulk delete**: `POST /api/uploads/bulk-delete` (workspace-scoped, ≤200 ids/call). Newsletter editor's image library adds a "Manage" toggle → multi-select cards → bulk-delete bar with red confirmation
+
 ## Latest (Iter 29, Feb 2026) — Magic-Link Onboarding + Gallery Search
 - **Merchant welcome email**: onboarding now auto-emails a "Your workspace is ready" mail via Resend with a 72h magic sign-in link (falls back to returning link + temp password if Resend not configured)
 - **Magic sign-in**: `POST /api/auth/magic` exchanges a `kind=magic` JWT for a 7-day session; `Login.js` handles `?magic=...` param transparently

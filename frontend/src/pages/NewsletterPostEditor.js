@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   ArrowLeft, Save, Send, Trash2, Plus, ChevronUp, ChevronDown, Loader2,
-  Heading, Type, Image as ImageIcon, MousePointerClick, Ticket, Gift, Rocket, Minus, Share2, Users, Sparkles, Upload, Search,
+  Heading, Type, Image as ImageIcon, MousePointerClick, Ticket, Gift, Rocket, Minus, Share2, Users, Sparkles, Upload, Search, Check as CheckIcon,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
@@ -313,6 +313,24 @@ function ImageBlockEditor({ p, onChange, disabled, i }) {
   const [galleryQuery, setGalleryQuery] = useState("");
   const [galleryTag, setGalleryTag] = useState("all");    // all | ai | user
   const [galleryLoading, setGalleryLoading] = useState(false);
+  const [manageMode, setManageMode] = useState(false);
+  const [selected, setSelected] = useState({});           // {id: true}
+
+  const toggleSelect = (id) => setSelected((s) => {
+    const n = { ...s }; if (n[id]) delete n[id]; else n[id] = true; return n;
+  });
+  const clearSelection = () => setSelected({});
+  const bulkDelete = async () => {
+    const ids = Object.keys(selected);
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} image${ids.length > 1 ? "s" : ""} from your library?`)) return;
+    try {
+      const { data } = await api.post("/uploads/bulk-delete", { ids });
+      toast.success(`Deleted ${data.deleted} image${data.deleted !== 1 ? "s" : ""}`);
+      clearSelection();
+      await fetchGallery();
+    } catch (e) { toast.error(apiError(e)); }
+  };
 
   const fetchGallery = async (opts = {}) => {
     setGalleryLoading(true);
@@ -448,8 +466,30 @@ function ImageBlockEditor({ p, onChange, disabled, i }) {
                       : "bg-transparent text-[#A1A1AA] border-[#27272A] hover:border-[#CCFF00]"
                   }`}>{t.label}</button>
               ))}
+              <button onClick={() => { setManageMode((m) => !m); clearSelection(); }}
+                data-testid={`gallery-manage-toggle-${i}`}
+                className={`px-3 h-8 rounded-md border text-[11px] font-medium transition ${
+                  manageMode
+                    ? "bg-red-500/20 text-red-300 border-red-500/50"
+                    : "bg-transparent text-[#A1A1AA] border-[#27272A] hover:border-red-500/60"
+                }`}>{manageMode ? "Done" : "Manage"}</button>
             </div>
           </div>
+          {manageMode && Object.keys(selected).length > 0 && (
+            <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-md bg-red-500/10 border border-red-500/40"
+              data-testid={`gallery-bulk-bar-${i}`}>
+              <span className="text-xs text-red-200">
+                {Object.keys(selected).length} selected
+              </span>
+              <button onClick={clearSelection}
+                className="ml-auto text-[11px] text-[#A1A1AA] hover:text-white">Clear</button>
+              <button onClick={bulkDelete}
+                data-testid={`gallery-bulk-delete-${i}`}
+                className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-red-500 hover:bg-red-600 text-white text-[11px] font-semibold">
+                <Trash2 className="w-3 h-3" /> Delete selected
+              </button>
+            </div>
+          )}
           {galleryLoading || gallery === null ? (
             <div className="py-12 text-center text-[#71717A]"><Loader2 className="w-6 h-6 spin mx-auto" /></div>
           ) : gallery.length === 0 ? (
@@ -462,15 +502,29 @@ function ImageBlockEditor({ p, onChange, disabled, i }) {
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
               {gallery.map((u) => {
                 const src = u.url.startsWith("http") ? u.url : `${process.env.REACT_APP_BACKEND_URL}${u.url}`;
+                const isSel = !!selected[u.id];
                 return (
-                  <button key={u.id} onClick={() => pickFromGallery(u)}
+                  <button key={u.id}
+                    onClick={() => manageMode ? toggleSelect(u.id) : pickFromGallery(u)}
                     data-testid={`gallery-pick-${u.id}`}
                     title={u.ai_prompt || u.original_filename || ""}
-                    className="relative rounded-md overflow-hidden border border-[#27272A] hover:border-[#CCFF00] transition group">
+                    className={`relative rounded-md overflow-hidden border transition group ${
+                      manageMode && isSel
+                        ? "border-red-500 ring-2 ring-red-500/60"
+                        : "border-[#27272A] hover:border-[#CCFF00]"
+                    }`}>
                     <img src={src} alt="" className="w-full h-24 object-cover" loading="lazy" />
                     {u.ai_generated && (
                       <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded-full bg-black/70 backdrop-blur-sm border border-fuchsia-400/50 text-[8px] font-bold uppercase tracking-widest text-fuchsia-300">
                         <Sparkles className="w-2 h-2 inline mr-0.5" /> AI
+                      </span>
+                    )}
+                    {manageMode && (
+                      <span className={`absolute top-1 right-1 w-5 h-5 rounded flex items-center justify-center border-2 ${
+                        isSel ? "bg-red-500 border-red-500 text-white"
+                              : "bg-black/60 border-white/60 text-transparent"
+                      }`} data-testid={`gallery-select-${u.id}`}>
+                        <CheckIcon className="w-3 h-3" />
                       </span>
                     )}
                   </button>

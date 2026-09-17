@@ -288,8 +288,20 @@ class MagicIn(BaseModel):
 
 
 @api.post("/auth/magic")
-async def auth_magic(body: MagicIn, response: Response):
+async def auth_magic(body: MagicIn, request: Request, response: Response):
     """Exchange a passwordless magic-link token for a full 7-day session."""
+    # Rate limit: 20 exchange attempts per token per hour (protects against
+    # offline brute-force on a leaked link).
+    import hashlib
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()[:32]
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    attempts = await db.magic_attempts.count_documents(
+        {"token_hash": token_hash, "created_at": {"$gt": cutoff}})
+    if attempts >= 20:
+        raise HTTPException(429, "Too many attempts on this link. Try again in an hour.")
+    await db.magic_attempts.insert_one({
+        "token_hash": token_hash, "created_at": now_iso(),
+        "ip": (request.client.host if request.client else None)})
     try:
         payload = jwt.decode(body.token, JWT_SECRET, algorithms=[JWT_ALGO])
     except jwt.ExpiredSignatureError:
@@ -305,6 +317,10 @@ async def auth_magic(body: MagicIn, response: Response):
         raise HTTPException(403, "Account deleted")
     if user.get("suspended"):
         raise HTTPException(403, "Account suspended — contact your administrator")
+    # Track first magic sign-in for onboarding funnel analytics.
+    if not user.get("magic_first_signin_at"):
+        await db.users.update_one({"id": user["id"]},
+                                    {"$set": {"magic_first_signin_at": now_iso()}})
     token = create_token(user["id"], user["email"])
     response.set_cookie(
         key="access_token", value=token, httponly=True, secure=True,
@@ -2500,6 +2516,10 @@ async def startup():
         await db.journey_runs.create_index([("status", 1), ("next_at", 1)])
         await db.api_keys.create_index("key_prefix")
         await db.uploads.create_index([("workspace_id", 1), ("is_deleted", 1)])
+        # Magic-link exchange attempts auto-expire after 1 hour (matches
+        # the 20-attempts-per-hour rate limit window).
+        await db.magic_attempts.create_index([("token_hash", 1)])
+        await db.magic_attempts.create_index("created_at", expireAfterSeconds=3600)
         await db.payment_transactions.create_index("session_id", unique=True)
         # OAuth state tokens expire after 10 minutes to prevent unbounded accumulation.
         await db.oauth_states.create_index("created_at", expireAfterSeconds=600)

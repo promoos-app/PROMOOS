@@ -398,3 +398,65 @@ def register(api, db, now_iso, get_current_user, require_superadmin, hash_passwo
             "generated_at": now_iso(),
         }
 
+    @api.get("/admin/onboarding-funnel")
+    async def onboarding_funnel(user: dict = Depends(get_current_user)):
+        """Superadmin funnel: onboarded → magic-clicked → first coupon sent.
+
+        Reads admin_logs for `merchant.onboard` events and joins against
+        the users + email_events collections.
+        """
+        require_superadmin(user)
+        onboard_logs = await db.admin_logs.find(
+            {"action": "merchant.onboard"},
+            {"_id": 0}).sort("created_at", -1).to_list(500)
+        # Batch fetch users by id
+        uids = [l.get("target") for l in onboard_logs if l.get("target")]
+        users_map = {}
+        if uids:
+            async for u in db.users.find({"id": {"$in": uids}},
+                                          {"_id": 0, "id": 1, "email": 1, "name": 1,
+                                           "workspace_id": 1, "magic_first_signin_at": 1,
+                                           "created_at": 1}):
+                users_map[u["id"]] = u
+        rows = []
+        onboarded = magic_clicked = first_sent = 0
+        for lg in onboard_logs:
+            u = users_map.get(lg.get("target"))
+            if not u:
+                continue
+            onboarded += 1
+            magic_at = u.get("magic_first_signin_at")
+            if magic_at: magic_clicked += 1
+            first_email = None
+            if u.get("workspace_id"):
+                ev = await db.email_events.find_one(
+                    {"workspace_id": u["workspace_id"]},
+                    {"_id": 0, "created_at": 1},
+                    sort=[("created_at", 1)])
+                if ev: first_email = ev.get("created_at")
+            if first_email: first_sent += 1
+            rows.append({
+                "user_id": u["id"], "email": u.get("email"), "name": u.get("name"),
+                "workspace_id": u.get("workspace_id"),
+                "merchant": (lg.get("meta") or {}).get("merchant") or u.get("name"),
+                "onboarded_at": lg.get("created_at") or u.get("created_at"),
+                "magic_clicked_at": magic_at,
+                "first_email_sent_at": first_email,
+                "stage": ("first_sent" if first_email else
+                          "magic_clicked" if magic_at else "onboarded"),
+            })
+        def _pct(n, d): return round((n / d * 100), 1) if d else 0.0
+        return {
+            "totals": {
+                "onboarded": onboarded, "magic_clicked": magic_clicked,
+                "first_email_sent": first_sent,
+            },
+            "conversion": {
+                "onboard_to_magic": _pct(magic_clicked, onboarded),
+                "magic_to_first_send": _pct(first_sent, magic_clicked),
+                "onboard_to_first_send": _pct(first_sent, onboarded),
+            },
+            "rows": rows,
+            "generated_at": now_iso(),
+        }
+

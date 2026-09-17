@@ -440,6 +440,22 @@ def register_extras(api, db, EMERGENT_LLM_KEY, PUBLIC_APP_URL, now_iso, get_curr
             raise HTTPException(404, "Not found")
         return {"ok": True}
 
+    class BulkDeleteIn(BaseModel):
+        ids: List[str]
+
+    @api.post("/uploads/bulk-delete")
+    async def bulk_delete_uploads(body: BulkDeleteIn, user: dict = Depends(get_current_user)):
+        require_writer(user)
+        if not body.ids:
+            return {"ok": True, "deleted": 0}
+        # Enforce workspace scoping — only rows in this workspace get toggled.
+        r = await db.uploads.update_many(
+            {"id": {"$in": body.ids[:200]},
+             "workspace_id": user["workspace_id"],
+             "is_deleted": False},
+            {"$set": {"is_deleted": True, "deleted_at": now_iso()}})
+        return {"ok": True, "deleted": r.modified_count}
+
     # ---------- Currencies + Fonts ----------
     @api.get("/currencies")
     async def currencies_route():

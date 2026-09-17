@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Shield, Users, Building2, ScrollText, CreditCard, BarChart3, Plus, Loader2,
-  Pause, Play, RotateCcw, Trash2, Palette, HeartPulse, CheckCircle2, XCircle, AlertTriangle, Rocket, Copy,
+  Pause, Play, RotateCcw, Trash2, Palette, HeartPulse, CheckCircle2, XCircle, AlertTriangle, Rocket, Copy, TrendingUp,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
@@ -18,6 +18,7 @@ const TABS = [
   { k: "stats", label: "Stats", icon: BarChart3 },
   { k: "health", label: "Health Check", icon: HeartPulse },
   { k: "onboard", label: "Onboard", icon: Rocket },
+  { k: "funnel", label: "Funnel", icon: TrendingUp },
   { k: "ops", label: "Ops", icon: Shield },
   { k: "users", label: "Users", icon: Users },
   { k: "workspaces", label: "Workspaces", icon: Building2 },
@@ -364,6 +365,7 @@ export default function Admin() {
 
       {tab === "health" && <HealthCheckPanel />}
       {tab === "onboard" && <OnboardMerchantPanel />}
+      {tab === "funnel" && <OnboardingFunnelPanel />}
       {tab === "ops" && <OpsPanel />}
 
       {tab === "users" && (
@@ -892,6 +894,101 @@ function OnboardMerchantPanel() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function OnboardingFunnelPanel() {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(true);
+  const load = async () => {
+    setBusy(true);
+    try { const { data } = await api.get("/admin/onboarding-funnel"); setData(data); }
+    catch (e) { toast.error(apiError(e)); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { load(); }, []);
+  if (busy && !data) return (
+    <div className="py-12 text-center text-[#71717A]" data-testid="funnel-loading">
+      <Loader2 className="w-6 h-6 spin mx-auto" />
+    </div>
+  );
+  if (!data) return null;
+  const stages = [
+    { key: "onboarded", label: "Onboarded", count: data.totals.onboarded, color: "#005CEE",
+      pct: 100 },
+    { key: "magic_clicked", label: "Magic clicked", count: data.totals.magic_clicked,
+      color: "#CCFF00", pct: data.conversion.onboard_to_magic },
+    { key: "first_email_sent", label: "First email sent", count: data.totals.first_email_sent,
+      color: "#F472B6", pct: data.conversion.onboard_to_first_send },
+  ];
+  const fmt = (iso) => iso ? new Date(iso).toLocaleString(undefined,
+    { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+  return (
+    <div className="space-y-4" data-testid="funnel-panel">
+      <div className="flex items-center gap-2">
+        <TrendingUp className="w-5 h-5 text-[#CCFF00]" />
+        <h2 className="font-display font-bold text-lg">Onboarding funnel</h2>
+        <button onClick={load} disabled={busy}
+          data-testid="funnel-refresh"
+          className="ml-auto px-3 py-1 rounded-md border border-[#27272A] text-xs hover:border-[#CCFF00] disabled:opacity-60">
+          {busy ? <Loader2 className="w-3 h-3 spin inline" /> : "Refresh"}
+        </button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {stages.map((s, i) => (
+          <div key={s.key} className="surface rounded-lg p-5" data-testid={`funnel-stage-${s.key}`}>
+            <div className="text-[10px] uppercase tracking-widest text-[#71717A]">{i + 1}. {s.label}</div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <div className="text-4xl font-bold" style={{ color: s.color }}>{s.count}</div>
+              <div className="text-xs text-[#71717A]">{s.pct}% of onboarded</div>
+            </div>
+            <div className="mt-3 h-1.5 rounded-full bg-[#27272A] overflow-hidden">
+              <div className="h-full rounded-full transition-all"
+                style={{ width: `${s.pct}%`, background: s.color }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="surface rounded-lg overflow-hidden">
+        <table className="w-full text-sm" data-testid="funnel-table">
+          <thead className="bg-[#0A0A0A] text-[#71717A] text-[10px] uppercase tracking-widest">
+            <tr>
+              <th className="text-left px-4 py-2">Merchant</th>
+              <th className="text-left px-3 py-2">Email</th>
+              <th className="text-left px-3 py-2">Onboarded</th>
+              <th className="text-left px-3 py-2">Magic clicked</th>
+              <th className="text-left px-3 py-2">First send</th>
+              <th className="text-left px-3 py-2">Stage</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#27272A]">
+            {data.rows.length === 0 && (
+              <tr><td colSpan={6} className="text-center py-6 text-[#71717A]" data-testid="funnel-empty">
+                No merchants onboarded yet. Use the Onboard tab to add your first one.</td></tr>
+            )}
+            {data.rows.map((r) => {
+              const stageStyle = r.stage === "first_sent" ? "bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/40"
+                : r.stage === "magic_clicked" ? "bg-[#CCFF00]/10 text-[#CCFF00] border-[#CCFF00]/40"
+                : "bg-blue-500/10 text-blue-300 border-blue-500/40";
+              return (
+                <tr key={r.user_id} className="hover:bg-white/5">
+                  <td className="px-4 py-2 font-medium">{r.merchant || r.name}</td>
+                  <td className="px-3 py-2 text-xs text-[#A1A1AA] font-mono">{r.email}</td>
+                  <td className="px-3 py-2 text-xs text-[#A1A1AA]">{fmt(r.onboarded_at)}</td>
+                  <td className="px-3 py-2 text-xs text-[#A1A1AA]">{fmt(r.magic_clicked_at)}</td>
+                  <td className="px-3 py-2 text-xs text-[#A1A1AA]">{fmt(r.first_email_sent_at)}</td>
+                  <td className="px-3 py-2">
+                    <span className={`inline-block px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase tracking-widest ${stageStyle}`}>
+                      {r.stage.replace("_", " ")}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
