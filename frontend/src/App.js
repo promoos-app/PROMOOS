@@ -35,6 +35,11 @@ import PublicFunnel from "@/pages/PublicFunnel";
 import QRStudio from "@/pages/QRStudio";
 import Landing from "@/pages/Landing";
 import { ForgotPassword, ResetPassword } from "@/pages/ResetPassword";
+import Newsletters from "@/pages/Newsletters";
+import NewsletterDashboard from "@/pages/NewsletterDashboard";
+import NewsletterPostEditor from "@/pages/NewsletterPostEditor";
+import PublicNewsletter from "@/pages/PublicNewsletter";
+import PublicNewsletterPost from "@/pages/PublicNewsletterPost";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -74,6 +79,8 @@ function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/c/:code" element={<PublicCoupon />} />
           <Route path="/f/:slug" element={<PublicFunnel />} />
+          <Route path="/n/:slug" element={<PublicNewsletter />} />
+          <Route path="/n/:slug/p/:postSlug" element={<PublicNewsletterPost />} />
           <Route path="/wallet/:token" element={<Wallet />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/terms" element={<TermsOfUse />} />
@@ -105,6 +112,9 @@ function App() {
             <Route path="reviews" element={<Reviews />} />
             <Route path="products" element={<Products />} />
             <Route path="sequences" element={<Sequences />} />
+            <Route path="newsletters" element={<Newsletters />} />
+            <Route path="newsletters/:pubId" element={<NewsletterDashboard />} />
+            <Route path="newsletters/:pubId/posts/:postId" element={<NewsletterPostEditor />} />
           </Route>
         </Routes>
       </BrowserRouter>

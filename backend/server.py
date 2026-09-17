@@ -2207,6 +2207,16 @@ register_compliance(api, db, now_iso, get_current_user, JWT_SECRET, {
     "resend": resend, "sender": SENDER_EMAIL, "public_url": PUBLIC_APP_URL,
 })
 
+# Newsletter system (Beehiiv-style publications + subscribers + posts + referrals).
+from routers.newsletter import register as register_newsletter
+from routers.compliance import unsubscribe_token_for as _uh_token_fn
+_newsletter_ctx = register_newsletter(api, db, now_iso, get_current_user, require_writer, {
+    "resend": resend, "sender_default": SENDER_EMAIL,
+    "public_url": PUBLIC_APP_URL, "jwt_secret": JWT_SECRET,
+    "unsubscribe_token_for": _uh_token_fn,
+})
+_newsletter_worker = _newsletter_ctx["worker"]
+
 # alongside credentials, so we echo whichever Origin the request presents (or the
 # explicit list from CORS_ORIGINS when set to something other than "*").
 _cors_env = os.environ.get('CORS_ORIGINS', '*')
@@ -2448,6 +2458,16 @@ async def startup():
         await db.preset_pack_ratings.create_index(
             [("pack_id", 1), ("workspace_id", 1)], unique=True)
         await db.deletion_requests.create_index([("status", 1), ("created_at", -1)])
+        # Newsletter indexes
+        await db.publications.create_index([("workspace_id", 1)])
+        await db.publications.create_index([("slug", 1)], unique=True)
+        await db.newsletter_subscribers.create_index(
+            [("publication_id", 1), ("email", 1)], unique=True)
+        await db.newsletter_subscribers.create_index([("referral_token", 1)])
+        await db.newsletter_subscribers.create_index([("confirmation_token", 1)])
+        await db.newsletter_posts.create_index([("publication_id", 1), ("slug", 1)], unique=True)
+        await db.newsletter_posts.create_index([("status", 1), ("scheduled_at", 1)])
+        await db.newsletter_events.create_index([("post_id", 1), ("subscriber_id", 1), ("type", 1)])
         # Initialize object storage (best-effort).
         try:
             extras_ctx["init_storage"]()
@@ -2461,6 +2481,8 @@ async def startup():
         except Exception as e:
             logger.warning(f"Marketplace seed skipped: {e}")
         asyncio.create_task(journey_worker())
+        # Newsletter send worker — polls scheduled posts every 30s.
+        asyncio.create_task(_newsletter_worker())
         # Daily Mongo backup — runs at 03:15 UTC, no-ops gracefully if mongodump is missing.
         asyncio.create_task(_daily_backup_loop())
         # Rotation-nudge worker — daily loop that emails workspace owners when an OAuth token turns 55 days old.
