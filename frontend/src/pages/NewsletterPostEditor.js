@@ -575,14 +575,25 @@ function BlockEditor({ b, i, disabled, onChange, onRemove, onMove }) {
         </div>
       </div>
       {b.type === "heading" && (
-        <Input value={p.text || ""} onChange={(e) => onChange({ text: e.target.value })}
-          disabled={disabled} data-testid={`block-heading-${i}`}
-          className="bg-transparent border-0 text-xl font-bold p-0 focus-visible:ring-0 h-auto text-white" />
+        <div className="space-y-2">
+          <Input value={p.text || ""} onChange={(e) => onChange({ text: e.target.value })}
+            disabled={disabled} data-testid={`block-heading-${i}`}
+            className="bg-transparent border-0 text-xl font-bold p-0 focus-visible:ring-0 h-auto text-white" />
+          <Input value={p.href || ""} onChange={(e) => onChange({ href: e.target.value })}
+            placeholder="Optional link (https://…) — wraps whole heading"
+            data-testid={`block-heading-href-${i}`}
+            className="bg-[#141414] border-[#27272A] text-white text-[11px] font-mono" />
+        </div>
       )}
       {b.type === "text" && (
-        <Textarea value={p.text || ""} onChange={(e) => onChange({ text: e.target.value })}
-          rows={3} disabled={disabled} data-testid={`block-text-${i}`}
-          className="bg-transparent border-0 text-sm p-0 focus-visible:ring-0 text-[#E4E4E7] resize-y" />
+        <div className="space-y-1">
+          <Textarea value={p.text || ""} onChange={(e) => onChange({ text: e.target.value })}
+            rows={3} disabled={disabled} data-testid={`block-text-${i}`}
+            className="bg-transparent border-0 text-sm p-0 focus-visible:ring-0 text-[#E4E4E7] resize-y" />
+          <div className="text-[10px] text-[#71717A] italic">
+            Add links with <code className="text-[#CCFF00]">[label](https://url)</code>. Bare URLs auto-link.
+          </div>
+        </div>
       )}
       {b.type === "image" && (
         <ImageBlockEditor p={p} onChange={onChange} disabled={disabled} i={i} />
@@ -992,6 +1003,10 @@ function ImageBlockEditor({ p, onChange, disabled, i }) {
         placeholder="Alt text (accessibility)" disabled={disabled}
         data-testid={`block-image-alt-${i}`}
         className="bg-[#141414] border-[#27272A] text-white text-xs h-8" />
+      <Input value={p.link || ""} onChange={(e) => onChange({ link: e.target.value })}
+        placeholder="Optional link URL (image becomes clickable)" disabled={disabled}
+        data-testid={`block-image-link-${i}`}
+        className="bg-[#141414] border-[#27272A] text-white text-xs font-mono h-8" />
     </div>
   );
 }

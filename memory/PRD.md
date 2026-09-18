@@ -1,7 +1,13 @@
 # PromoOS — AI Promotional Commerce Platform (PRD)
 
 ## STATUS: LAUNCH-READY (Feb 2026) — promoos.sale
-- **Live domain**: `PUBLIC_APP_URL=https://promoos.sale` set in backend/.env
+
+## Latest (Iter 37, Feb 2026) — Universal Hyperlinks
+- **Heading href**: optional `href` prop wraps entire heading in a link; validated by `_safe_href`
+- **Text markdown**: `[label](https://url)` inline links + bare-URL auto-linking, HTML-escaped for XSS safety
+- **Image link**: existing `link` prop now validated + surfaced with a new input in the image editor
+- **Button/Video/Audio**: all existing URLs now pass through `_safe_href` which rejects `javascript:` / `data:` schemes
+- Curl-verified: heading wrap, markdown link, autolink, image wrap, javascript: rejected (falls back to `#`), XSS payload correctly escaped, malformed markdown left as inert text
 
 ## Latest (Iter 36, Feb 2026) — Comment Anchoring + Version History + Approval Gate
 - **Comment anchoring**: `_render_post_html` now wraps every block with `data-block-id`/`data-block-type`. Public review page injects click-to-anchor CSS into the iframe — clicking a block outlines it in fuchsia and pins the anchor pill. Comment payload carries `block_id`; editor sidebar shows an "ON: <type>" chip on each anchored comment

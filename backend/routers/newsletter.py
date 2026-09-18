@@ -69,6 +69,47 @@ def _safe_color(val, default):
     return default
 
 
+def _safe_href(val):
+    """Only allow http(s)/mailto/tel schemes so link props can't inject javascript:."""
+    if not isinstance(val, str): return None
+    v = val.strip()
+    if not v: return None
+    lower = v.lower()
+    if lower.startswith(("http://", "https://", "mailto:", "tel:")) or v.startswith("/") or v.startswith("#"):
+        return v.replace('"', "%22")
+    return None
+
+
+def _linkify(text: str, color: str = "#005CEE") -> str:
+    """Parse ``[label](url)`` markdown links inside a text/heading string.
+
+    Also auto-links bare http(s) URLs. Everything else is HTML-escaped so the
+    output is safe to drop into rendered emails. Preserves newlines for the
+    caller (which uses ``white-space:pre-wrap``).
+    """
+    import re as _re, html as _html
+    if not isinstance(text, str) or not text:
+        return ""
+    esc = _html.escape(text, quote=False)
+    # Markdown-style [label](url) — URL is validated by _safe_href.
+    def _md(m):
+        label, url = m.group(1), m.group(2)
+        href = _safe_href(url)
+        if not href: return m.group(0)
+        return (f'<a href="{href}" style="color:{color};text-decoration:underline">'
+                f'{label}</a>')
+    esc = _re.sub(r"\[([^\]\n]+)\]\((https?://[^\s)]+|mailto:[^\s)]+|tel:[^\s)]+|/[^\s)]*)\)",
+                  _md, esc)
+    # Bare URL autolink — only if not already inside an <a> tag.
+    def _bare(m):
+        url = m.group(0)
+        return (f'<a href="{url}" style="color:{color};text-decoration:underline">'
+                f'{url}</a>')
+    # Skip URLs immediately following href=" or > (already inside a tag).
+    esc = _re.sub(r"(?<![\"'>])https?://[^\s<]+", _bare, esc)
+    return esc
+
+
 def _slugify(s: str, existing: set = None) -> str:
     import re
     base = re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")[:60] or f"post-{secrets.token_hex(3)}"
@@ -995,21 +1036,26 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             tag = level if level in ("h1", "h2", "h3", "h4") else "h2"
             size = {"h1": 30, "h2": 24, "h3": 19, "h4": 16}[tag]
             sz = int(p.get("font_size") or size)
+            inner = _linkify(p.get("text", ""), color=primary)
+            href = _safe_href(p.get("href"))
+            if href:
+                inner = f'<a href="{href}" style="color:inherit;text-decoration:none">{inner}</a>'
             return (f'{wrap_open}<{tag} style="margin:20px 0 8px;text-align:{align};'
                     f'font-size:{max(12, min(64, sz))}px;line-height:1.2;color:{text_color}">'
-                    f'{p.get("text","")}</{tag}>{wrap_close}')
+                    f'{inner}</{tag}>{wrap_close}')
         if t == "text":
             sz = int(p.get("font_size") or 15)
+            inner = _linkify(p.get("text", ""), color=primary)
             return (f'{wrap_open}<p style="margin:0 0 16px;text-align:{align};'
                     f'font-size:{max(10, min(28, sz))}px;line-height:1.6;color:{text_color};'
-                    f'white-space:pre-wrap">{p.get("text","")}</p>{wrap_close}')
+                    f'white-space:pre-wrap">{inner}</p>{wrap_close}')
         if t == "image":
             src = p.get("url", "")
             if not src: return ""
             w = p.get("width")
             width_css = f"width:{int(w)}px;max-width:100%;" if str(w or "").isdigit() else "width:100%;"
             radius = int(p.get("radius") or 8)
-            link = (p.get("link") or "").strip()
+            link = _safe_href(p.get("link"))
             img = (f'<img src="{src}" alt="{p.get("alt","")}" '
                    f'style="display:block;{width_css}border-radius:{max(0, min(48, radius))}px;'
                    f'margin:0 auto" />')
@@ -1017,7 +1063,8 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
                 img = f'<a href="{link}" style="text-decoration:none">{img}</a>'
             return f'<div style="margin:16px 0;text-align:{align}">{img}</div>'
         if t == "button":
-            url = p.get("url", "#"); label = p.get("label", "Learn more")
+            url = _safe_href(p.get("url")) or "#"
+            label = p.get("label", "Learn more")
             btn_bg = _safe_color(p.get("background"), primary)
             btn_color = _safe_color(p.get("color"), "#FFFFFF")
             radius = int(p.get("radius") or 8)
