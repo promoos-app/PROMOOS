@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   ArrowLeft, Save, Send, Trash2, Plus, ChevronUp, ChevronDown, Loader2,
-  Heading, Type, Image as ImageIcon, MousePointerClick, Ticket, Gift, Rocket, Minus, Share2, Users, Sparkles, Upload, Search, Check as CheckIcon,
+  Heading, Type, Image as ImageIcon, MousePointerClick, Ticket, Gift, Rocket, Minus, Share2, Users, Sparkles, Upload, Search, Check as CheckIcon, Eye,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
@@ -36,6 +36,23 @@ export default function NewsletterPostEditor() {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiBrief, setAiBrief] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewDevice, setPreviewDevice] = useState("desktop");    // desktop | mobile
+
+  const openPreview = async () => {
+    setPreviewOpen(true); setPreviewBusy(true); setPreviewHtml("");
+    try {
+      // Save first so the preview reflects what the recipient will actually see.
+      await save();
+      const { data } = await api.get(
+        `/newsletter/publications/${pubId}/posts/${postId}/preview`,
+        { responseType: "text", transformResponse: [(x) => x] });
+      setPreviewHtml(data);
+    } catch (e) { toast.error(apiError(e, "Preview failed")); setPreviewOpen(false); }
+    finally { setPreviewBusy(false); }
+  };
 
   const toggleChannel = (ch) => {
     setPost((p) => {
@@ -152,6 +169,10 @@ export default function NewsletterPostEditor() {
           <Input placeholder="you@example.com" value={sendTo} onChange={(e) => setSendTo(e.target.value)}
             data-testid="editor-test-email"
             className="h-9 w-56 bg-[#0A0A0A] border-[#27272A] text-white text-xs" />
+          <Button data-testid="editor-preview" onClick={openPreview} variant="ghost"
+            className="rounded-md gap-2 border border-[#27272A] h-9 text-xs hover:border-sky-400">
+            <Eye className="w-3.5 h-3.5" /> Preview
+          </Button>
           <Button data-testid="editor-send-test" onClick={sendTest} variant="ghost"
             className="rounded-md gap-2 border border-[#27272A] h-9 text-xs hover:border-[#CCFF00]">
             <Send className="w-3.5 h-3.5" /> Test
@@ -166,6 +187,59 @@ export default function NewsletterPostEditor() {
           </Button>
         </div>
       </div>
+
+      {/* Preview dialog — WYSIWYG email render in a sandboxed iframe. */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-5xl h-[90vh] flex flex-col"
+          data-testid="preview-dialog">
+          <DialogHeader className="flex-row items-center justify-between gap-4 space-y-0">
+            <div>
+              <DialogTitle>Email preview</DialogTitle>
+              <div className="text-[11px] text-[#71717A] mt-1">
+                This is exactly what your subscribers will see. Not a send — no tracking pixels.
+              </div>
+            </div>
+            <div className="flex items-center gap-1 mr-8">
+              <button onClick={() => setPreviewDevice("desktop")}
+                data-testid="preview-device-desktop"
+                className={`px-3 h-8 rounded-md border text-[11px] transition ${
+                  previewDevice === "desktop"
+                    ? "bg-[#CCFF00] text-black border-[#CCFF00]"
+                    : "bg-transparent text-[#A1A1AA] border-[#27272A] hover:border-[#CCFF00]"
+                }`}>Desktop</button>
+              <button onClick={() => setPreviewDevice("mobile")}
+                data-testid="preview-device-mobile"
+                className={`px-3 h-8 rounded-md border text-[11px] transition ${
+                  previewDevice === "mobile"
+                    ? "bg-[#CCFF00] text-black border-[#CCFF00]"
+                    : "bg-transparent text-[#A1A1AA] border-[#27272A] hover:border-[#CCFF00]"
+                }`}>Mobile</button>
+            </div>
+          </DialogHeader>
+          <div className="flex-1 min-h-0 bg-[#0A0A0A] rounded-md border border-[#27272A] p-4 overflow-y-auto flex items-start justify-center">
+            {previewBusy ? (
+              <div className="flex-1 flex items-center justify-center text-[#71717A]">
+                <Loader2 className="w-6 h-6 spin" />
+              </div>
+            ) : (
+              <iframe
+                title="preview"
+                srcDoc={previewHtml}
+                data-testid="preview-iframe"
+                className="bg-white rounded-md shadow-2xl transition-all"
+                style={{
+                  width: previewDevice === "mobile" ? 375 : "100%",
+                  maxWidth: previewDevice === "mobile" ? 375 : 760,
+                  height: "100%",
+                  minHeight: 600,
+                  border: 0,
+                }}
+                sandbox="allow-same-origin"
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_240px] gap-4">
         <div className="surface rounded-lg p-6 space-y-3">

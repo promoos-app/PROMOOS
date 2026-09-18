@@ -505,6 +505,81 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             raise HTTPException(502, f"Test send failed: {e}")
         return {"ok": True}
 
+    @api.get("/newsletter/publications/{pid}/posts/{post_id}/preview",
+             response_class=Response)
+    async def preview_post(pid: str, post_id: str,
+                             user: dict = Depends(get_current_user)):
+        """Render the exact email HTML for in-app preview.
+
+        Returns text/html so the frontend can drop the response straight into
+        an ``<iframe srcDoc={...}>``. No tracking pixels, no unsubscribe
+        footer — this is a WYSIWYG preview, not a send.
+        """
+        pub = await _get_pub(pid, user["workspace_id"])
+        post = await db.newsletter_posts.find_one(
+            {"id": post_id, "publication_id": pid}, {"_id": 0})
+        if not post:
+            raise HTTPException(404, "Post not found")
+        html = await _render_post_html(pub, post, subscriber_id="preview",
+                                          for_email=True, test=True)
+        return Response(content=html, media_type="text/html")
+
+    @api.get("/newsletter/templates")
+    async def list_templates():
+        """List curated starter templates for the post-creation flow."""
+        from routers.newsletter_templates import TEMPLATES
+        # Strip the block payload from the list view — clients get it on demand.
+        return [{k: t[k] for k in ("id", "name", "category", "description",
+                                     "preview_emoji", "accent")} for t in TEMPLATES]
+
+    @api.get("/newsletter/templates/{template_id}")
+    async def get_template_full(template_id: str):
+        """Fetch full template payload (title/subtitle/blocks) for previewing before use."""
+        from routers.newsletter_templates import get_template
+        t = get_template(template_id)
+        if not t:
+            raise HTTPException(404, "Template not found")
+        return t
+
+    class FromTemplateIn(BaseModel):
+        template_id: str
+
+    @api.post("/newsletter/publications/{pid}/posts/from-template")
+    async def create_post_from_template(pid: str, body: FromTemplateIn,
+                                          user: dict = Depends(get_current_user)):
+        """Create a new draft post pre-filled with the chosen template."""
+        require_writer(user)
+        pub = await _get_pub(pid, user["workspace_id"])
+        from routers.newsletter_templates import get_template
+        t = get_template(body.template_id)
+        if not t:
+            raise HTTPException(404, "Template not found")
+        tpost = t["post"]
+        slug = await _uniq_post_slug(pid, tpost["title"])
+        doc = {
+            "id": str(uuid.uuid4()),
+            "publication_id": pid,
+            "workspace_id": pub["workspace_id"],
+            "title": tpost["title"][:200],
+            "subtitle": (tpost.get("subtitle") or "")[:280],
+            "slug": slug,
+            "blocks": _sanitize_blocks(tpost.get("blocks") or []),
+            "channels": ["email"],
+            "sms_body": "",
+            "status": "draft",
+            "scheduled_at": None,
+            "sent_at": None,
+            "created_by": user["id"],
+            "created_from_template": body.template_id,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "stats": {"sent": 0, "opens": 0, "unique_opens": 0,
+                       "clicks": 0, "unique_clicks": 0, "unsubscribes": 0,
+                       "sms_sent": 0, "whatsapp_sent": 0},
+        }
+        await db.newsletter_posts.insert_one({**doc})
+        return doc
+
     @api.post("/newsletter/publications/{pid}/posts/{post_id}/send-now")
     async def send_now(pid: str, post_id: str,
                          user: dict = Depends(get_current_user)):

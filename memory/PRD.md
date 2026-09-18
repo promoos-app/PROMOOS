@@ -2,6 +2,11 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 34, Feb 2026) — Newsletter Preview + Template Library
+- **Live email preview**: `GET /api/newsletter/publications/{pid}/posts/{post_id}/preview` returns the exact rendered HTML (no tracking pixels, no unsubscribe footer). Editor has a new "Preview" button → dialog with sandboxed iframe + Desktop/Mobile (375px) toggle so merchants can WYSIWYG-check before hitting Send
+- **Template library** (Beehiiv-inspired): 8 curated starter templates in `routers/newsletter_templates.py` (welcome, product drop, flash sale, weekly digest, abandoned cart, gift guide, big news, re-engagement). New endpoints: `GET /newsletter/templates`, `GET /newsletter/templates/{id}`, `POST /publications/{pid}/posts/from-template`. Newsletter dashboard adds a "Start from template" button next to "New post" → dialog with emoji-badged cards; click auto-creates a draft with title/subtitle/blocks pre-filled and navigates to the editor
+- Auto-saves draft before preview so what you see is what will send
+
 ## Latest (Iter 33, Feb 2026) — Impersonation + CSV Export + Activity Feed
 - **Merchant impersonation**: `POST /api/admin/impersonate/{uid}` mints a 60-min `kind=magic` JWT for the target user (audit-logged as `user.impersonate`; blocks impersonating other superadmins or deleted/suspended accounts). Drawer button opens the magic link in a new tab and copies it to clipboard so the superadmin's own session survives
 - **Funnel CSV export**: client-side "Export CSV" button emits `promoos-funnel-YYYY-MM-DD.csv` with merchant, email, workspace, all four milestone timestamps, TTFS hours, and stage — ready to share weekly

@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowLeft, FileText, Users, BarChart3, Palette, Gift, Settings as SettingsIcon,
-  Plus, Loader2, ExternalLink, Trash2, Send, Upload, Share2, Copy,
+  Plus, Loader2, ExternalLink, Trash2, Send, Upload, Share2, Copy, LayoutTemplate,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
@@ -82,6 +82,9 @@ function PostsTab({ pub }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
+  const [tplOpen, setTplOpen] = useState(false);
+  const [templates, setTemplates] = useState(null);
+  const [tplBusy, setTplBusy] = useState(null);  // template id being applied
   const { data: posts = [] } = useQuery({
     queryKey: ["posts", pub.id],
     queryFn: async () => (await api.get(`/newsletter/publications/${pub.id}/posts`)).data,
@@ -94,6 +97,25 @@ function PostsTab({ pub }) {
       navigate(`/newsletters/${pub.id}/posts/${data.id}`);
     } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); }
   };
+  const openTemplates = async () => {
+    setTplOpen(true);
+    if (templates) return;
+    try {
+      const { data } = await api.get("/newsletter/templates");
+      setTemplates(data);
+    } catch (e) { toast.error(apiError(e)); }
+  };
+  const applyTemplate = async (tid) => {
+    setTplBusy(tid);
+    try {
+      const { data } = await api.post(
+        `/newsletter/publications/${pub.id}/posts/from-template`,
+        { template_id: tid });
+      toast.success("Draft created from template");
+      navigate(`/newsletters/${pub.id}/posts/${data.id}`);
+    } catch (e) { toast.error(apiError(e)); }
+    finally { setTplBusy(null); }
+  };
   const del = async (id) => {
     if (!window.confirm("Delete this draft?")) return;
     try {
@@ -104,12 +126,64 @@ function PostsTab({ pub }) {
   };
   return (
     <div>
-      <div className="flex justify-end mb-3">
+      <div className="flex justify-end gap-2 mb-3">
+        <Button data-testid="post-templates-btn" onClick={openTemplates}
+          variant="ghost"
+          className="rounded-md gap-2 border border-[#27272A] hover:border-fuchsia-400">
+          <LayoutTemplate className="w-4 h-4" /> Start from template
+        </Button>
         <Button data-testid="new-post-btn" onClick={create} disabled={busy}
           className="btn-primary rounded-md gap-2">
           {busy ? <Loader2 className="w-4 h-4 spin" /> : <Plus className="w-4 h-4" />} New post
         </Button>
       </div>
+      <Dialog open={tplOpen} onOpenChange={setTplOpen}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-4xl max-h-[85vh] overflow-y-auto"
+          data-testid="templates-dialog">
+          <DialogHeader>
+            <DialogTitle>Start from a template</DialogTitle>
+            <div className="text-xs text-[#71717A] mt-1">
+              Pick a scaffold — we'll create a draft you can customize. Coupon codes and images are placeholders.
+            </div>
+          </DialogHeader>
+          {!templates ? (
+            <div className="py-16 text-center"><Loader2 className="w-6 h-6 spin mx-auto text-[#CCFF00]" /></div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {templates.map((t) => (
+                <button key={t.id} onClick={() => applyTemplate(t.id)}
+                  disabled={!!tplBusy}
+                  data-testid={`template-card-${t.id}`}
+                  className="text-left surface rounded-lg p-5 border border-[#27272A] hover:border-[#CCFF00] transition disabled:opacity-60 group">
+                  <div className="flex items-start gap-3">
+                    <div className="w-11 h-11 rounded-lg flex items-center justify-center text-2xl shrink-0"
+                      style={{ background: `${t.accent}22`, border: `1px solid ${t.accent}55` }}>
+                      {t.preview_emoji}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-display font-bold text-sm">{t.name}</h3>
+                        <span className="text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded bg-[#27272A] text-[#A1A1AA]">
+                          {t.category}
+                        </span>
+                      </div>
+                      <p className="text-xs text-[#A1A1AA] mt-1 leading-relaxed">{t.description}</p>
+                      <div className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium"
+                        style={{ color: t.accent }}>
+                        {tplBusy === t.id ? (
+                          <><Loader2 className="w-3 h-3 spin" /> Creating…</>
+                        ) : (
+                          <>Use this template →</>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
       {posts.length === 0 ? (
         <div className="surface rounded-lg p-12 text-center text-[#71717A]">
           No posts yet. Create your first draft.
