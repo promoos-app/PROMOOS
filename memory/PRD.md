@@ -2,6 +2,13 @@
 
 ## STATUS: FEATURE-COMPLETE (Feb 2026)
 
+## Latest (Iter 35, Feb 2026) — Full Newsletter Customization + Team Review
+- **Every block fully stylable**: heading/text/button/image/video/divider now honor `align`, `color`, `background`, `font_size`, `radius`, `padding`, `width`, `link`, `poster` props with hex-only validation (`_safe_color`). New "Style" toggle in each block editor exposes align chips, color pickers, size/radius sliders
+- **New block types**: `video` (renders play-icon poster in email, native `<video>` in preview), `audio` (thumbnail card in email, native `<audio>` in preview), `spacer` (adjustable px height). All shipped through `_render_block` + BLOCK_LIB
+- **Template preview mini-view**: picker dialog now has a live iframe preview pane (`GET /newsletter/templates/{id}/preview`) — click "Preview" on any card to see it render before creating a draft
+- **Personal templates**: `POST/GET/DELETE /newsletter/saved-templates` + `POST /publications/{pid}/posts/from-saved/{tid}`. Editor toolbar has "Save as template" button; picker shows workspace templates above curated ones with Preview / Use / Delete
+- **Team review with magic URL**: `POST /publications/{pid}/posts/{post_id}/share` mints a 7-day JWT; public route `/newsletter/review/{token}` renders the email + comment form (no auth). Reviewers post comments via `/public/review/{token}/comments`; owners see them in the editor sidebar with Resolve buttons. New `PublicNewsletterReview.js` page
+
 ## Latest (Iter 34, Feb 2026) — Newsletter Preview + Template Library
 - **Live email preview**: `GET /api/newsletter/publications/{pid}/posts/{post_id}/preview` returns the exact rendered HTML (no tracking pixels, no unsubscribe footer). Editor has a new "Preview" button → dialog with sandboxed iframe + Desktop/Mobile (375px) toggle so merchants can WYSIWYG-check before hitting Send
 - **Template library** (Beehiiv-inspired): 8 curated starter templates in `routers/newsletter_templates.py` (welcome, product drop, flash sale, weekly digest, abandoned cart, gift guide, big news, re-engagement). New endpoints: `GET /newsletter/templates`, `GET /newsletter/templates/{id}`, `POST /publications/{pid}/posts/from-template`. Newsletter dashboard adds a "Start from template" button next to "New post" → dialog with emoji-badged cards; click auto-creates a draft with title/subtitle/blocks pre-filled and navigates to the editor

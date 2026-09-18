@@ -8,23 +8,26 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   ArrowLeft, Save, Send, Trash2, Plus, ChevronUp, ChevronDown, Loader2,
-  Heading, Type, Image as ImageIcon, MousePointerClick, Ticket, Gift, Rocket, Minus, Share2, Users, Sparkles, Upload, Search, Check as CheckIcon, Eye,
+  Heading, Type, Image as ImageIcon, MousePointerClick, Ticket, Gift, Rocket, Minus, Share2, Users, Sparkles, Upload, Search, Check as CheckIcon, Eye, Video, Music, MoveVertical, MessageSquare, Link2, Save as SaveIcon, Palette,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
 } from "@/components/ui/dialog";
 
 const BLOCK_LIB = [
-  { t: "heading", label: "Heading", icon: Heading, defaults: { level: "h2", text: "Section title" } },
-  { t: "text", label: "Text", icon: Type, defaults: { text: "Write a paragraph…" } },
-  { t: "image", label: "Image", icon: ImageIcon, defaults: { url: "", alt: "" } },
-  { t: "button", label: "Button", icon: MousePointerClick, defaults: { label: "Learn more", url: "https://" } },
+  { t: "heading", label: "Heading", icon: Heading, defaults: { level: "h2", text: "Section title", align: "left" } },
+  { t: "text", label: "Text", icon: Type, defaults: { text: "Write a paragraph…", align: "left" } },
+  { t: "image", label: "Image", icon: ImageIcon, defaults: { url: "", alt: "", align: "center" } },
+  { t: "video", label: "Video", icon: Video, defaults: { url: "", poster: "", align: "center" } },
+  { t: "audio", label: "Audio", icon: Music, defaults: { url: "", title: "Listen" } },
+  { t: "button", label: "Button", icon: MousePointerClick, defaults: { label: "Learn more", url: "https://", align: "left" } },
   { t: "coupon", label: "Coupon", icon: Ticket, defaults: { code: "" } },
   { t: "giftcard", label: "Gift card", icon: Gift, defaults: { giftcard_id: "" } },
   { t: "funnel", label: "Funnel", icon: Rocket, defaults: { slug: "" } },
   { t: "subscribe_form", label: "Subscribe form", icon: Users, defaults: {} },
   { t: "referral_cta", label: "Referral CTA", icon: Share2, defaults: {} },
   { t: "divider", label: "Divider", icon: Minus, defaults: {} },
+  { t: "spacer", label: "Spacer", icon: MoveVertical, defaults: { height: 24 } },
 ];
 
 export default function NewsletterPostEditor() {
@@ -52,6 +55,57 @@ export default function NewsletterPostEditor() {
       setPreviewHtml(data);
     } catch (e) { toast.error(apiError(e, "Preview failed")); setPreviewOpen(false); }
     finally { setPreviewBusy(false); }
+  };
+
+  const [saveTplOpen, setSaveTplOpen] = useState(false);
+  const [saveTplName, setSaveTplName] = useState("");
+  const [saveTplBusy, setSaveTplBusy] = useState(false);
+  const doSaveAsTemplate = async () => {
+    const name = saveTplName.trim();
+    if (!name) { toast.error("Give the template a name"); return; }
+    setSaveTplBusy(true);
+    try {
+      await save();
+      await api.post("/newsletter/saved-templates",
+        { name, post_id: postId });
+      toast.success("Saved to your workspace templates");
+      setSaveTplOpen(false); setSaveTplName("");
+    } catch (e) { toast.error(apiError(e)); }
+    finally { setSaveTplBusy(false); }
+  };
+
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [shareBusy, setShareBusy] = useState(false);
+  const [comments, setComments] = useState([]);
+  const [commentsBusy, setCommentsBusy] = useState(false);
+  const loadComments = async () => {
+    setCommentsBusy(true);
+    try {
+      const { data } = await api.get(
+        `/newsletter/publications/${pubId}/posts/${postId}/comments`);
+      setComments(data);
+    } catch (e) { /* silent — no comments yet is fine */ }
+    finally { setCommentsBusy(false); }
+  };
+  useEffect(() => { if (postId) loadComments(); }, [postId, pubId]);
+  const createShareLink = async () => {
+    setShareBusy(true);
+    try {
+      await save();
+      const { data } = await api.post(
+        `/newsletter/publications/${pubId}/posts/${postId}/share`);
+      setShareUrl(data.url);
+      try { await navigator.clipboard.writeText(data.url); toast.success("Link copied — valid 7 days"); }
+      catch (_) { toast.success("Link ready — valid 7 days"); }
+    } catch (e) { toast.error(apiError(e)); }
+    finally { setShareBusy(false); }
+  };
+  const resolveComment = async (cid) => {
+    try {
+      await api.post(`/newsletter/publications/${pubId}/posts/${postId}/comments/${cid}/resolve`);
+      loadComments();
+    } catch (e) { toast.error(apiError(e)); }
   };
 
   const toggleChannel = (ch) => {
@@ -173,6 +227,17 @@ export default function NewsletterPostEditor() {
             className="rounded-md gap-2 border border-[#27272A] h-9 text-xs hover:border-sky-400">
             <Eye className="w-3.5 h-3.5" /> Preview
           </Button>
+          <Button data-testid="editor-share" onClick={createShareLink} disabled={shareBusy}
+            variant="ghost"
+            className="rounded-md gap-2 border border-[#27272A] h-9 text-xs hover:border-fuchsia-400">
+            {shareBusy ? <Loader2 className="w-3.5 h-3.5 spin" /> : <Link2 className="w-3.5 h-3.5" />}
+            Share for review
+          </Button>
+          <Button data-testid="editor-save-as-template" onClick={() => setSaveTplOpen(true)}
+            variant="ghost"
+            className="rounded-md gap-2 border border-[#27272A] h-9 text-xs hover:border-emerald-400">
+            <SaveIcon className="w-3.5 h-3.5" /> Save as template
+          </Button>
           <Button data-testid="editor-send-test" onClick={sendTest} variant="ghost"
             className="rounded-md gap-2 border border-[#27272A] h-9 text-xs hover:border-[#CCFF00]">
             <Send className="w-3.5 h-3.5" /> Test
@@ -241,6 +306,51 @@ export default function NewsletterPostEditor() {
         </DialogContent>
       </Dialog>
 
+      {/* Save as template dialog */}
+      <Dialog open={saveTplOpen} onOpenChange={setSaveTplOpen}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white" data-testid="save-template-dialog">
+          <DialogHeader>
+            <DialogTitle>Save as personal template</DialogTitle>
+            <div className="text-xs text-[#71717A] mt-1">
+              Stored in your workspace. Reuse from the Post → "Start from template" picker.
+            </div>
+          </DialogHeader>
+          <Label className="text-xs text-[#A1A1AA]">Template name</Label>
+          <Input value={saveTplName} onChange={(e) => setSaveTplName(e.target.value)}
+            placeholder="e.g. Monthly VIP drop"
+            data-testid="save-template-name"
+            className="bg-[#0A0A0A] border-[#27272A] text-white" />
+          <DialogFooter>
+            <Button data-testid="save-template-submit" onClick={doSaveAsTemplate}
+              disabled={saveTplBusy}
+              className="btn-primary rounded-md gap-2">
+              {saveTplBusy ? <Loader2 className="w-4 h-4 spin" /> : <SaveIcon className="w-4 h-4" />}
+              Save template
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Share for review dialog */}
+      <Dialog open={!!shareUrl && !shareBusy} onOpenChange={(o) => !o && setShareUrl("")}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white" data-testid="share-dialog">
+          <DialogHeader>
+            <DialogTitle>Share for team review</DialogTitle>
+            <div className="text-xs text-[#71717A] mt-1">
+              Anyone with this link can preview and leave comments for 7 days. No login required.
+            </div>
+          </DialogHeader>
+          <div className="flex items-center gap-2 rounded-md bg-[#0A0A0A] border border-[#27272A] p-3">
+            <Link2 className="w-4 h-4 text-fuchsia-400 shrink-0" />
+            <span className="flex-1 truncate font-mono text-xs" data-testid="share-url">{shareUrl}</span>
+            <button onClick={() => { navigator.clipboard.writeText(shareUrl); toast.success("Copied"); }}
+              className="text-[#71717A] hover:text-[#CCFF00]" data-testid="share-copy">
+              <CheckIcon className="w-4 h-4" />
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_240px] gap-4">
         <div className="surface rounded-lg p-6 space-y-3">
           <div className="flex items-center gap-2 flex-wrap pb-3 border-b border-[#27272A]" data-testid="channel-chips">
@@ -297,17 +407,61 @@ export default function NewsletterPostEditor() {
             )}
           </div>
         </div>
-        <div className="surface rounded-lg p-4 h-fit" data-testid="block-library">
-          <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Block library</div>
-          <div className="grid grid-cols-2 gap-1">
-            {BLOCK_LIB.map((cfg) => (
-              <button key={cfg.t} onClick={() => addBlock(cfg.t)}
-                disabled={post.status === "sent"}
-                data-testid={`add-block-${cfg.t}`}
-                className="text-[11px] px-2 py-2 rounded border border-[#27272A] hover:border-[#CCFF00] hover:text-[#CCFF00] transition-colors flex flex-col items-center gap-1 disabled:opacity-40">
-                <cfg.icon className="w-4 h-4" /> {cfg.label}
-              </button>
-            ))}
+        <div className="surface rounded-lg p-4 h-fit space-y-4" data-testid="block-library">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Block library</div>
+            <div className="grid grid-cols-2 gap-1">
+              {BLOCK_LIB.map((cfg) => (
+                <button key={cfg.t} onClick={() => addBlock(cfg.t)}
+                  disabled={post.status === "sent"}
+                  data-testid={`add-block-${cfg.t}`}
+                  className="text-[11px] px-2 py-2 rounded border border-[#27272A] hover:border-[#CCFF00] hover:text-[#CCFF00] transition-colors flex flex-col items-center gap-1 disabled:opacity-40">
+                  <cfg.icon className="w-4 h-4" /> {cfg.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="pt-3 border-t border-[#27272A]">
+            <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2 flex items-center gap-1">
+              <MessageSquare className="w-3 h-3" /> Review comments
+              {comments.filter((c) => !c.resolved).length > 0 && (
+                <span className="ml-auto px-1.5 py-0.5 rounded-full bg-fuchsia-500/20 text-fuchsia-300 text-[9px] font-bold">
+                  {comments.filter((c) => !c.resolved).length}
+                </span>
+              )}
+            </div>
+            {commentsBusy ? (
+              <Loader2 className="w-4 h-4 spin text-[#71717A] mx-auto" />
+            ) : comments.length === 0 ? (
+              <div className="text-[10px] text-[#71717A] italic">No comments yet. Share the review link with your team.</div>
+            ) : (
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {comments.map((c) => (
+                  <div key={c.id} data-testid={`comment-${c.id}`}
+                    className={`rounded-md p-2 border text-[11px] ${
+                      c.resolved
+                        ? "border-emerald-500/20 bg-emerald-500/5 opacity-60"
+                        : "border-fuchsia-500/30 bg-fuchsia-500/5"
+                    }`}>
+                    <div className="flex items-center gap-1 mb-1">
+                      <span className="font-semibold text-white">{c.reviewer_name}</span>
+                      <span className="text-[9px] text-[#71717A]">
+                        {new Date(c.created_at).toLocaleString(undefined,
+                          { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                      {!c.resolved && (
+                        <button onClick={() => resolveComment(c.id)}
+                          data-testid={`resolve-comment-${c.id}`}
+                          className="ml-auto text-[9px] text-emerald-300 hover:underline">
+                          Resolve
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-[#E4E4E7] whitespace-pre-wrap">{c.body}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -341,6 +495,30 @@ function BlockEditor({ b, i, disabled, onChange, onRemove, onMove }) {
       {b.type === "image" && (
         <ImageBlockEditor p={p} onChange={onChange} disabled={disabled} i={i} />
       )}
+      {b.type === "video" && (
+        <div className="grid grid-cols-1 gap-2">
+          <Input value={p.url || ""} onChange={(e) => onChange({ url: e.target.value })}
+            placeholder="Video URL (MP4 or YouTube/Vimeo link)" disabled={disabled}
+            data-testid={`block-video-url-${i}`}
+            className="bg-[#141414] border-[#27272A] text-white text-xs font-mono" />
+          <Input value={p.poster || ""} onChange={(e) => onChange({ poster: e.target.value })}
+            placeholder="Poster image URL (shown in email clients)" disabled={disabled}
+            data-testid={`block-video-poster-${i}`}
+            className="bg-[#141414] border-[#27272A] text-white text-xs font-mono" />
+        </div>
+      )}
+      {b.type === "audio" && (
+        <div className="grid grid-cols-2 gap-2">
+          <Input value={p.title || ""} onChange={(e) => onChange({ title: e.target.value })}
+            placeholder="Track title" disabled={disabled}
+            data-testid={`block-audio-title-${i}`}
+            className="bg-[#141414] border-[#27272A] text-white text-xs" />
+          <Input value={p.url || ""} onChange={(e) => onChange({ url: e.target.value })}
+            placeholder="MP3/OGG URL" disabled={disabled}
+            data-testid={`block-audio-url-${i}`}
+            className="bg-[#141414] border-[#27272A] text-white text-xs font-mono" />
+        </div>
+      )}
       {b.type === "button" && (
         <div className="grid grid-cols-2 gap-2">
           <Input value={p.label || ""} onChange={(e) => onChange({ label: e.target.value })}
@@ -351,6 +529,15 @@ function BlockEditor({ b, i, disabled, onChange, onRemove, onMove }) {
             placeholder="https://" disabled={disabled}
             data-testid={`block-btn-url-${i}`}
             className="bg-[#141414] border-[#27272A] text-white text-xs font-mono" />
+        </div>
+      )}
+      {b.type === "spacer" && (
+        <div className="flex items-center gap-2">
+          <Label className="text-[11px] text-[#71717A] shrink-0">Height (px)</Label>
+          <Input type="number" min={4} max={120} value={p.height || 24}
+            onChange={(e) => onChange({ height: parseInt(e.target.value || 0, 10) })}
+            data-testid={`block-spacer-height-${i}`}
+            className="w-24 bg-[#141414] border-[#27272A] text-white text-xs" />
         </div>
       )}
       {b.type === "coupon" && (
@@ -373,6 +560,94 @@ function BlockEditor({ b, i, disabled, onChange, onRemove, onMove }) {
       )}
       {(b.type === "subscribe_form" || b.type === "referral_cta" || b.type === "divider") && (
         <div className="text-[11px] text-[#71717A]">No config needed — auto-rendered.</div>
+      )}
+      {["heading", "text", "button", "image", "video", "divider"].includes(b.type) && (
+        <BlockStylePanel p={p} onChange={onChange} type={b.type} i={i} />
+      )}
+    </div>
+  );
+}
+
+function BlockStylePanel({ p, onChange, type, i }) {
+  const [open, setOpen] = useState(false);
+  const supportsAlign = ["heading", "text", "button", "image", "video"].includes(type);
+  const supportsColor = ["heading", "text", "button", "divider"].includes(type);
+  const supportsBg    = ["heading", "text", "button"].includes(type);
+  const supportsSize  = ["heading", "text"].includes(type);
+  return (
+    <div className="mt-2 pt-2 border-t border-[#27272A]">
+      <button type="button" onClick={() => setOpen((v) => !v)}
+        data-testid={`block-style-toggle-${i}`}
+        className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-[#71717A] hover:text-[#CCFF00]">
+        <Palette className="w-3 h-3" /> {open ? "Hide" : "Style"} options
+      </button>
+      {open && (
+        <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {supportsAlign && (
+            <label className="flex flex-col text-[10px] text-[#71717A]">
+              Align
+              <select value={p.align || "left"}
+                onChange={(e) => onChange({ align: e.target.value })}
+                data-testid={`block-style-align-${i}`}
+                className="mt-0.5 bg-[#141414] border border-[#27272A] rounded px-2 py-1 text-white text-xs">
+                <option value="left">Left</option>
+                <option value="center">Center</option>
+                <option value="right">Right</option>
+              </select>
+            </label>
+          )}
+          {supportsColor && (
+            <label className="flex flex-col text-[10px] text-[#71717A]">
+              {type === "button" ? "Text color" : type === "divider" ? "Line color" : "Text color"}
+              <input type="color" value={p.color || (type === "button" ? "#FFFFFF" : type === "divider" ? "#E4E4E7" : "#0A0A0A")}
+                onChange={(e) => onChange({ color: e.target.value })}
+                data-testid={`block-style-color-${i}`}
+                className="mt-0.5 h-8 w-full bg-transparent border border-[#27272A] rounded cursor-pointer" />
+            </label>
+          )}
+          {supportsBg && (
+            <label className="flex flex-col text-[10px] text-[#71717A]">
+              {type === "button" ? "Button color" : "Background"}
+              <input type="color" value={p.background || (type === "button" ? "#005CEE" : "#FFFFFF")}
+                onChange={(e) => onChange({ background: e.target.value })}
+                data-testid={`block-style-bg-${i}`}
+                className="mt-0.5 h-8 w-full bg-transparent border border-[#27272A] rounded cursor-pointer" />
+            </label>
+          )}
+          {supportsSize && (
+            <label className="flex flex-col text-[10px] text-[#71717A]">
+              Font size (px)
+              <Input type="number" min={10} max={64}
+                value={p.font_size || (type === "heading" ? 24 : 15)}
+                onChange={(e) => onChange({ font_size: parseInt(e.target.value || 0, 10) })}
+                data-testid={`block-style-fontsize-${i}`}
+                className="mt-0.5 h-8 bg-[#141414] border-[#27272A] text-white text-xs" />
+            </label>
+          )}
+          {type === "heading" && (
+            <label className="flex flex-col text-[10px] text-[#71717A]">
+              Level
+              <select value={p.level || "h2"}
+                onChange={(e) => onChange({ level: e.target.value })}
+                data-testid={`block-style-level-${i}`}
+                className="mt-0.5 bg-[#141414] border border-[#27272A] rounded px-2 py-1 text-white text-xs">
+                <option value="h1">H1</option>
+                <option value="h2">H2</option>
+                <option value="h3">H3</option>
+                <option value="h4">H4</option>
+              </select>
+            </label>
+          )}
+          {type === "button" && (
+            <label className="flex flex-col text-[10px] text-[#71717A]">
+              Radius (px)
+              <Input type="number" min={0} max={48} value={p.radius || 8}
+                onChange={(e) => onChange({ radius: parseInt(e.target.value || 0, 10) })}
+                data-testid={`block-style-radius-${i}`}
+                className="mt-0.5 h-8 bg-[#141414] border-[#27272A] text-white text-xs" />
+            </label>
+          )}
+        </div>
       )}
     </div>
   );

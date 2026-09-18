@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowLeft, FileText, Users, BarChart3, Palette, Gift, Settings as SettingsIcon,
-  Plus, Loader2, ExternalLink, Trash2, Send, Upload, Share2, Copy, LayoutTemplate,
+  Plus, Loader2, ExternalLink, Trash2, Send, Upload, Share2, Copy, LayoutTemplate, Eye, Save as SaveIcon,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
@@ -23,6 +23,36 @@ const TABS = [
   { k: "design", label: "Design", icon: Palette },
   { k: "settings", label: "Settings", icon: SettingsIcon },
 ];
+
+// Minimal client-side render for saved-template preview so we skip an extra API call.
+function _renderSavedTemplateHtml(st, pub) {
+  const primary = (pub && pub.primary_color) || "#005CEE";
+  const blocks = (st.blocks || []).map((b) => {
+    const p = b.props || {};
+    const align = ["left", "center", "right"].includes(p.align) ? p.align : "left";
+    if (b.type === "heading") {
+      const tag = ["h1", "h2", "h3", "h4"].includes(p.level) ? p.level : "h2";
+      return `<${tag} style="margin:20px 0 8px;text-align:${align};color:${p.color || "#0A0A0A"}">${(p.text || "").replace(/</g, "&lt;")}</${tag}>`;
+    }
+    if (b.type === "text")
+      return `<p style="margin:0 0 16px;text-align:${align};font-size:${p.font_size || 15}px;line-height:1.6;color:${p.color || "#3F3F46"};white-space:pre-wrap">${(p.text || "").replace(/</g, "&lt;")}</p>`;
+    if (b.type === "image" && p.url)
+      return `<img src="${p.url}" style="display:block;width:100%;border-radius:8px;margin:16px 0" />`;
+    if (b.type === "button")
+      return `<div style="margin:24px 0;text-align:${align}"><a href="${p.url || "#"}" style="display:inline-block;background:${p.background || primary};color:${p.color || "#fff"};text-decoration:none;padding:12px 24px;border-radius:${p.radius || 8}px;font-weight:700">${p.label || "Learn more"}</a></div>`;
+    if (b.type === "divider") return '<hr style="border:0;border-top:1px solid #E4E4E7;margin:24px 0" />';
+    if (b.type === "spacer") return `<div style="height:${p.height || 24}px"></div>`;
+    return "";
+  }).join("");
+  return `<!doctype html><html><body style="margin:0;padding:0;background:#F4F4F5;font-family:Helvetica,Arial,sans-serif">
+<table width="100%" style="padding:24px 12px"><tr><td align="center">
+<table width="640" style="background:#fff;border-radius:12px;overflow:hidden;max-width:640px">
+<tr><td style="padding:20px 28px;background:${primary};color:#fff;font-weight:700;letter-spacing:1px;font-size:13px;text-transform:uppercase">${(pub && pub.name) || "Your Newsletter"}</td></tr>
+<tr><td style="padding:28px 32px 8px"><h1 style="margin:0 0 8px;font-size:26px">${(st.title || "").replace(/</g, "&lt;")}</h1>
+${st.subtitle ? `<p style="margin:0 0 24px;color:#71717A;font-size:14px">${st.subtitle.replace(/</g, "&lt;")}</p>` : ""}
+${blocks}</td></tr>
+</table></td></tr></table></body></html>`;
+}
 
 export default function NewsletterDashboard() {
   const { pubId } = useParams();
@@ -85,6 +115,8 @@ function PostsTab({ pub }) {
   const [tplOpen, setTplOpen] = useState(false);
   const [templates, setTemplates] = useState(null);
   const [tplBusy, setTplBusy] = useState(null);  // template id being applied
+  const [savedTpls, setSavedTpls] = useState(null);
+  const [tplPreview, setTplPreview] = useState({ id: null, html: "", busy: false });
   const { data: posts = [] } = useQuery({
     queryKey: ["posts", pub.id],
     queryFn: async () => (await api.get(`/newsletter/publications/${pub.id}/posts`)).data,
@@ -99,11 +131,36 @@ function PostsTab({ pub }) {
   };
   const openTemplates = async () => {
     setTplOpen(true);
-    if (templates) return;
+    if (!templates) {
+      try {
+        const { data } = await api.get("/newsletter/templates");
+        setTemplates(data);
+      } catch (e) { toast.error(apiError(e)); }
+    }
+    if (!savedTpls) {
+      try {
+        const { data } = await api.get("/newsletter/saved-templates");
+        setSavedTpls(data);
+      } catch (e) { /* silent — table may not exist yet */ }
+    }
+  };
+  const previewTemplate = async (tid, isSaved = false) => {
+    setTplPreview({ id: tid, html: "", busy: true });
     try {
-      const { data } = await api.get("/newsletter/templates");
-      setTemplates(data);
-    } catch (e) { toast.error(apiError(e)); }
+      if (isSaved) {
+        // Render locally from stored blocks — no dedicated endpoint needed for saved templates.
+        const st = (savedTpls || []).find((s) => s.id === tid);
+        if (!st) throw new Error("Template not found");
+        // Simpler: reuse curated preview endpoint isn't applicable — build a minimal HTML preview client-side.
+        const html = _renderSavedTemplateHtml(st, pub);
+        setTplPreview({ id: tid, html, busy: false });
+      } else {
+        const { data } = await api.get(
+          `/newsletter/templates/${tid}/preview`,
+          { responseType: "text", transformResponse: [(x) => x] });
+        setTplPreview({ id: tid, html: data, busy: false });
+      }
+    } catch (e) { toast.error(apiError(e)); setTplPreview({ id: null, html: "", busy: false }); }
   };
   const applyTemplate = async (tid) => {
     setTplBusy(tid);
@@ -115,6 +172,24 @@ function PostsTab({ pub }) {
       navigate(`/newsletters/${pub.id}/posts/${data.id}`);
     } catch (e) { toast.error(apiError(e)); }
     finally { setTplBusy(null); }
+  };
+  const applySavedTemplate = async (tid) => {
+    setTplBusy(tid);
+    try {
+      const { data } = await api.post(
+        `/newsletter/publications/${pub.id}/posts/from-saved/${tid}`);
+      toast.success("Draft created from your saved template");
+      navigate(`/newsletters/${pub.id}/posts/${data.id}`);
+    } catch (e) { toast.error(apiError(e)); }
+    finally { setTplBusy(null); }
+  };
+  const deleteSaved = async (tid, name) => {
+    if (!window.confirm(`Delete template "${name}"?`)) return;
+    try {
+      await api.delete(`/newsletter/saved-templates/${tid}`);
+      setSavedTpls((s) => (s || []).filter((t) => t.id !== tid));
+      toast.success("Template deleted");
+    } catch (e) { toast.error(apiError(e)); }
   };
   const del = async (id) => {
     if (!window.confirm("Delete this draft?")) return;
@@ -137,49 +212,120 @@ function PostsTab({ pub }) {
           {busy ? <Loader2 className="w-4 h-4 spin" /> : <Plus className="w-4 h-4" />} New post
         </Button>
       </div>
-      <Dialog open={tplOpen} onOpenChange={setTplOpen}>
-        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-4xl max-h-[85vh] overflow-y-auto"
+      <Dialog open={tplOpen} onOpenChange={(o) => { setTplOpen(o); if (!o) setTplPreview({ id: null, html: "", busy: false }); }}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-6xl h-[85vh] flex flex-col overflow-hidden"
           data-testid="templates-dialog">
           <DialogHeader>
             <DialogTitle>Start from a template</DialogTitle>
             <div className="text-xs text-[#71717A] mt-1">
-              Pick a scaffold — we'll create a draft you can customize. Coupon codes and images are placeholders.
+              Preview any card first, then click "Use" to create a draft. Personal templates sit at the top.
             </div>
           </DialogHeader>
           {!templates ? (
             <div className="py-16 text-center"><Loader2 className="w-6 h-6 spin mx-auto text-[#CCFF00]" /></div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {templates.map((t) => (
-                <button key={t.id} onClick={() => applyTemplate(t.id)}
-                  disabled={!!tplBusy}
-                  data-testid={`template-card-${t.id}`}
-                  className="text-left surface rounded-lg p-5 border border-[#27272A] hover:border-[#CCFF00] transition disabled:opacity-60 group">
-                  <div className="flex items-start gap-3">
-                    <div className="w-11 h-11 rounded-lg flex items-center justify-center text-2xl shrink-0"
-                      style={{ background: `${t.accent}22`, border: `1px solid ${t.accent}55` }}>
-                      {t.preview_emoji}
+            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_1fr] gap-4">
+              <div className="overflow-y-auto pr-2 space-y-4">
+                {savedTpls && savedTpls.length > 0 && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-emerald-300 mb-2">
+                      Your workspace templates ({savedTpls.length})
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-display font-bold text-sm">{t.name}</h3>
-                        <span className="text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded bg-[#27272A] text-[#A1A1AA]">
-                          {t.category}
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#A1A1AA] mt-1 leading-relaxed">{t.description}</p>
-                      <div className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium"
-                        style={{ color: t.accent }}>
-                        {tplBusy === t.id ? (
-                          <><Loader2 className="w-3 h-3 spin" /> Creating…</>
-                        ) : (
-                          <>Use this template →</>
-                        )}
-                      </div>
+                    <div className="grid grid-cols-1 gap-2">
+                      {savedTpls.map((t) => (
+                        <div key={t.id} className="surface rounded-lg p-3 border border-emerald-500/20 flex items-center gap-3"
+                          data-testid={`saved-template-${t.id}`}>
+                          <div className="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/40 flex items-center justify-center text-emerald-300 text-lg shrink-0">
+                            <SaveIcon className="w-4 h-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-sm truncate">{t.name}</div>
+                            <div className="text-[11px] text-[#71717A] truncate">{t.title}</div>
+                          </div>
+                          <button onClick={() => previewTemplate(t.id, true)}
+                            className="text-[11px] text-sky-300 hover:underline"
+                            data-testid={`preview-saved-${t.id}`}>Preview</button>
+                          <Button onClick={() => applySavedTemplate(t.id)} disabled={!!tplBusy}
+                            data-testid={`use-saved-${t.id}`}
+                            size="sm" className="btn-primary rounded-md h-8 text-[11px]">
+                            {tplBusy === t.id ? <Loader2 className="w-3 h-3 spin" /> : "Use"}
+                          </Button>
+                          <button onClick={() => deleteSaved(t.id, t.name)}
+                            data-testid={`delete-saved-${t.id}`}
+                            className="text-[#71717A] hover:text-red-400">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                </button>
-              ))}
+                )}
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest text-[#71717A] mb-2">Curated templates</div>
+                  <div className="grid grid-cols-1 gap-2">
+                    {templates.map((t) => (
+                      <div key={t.id}
+                        data-testid={`template-card-${t.id}`}
+                        className={`surface rounded-lg p-4 border transition ${
+                          tplPreview.id === t.id ? "border-[#CCFF00]" : "border-[#27272A] hover:border-[#CCFF00]/60"
+                        }`}>
+                        <div className="flex items-start gap-3">
+                          <div className="w-11 h-11 rounded-lg flex items-center justify-center text-2xl shrink-0"
+                            style={{ background: `${t.accent}22`, border: `1px solid ${t.accent}55` }}>
+                            {t.preview_emoji}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-display font-bold text-sm">{t.name}</h3>
+                              <span className="text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded bg-[#27272A] text-[#A1A1AA]">
+                                {t.category}
+                              </span>
+                            </div>
+                            <p className="text-xs text-[#A1A1AA] mt-1 leading-relaxed">{t.description}</p>
+                            <div className="mt-2 flex items-center gap-3">
+                              <button onClick={() => previewTemplate(t.id)}
+                                data-testid={`preview-template-${t.id}`}
+                                className="inline-flex items-center gap-1 text-[11px] text-sky-300 hover:underline">
+                                <Eye className="w-3 h-3" /> Preview
+                              </button>
+                              <button onClick={() => applyTemplate(t.id)}
+                                disabled={!!tplBusy}
+                                data-testid={`use-template-${t.id}`}
+                                className="inline-flex items-center gap-1 text-[11px] font-medium"
+                                style={{ color: t.accent }}>
+                                {tplBusy === t.id ? (
+                                  <><Loader2 className="w-3 h-3 spin" /> Creating…</>
+                                ) : (
+                                  <>Use this template →</>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-md border border-[#27272A] bg-[#0A0A0A] overflow-hidden flex flex-col">
+                <div className="px-3 py-2 border-b border-[#27272A] text-[10px] uppercase tracking-widest text-[#71717A]">
+                  Live preview
+                </div>
+                {tplPreview.busy ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <Loader2 className="w-6 h-6 spin text-[#CCFF00]" />
+                  </div>
+                ) : tplPreview.html ? (
+                  <iframe title="tpl-preview" srcDoc={tplPreview.html}
+                    data-testid="template-preview-iframe"
+                    className="flex-1 bg-white border-0"
+                    sandbox="allow-same-origin" />
+                ) : (
+                  <div className="flex-1 flex items-center justify-center text-[#71717A] text-xs px-6 text-center">
+                    Click "Preview" on any template card to see how it will look.
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </DialogContent>

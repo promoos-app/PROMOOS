@@ -52,7 +52,21 @@ _PIXEL_GIF = bytes([
 ])
 
 BLOCK_TYPES = {"heading", "text", "image", "button", "divider",
-               "coupon", "giftcard", "funnel", "subscribe_form", "referral_cta"}
+               "coupon", "giftcard", "funnel", "subscribe_form", "referral_cta",
+               "video", "audio", "spacer"}
+
+
+def _safe_color(val, default):
+    """Accept only #rgb/#rrggbb hex strings; fall back to ``default`` otherwise.
+
+    Prevents CSS injection through user-supplied color props while still
+    letting merchants use their brand palette in every block.
+    """
+    if not isinstance(val, str): return default
+    import re as _re
+    if _re.fullmatch(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})", val.strip()):
+        return val.strip()
+    return default
 
 
 def _slugify(s: str, existing: set = None) -> str:
@@ -541,6 +555,212 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             raise HTTPException(404, "Template not found")
         return t
 
+    @api.get("/newsletter/templates/{template_id}/preview",
+             response_class=Response)
+    async def preview_template(template_id: str,
+                                 user: dict = Depends(get_current_user)):
+        """Render a curated template as HTML for the picker's inline preview.
+
+        Uses the caller's first publication (for name/color) as scaffold; if
+        the workspace has no publication yet, a synthetic default is used.
+        """
+        from routers.newsletter_templates import get_template
+        t = get_template(template_id)
+        if not t:
+            raise HTTPException(404, "Template not found")
+        pub = await db.publications.find_one(
+            {"workspace_id": user["workspace_id"]}, {"_id": 0}) or {
+            "name": "Your Newsletter", "primary_color": "#005CEE",
+            "workspace_id": user["workspace_id"], "slug": "preview",
+        }
+        synthetic_post = {"title": t["post"]["title"], "subtitle": t["post"].get("subtitle"),
+                          "blocks": t["post"].get("blocks") or []}
+        html = await _render_post_html(pub, synthetic_post,
+                                          subscriber_id="preview",
+                                          for_email=True, test=True)
+        return Response(content=html, media_type="text/html")
+
+    # ---- Saved (personal) templates ---------------------------------------
+    class SavedTemplateIn(BaseModel):
+        name: str
+        post_id: Optional[str] = None
+        # Snapshot fields — required if post_id not provided
+        title: Optional[str] = None
+        subtitle: Optional[str] = None
+        blocks: Optional[List[dict]] = None
+
+    @api.post("/newsletter/saved-templates")
+    async def create_saved_template(body: SavedTemplateIn,
+                                       user: dict = Depends(get_current_user)):
+        """Save a post (or arbitrary blocks) as a reusable per-workspace template."""
+        require_writer(user)
+        if body.post_id:
+            post = await db.newsletter_posts.find_one(
+                {"id": body.post_id, "workspace_id": user["workspace_id"]},
+                {"_id": 0, "title": 1, "subtitle": 1, "blocks": 1})
+            if not post:
+                raise HTTPException(404, "Post not found")
+            title = post.get("title", ""); subtitle = post.get("subtitle") or ""
+            blocks = post.get("blocks") or []
+        else:
+            title = (body.title or "").strip()
+            subtitle = (body.subtitle or "").strip()
+            blocks = body.blocks or []
+        if not (body.name and title and blocks):
+            raise HTTPException(400, "name, title, and at least one block are required")
+        doc = {"id": str(uuid.uuid4()), "workspace_id": user["workspace_id"],
+               "name": body.name.strip()[:80],
+               "title": title[:200], "subtitle": subtitle[:280],
+               "blocks": _sanitize_blocks(blocks),
+               "created_by": user["id"], "created_at": now_iso()}
+        await db.newsletter_saved_templates.insert_one({**doc})
+        return doc
+
+    @api.get("/newsletter/saved-templates")
+    async def list_saved_templates(user: dict = Depends(get_current_user)):
+        return await db.newsletter_saved_templates.find(
+            {"workspace_id": user["workspace_id"]}, {"_id": 0}
+        ).sort("created_at", -1).to_list(200)
+
+    @api.delete("/newsletter/saved-templates/{tid}")
+    async def delete_saved_template(tid: str, user: dict = Depends(get_current_user)):
+        require_writer(user)
+        r = await db.newsletter_saved_templates.delete_one(
+            {"id": tid, "workspace_id": user["workspace_id"]})
+        if r.deleted_count == 0:
+            raise HTTPException(404, "Not found")
+        return {"ok": True}
+
+    @api.post("/newsletter/publications/{pid}/posts/from-saved/{tid}")
+    async def create_post_from_saved(pid: str, tid: str,
+                                       user: dict = Depends(get_current_user)):
+        """Create a new draft from a workspace-owned saved template."""
+        require_writer(user)
+        pub = await _get_pub(pid, user["workspace_id"])
+        st = await db.newsletter_saved_templates.find_one(
+            {"id": tid, "workspace_id": user["workspace_id"]}, {"_id": 0})
+        if not st:
+            raise HTTPException(404, "Saved template not found")
+        slug = await _uniq_post_slug(pid, st["title"])
+        doc = {"id": str(uuid.uuid4()), "publication_id": pid,
+                "workspace_id": pub["workspace_id"],
+                "title": st["title"][:200], "subtitle": (st.get("subtitle") or "")[:280],
+                "slug": slug, "blocks": _sanitize_blocks(st.get("blocks") or []),
+                "channels": ["email"], "sms_body": "",
+                "status": "draft", "scheduled_at": None, "sent_at": None,
+                "created_by": user["id"], "created_from_saved_template": tid,
+                "created_at": now_iso(), "updated_at": now_iso(),
+                "stats": {"sent": 0, "opens": 0, "unique_opens": 0,
+                           "clicks": 0, "unique_clicks": 0, "unsubscribes": 0,
+                           "sms_sent": 0, "whatsapp_sent": 0}}
+        await db.newsletter_posts.insert_one({**doc})
+        return doc
+
+    # ---- Shared preview + comments (team approval flow) -------------------
+    def _share_token(pid: str, post_id: str, ttl_hours: int = 168) -> str:
+        payload = {"pid": pid, "post_id": post_id, "kind": "nl_preview",
+                    "exp": datetime.now(timezone.utc) + timedelta(hours=ttl_hours)}
+        import jwt as _jwt
+        return _jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    @api.post("/newsletter/publications/{pid}/posts/{post_id}/share")
+    async def create_share_link(pid: str, post_id: str,
+                                  user: dict = Depends(get_current_user)):
+        """Return a public preview URL (valid 7 days) reviewers can visit to comment."""
+        require_writer(user)
+        await _get_pub(pid, user["workspace_id"])
+        post = await db.newsletter_posts.find_one(
+            {"id": post_id, "publication_id": pid}, {"_id": 0, "id": 1})
+        if not post: raise HTTPException(404, "Post not found")
+        tok = _share_token(pid, post_id)
+        base = PUBLIC_URL.rstrip("/") if PUBLIC_URL else ""
+        return {"token": tok, "url": f"{base}/newsletter/review/{tok}" if base else f"/newsletter/review/{tok}",
+                 "expires_in_hours": 168}
+
+    @api.get("/newsletter/public/review/{token}", response_class=Response)
+    async def public_review_html(token: str):
+        """Public rendered HTML for reviewers who received a share link."""
+        import jwt as _jwt
+        try:
+            payload = _jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        except _jwt.ExpiredSignatureError:
+            raise HTTPException(410, "This review link has expired")
+        except _jwt.InvalidTokenError:
+            raise HTTPException(401, "Invalid review link")
+        if payload.get("kind") != "nl_preview":
+            raise HTTPException(401, "Not a review token")
+        post = await db.newsletter_posts.find_one(
+            {"id": payload["post_id"], "publication_id": payload["pid"]}, {"_id": 0})
+        pub = await db.publications.find_one({"id": payload["pid"]}, {"_id": 0})
+        if not (post and pub): raise HTTPException(404, "Not found")
+        html = await _render_post_html(pub, post, subscriber_id="preview",
+                                          for_email=True, test=True)
+        return Response(content=html, media_type="text/html")
+
+    class ReviewCommentIn(BaseModel):
+        reviewer_name: str
+        body: str
+
+    @api.post("/newsletter/public/review/{token}/comments")
+    async def public_review_comment(token: str, body: ReviewCommentIn, request: Request):
+        """Reviewer posts a comment against the shared post — no auth required."""
+        import jwt as _jwt
+        try:
+            payload = _jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        except Exception:
+            raise HTTPException(401, "Invalid or expired review link")
+        if payload.get("kind") != "nl_preview":
+            raise HTTPException(401, "Not a review token")
+        name = (body.reviewer_name or "").strip()[:60]
+        text = (body.body or "").strip()[:2000]
+        if not (name and text):
+            raise HTTPException(400, "reviewer_name and body are required")
+        doc = {"id": str(uuid.uuid4()), "post_id": payload["post_id"],
+                "publication_id": payload["pid"], "reviewer_name": name,
+                "body": text, "resolved": False,
+                "ip": (request.client.host if request.client else None),
+                "created_at": now_iso()}
+        await db.newsletter_comments.insert_one({**doc})
+        return {"ok": True, "comment": {k: doc[k] for k in
+                                            ("id", "reviewer_name", "body", "resolved", "created_at")}}
+
+    @api.get("/newsletter/public/review/{token}/comments")
+    async def public_review_list_comments(token: str):
+        import jwt as _jwt
+        try:
+            payload = _jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        except Exception:
+            raise HTTPException(401, "Invalid or expired review link")
+        if payload.get("kind") != "nl_preview":
+            raise HTTPException(401, "Not a review token")
+        return await db.newsletter_comments.find(
+            {"post_id": payload["post_id"], "publication_id": payload["pid"]},
+            {"_id": 0, "ip": 0}
+        ).sort("created_at", 1).to_list(500)
+
+    @api.get("/newsletter/publications/{pid}/posts/{post_id}/comments")
+    async def list_post_comments(pid: str, post_id: str,
+                                    user: dict = Depends(get_current_user)):
+        await _get_pub(pid, user["workspace_id"])
+        return await db.newsletter_comments.find(
+            {"post_id": post_id, "publication_id": pid},
+            {"_id": 0, "ip": 0}
+        ).sort("created_at", -1).to_list(500)
+
+    @api.post("/newsletter/publications/{pid}/posts/{post_id}/comments/{cid}/resolve")
+    async def resolve_comment(pid: str, post_id: str, cid: str,
+                                user: dict = Depends(get_current_user)):
+        require_writer(user)
+        await _get_pub(pid, user["workspace_id"])
+        r = await db.newsletter_comments.update_one(
+            {"id": cid, "post_id": post_id, "publication_id": pid},
+            {"$set": {"resolved": True,
+                        "resolved_at": now_iso(), "resolved_by": user["id"]}})
+        if r.matched_count == 0:
+            raise HTTPException(404, "Comment not found")
+        return {"ok": True}
+
+
     class FromTemplateIn(BaseModel):
         template_id: str
 
@@ -658,23 +878,93 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
     def _render_block(b: dict, pub: dict, subscriber_id: str, for_email: bool) -> str:
         t = b["type"]; p = b.get("props") or {}
         primary = pub.get("primary_color", "#005CEE")
-        pid = ""  # post_id substituted inside _wrap_link caller; block doesn't need it directly since props include hydrated
+        # Common presentational helpers — every block honors these props.
+        align = p.get("align") or "left"
+        align = align if align in ("left", "center", "right") else "left"
+        text_color = _safe_color(p.get("color"), "#0A0A0A")
+        bg = _safe_color(p.get("background"), None)
+        bg_style = f"background:{bg};" if bg else ""
+        pad = int(p.get("padding") if str(p.get("padding") or "").isdigit() else 0)
+        pad_style = f"padding:{max(0, min(64, pad))}px;" if pad else ""
+        wrap_open = wrap_close = ""
+        if bg or pad:
+            wrap_open = f'<div style="{bg_style}{pad_style}border-radius:8px">'
+            wrap_close = "</div>"
         if t == "heading":
-            tag = "h2" if p.get("level", "h2") == "h2" else "h1"
-            return f'<{tag} style="margin:20px 0 8px;color:#0A0A0A">{p.get("text","")}</{tag}>'
+            level = p.get("level", "h2")
+            tag = level if level in ("h1", "h2", "h3", "h4") else "h2"
+            size = {"h1": 30, "h2": 24, "h3": 19, "h4": 16}[tag]
+            sz = int(p.get("font_size") or size)
+            return (f'{wrap_open}<{tag} style="margin:20px 0 8px;text-align:{align};'
+                    f'font-size:{max(12, min(64, sz))}px;line-height:1.2;color:{text_color}">'
+                    f'{p.get("text","")}</{tag}>{wrap_close}')
         if t == "text":
-            return f'<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#3F3F46;white-space:pre-wrap">{p.get("text","")}</p>'
+            sz = int(p.get("font_size") or 15)
+            return (f'{wrap_open}<p style="margin:0 0 16px;text-align:{align};'
+                    f'font-size:{max(10, min(28, sz))}px;line-height:1.6;color:{text_color};'
+                    f'white-space:pre-wrap">{p.get("text","")}</p>{wrap_close}')
         if t == "image":
             src = p.get("url", "")
             if not src: return ""
-            return f'<img src="{src}" alt="{p.get("alt","")}" style="display:block;width:100%;border-radius:8px;margin:16px 0" />'
+            w = p.get("width")
+            width_css = f"width:{int(w)}px;max-width:100%;" if str(w or "").isdigit() else "width:100%;"
+            radius = int(p.get("radius") or 8)
+            link = (p.get("link") or "").strip()
+            img = (f'<img src="{src}" alt="{p.get("alt","")}" '
+                   f'style="display:block;{width_css}border-radius:{max(0, min(48, radius))}px;'
+                   f'margin:0 auto" />')
+            if link:
+                img = f'<a href="{link}" style="text-decoration:none">{img}</a>'
+            return f'<div style="margin:16px 0;text-align:{align}">{img}</div>'
         if t == "button":
             url = p.get("url", "#"); label = p.get("label", "Learn more")
-            return (f'<div style="margin:24px 0"><a href="{url}" style="display:inline-block;'
-                    f'background:{primary};color:#fff;text-decoration:none;padding:12px 24px;'
-                    f'border-radius:8px;font-weight:700">{label}</a></div>')
+            btn_bg = _safe_color(p.get("background"), primary)
+            btn_color = _safe_color(p.get("color"), "#FFFFFF")
+            radius = int(p.get("radius") or 8)
+            return (f'<div style="margin:24px 0;text-align:{align}"><a href="{url}" '
+                    f'style="display:inline-block;background:{btn_bg};color:{btn_color};'
+                    f'text-decoration:none;padding:12px 24px;border-radius:{max(0, min(48, radius))}px;'
+                    f'font-weight:700">{label}</a></div>')
         if t == "divider":
-            return '<hr style="border:0;border-top:1px solid #E4E4E7;margin:24px 0" />'
+            color = _safe_color(p.get("color"), "#E4E4E7")
+            thick = int(p.get("thickness") or 1)
+            return f'<hr style="border:0;border-top:{max(1, min(8, thick))}px solid {color};margin:24px 0" />'
+        if t == "spacer":
+            h = int(p.get("height") or 24)
+            return f'<div style="height:{max(4, min(120, h))}px" aria-hidden="true"></div>'
+        if t == "video":
+            url = (p.get("url") or "").strip()
+            if not url: return ""
+            poster = (p.get("poster") or "").strip()
+            # Email clients ignore <video> — render a poster + play badge that links to the video URL.
+            if for_email:
+                if not poster:
+                    poster = ("https://via.placeholder.com/640x360/0A0A0A/CCFF00?text=%E2%96%B6")
+                return (f'<div style="margin:16px 0;text-align:{align}">'
+                        f'<a href="{url}" style="display:inline-block;position:relative;text-decoration:none">'
+                        f'<img src="{poster}" alt="Watch video" style="display:block;width:100%;max-width:640px;border-radius:10px" />'
+                        f'<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);'
+                        f'width:64px;height:64px;background:{primary};border-radius:50%;color:#fff;'
+                        f'font-size:24px;line-height:64px;text-align:center">▶</div></a></div>')
+            poster_attr = f' poster="{poster}"' if poster else ""
+            return (f'<div style="margin:16px 0;text-align:{align}">'
+                    f'<video controls style="width:100%;max-width:640px;border-radius:10px"'
+                    f'{poster_attr}>'
+                    f'<source src="{url}" /></video></div>')
+        if t == "audio":
+            url = (p.get("url") or "").strip()
+            if not url: return ""
+            title = p.get("title") or "Listen"
+            if for_email:
+                return (f'<div style="margin:16px 0;padding:20px;border:1px solid #E4E4E7;border-radius:10px;'
+                        f'display:flex;align-items:center;gap:12px">'
+                        f'<div style="width:44px;height:44px;background:{primary};border-radius:50%;'
+                        f'color:#fff;font-size:18px;line-height:44px;text-align:center">▶</div>'
+                        f'<div style="flex:1"><div style="font-weight:700;color:#0A0A0A">{title}</div>'
+                        f'<a href="{url}" style="color:{primary};font-size:12px;text-decoration:none">Open audio →</a>'
+                        f'</div></div>')
+            return (f'<div style="margin:16px 0"><div style="font-weight:700;margin-bottom:8px">{title}</div>'
+                    f'<audio controls style="width:100%"><source src="{url}" /></audio></div>')
         if t == "coupon":
             h = p.get("_hydrated") or {}
             code = h.get("code") or p.get("code", "CODE")

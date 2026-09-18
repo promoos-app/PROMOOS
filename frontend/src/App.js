@@ -40,6 +40,7 @@ import NewsletterDashboard from "@/pages/NewsletterDashboard";
 import NewsletterPostEditor from "@/pages/NewsletterPostEditor";
 import PublicNewsletter from "@/pages/PublicNewsletter";
 import PublicNewsletterPost from "@/pages/PublicNewsletterPost";
+import PublicNewsletterReview from "@/pages/PublicNewsletterReview";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -81,6 +82,7 @@ function App() {
           <Route path="/f/:slug" element={<PublicFunnel />} />
           <Route path="/n/:slug" element={<PublicNewsletter />} />
           <Route path="/n/:slug/p/:postSlug" element={<PublicNewsletterPost />} />
+          <Route path="/newsletter/review/:token" element={<PublicNewsletterReview />} />
           <Route path="/wallet/:token" element={<Wallet />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/terms" element={<TermsOfUse />} />
