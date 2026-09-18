@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import React from "react";
 import { useParams } from "react-router-dom";
 import api, { apiError } from "@/lib/api";
 import { toast } from "sonner";
@@ -18,6 +19,8 @@ export default function PublicNewsletterReview() {
   const [name, setName] = useState(() => localStorage.getItem("promoos_reviewer_name") || "");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
+  const [anchor, setAnchor] = useState(null);   // { block_id, block_type } | null
+  const iframeRef = React.useRef(null);
 
   const loadHtml = async () => {
     setLoadingHtml(true);
@@ -49,13 +52,37 @@ export default function PublicNewsletterReview() {
     setBusy(true);
     try {
       await api.post(`/newsletter/public/review/${token}/comments`,
-        { reviewer_name: name.trim(), body: body.trim() });
+        { reviewer_name: name.trim(), body: body.trim(),
+          block_id: anchor?.block_id || null });
       localStorage.setItem("promoos_reviewer_name", name.trim());
-      setBody("");
+      setBody(""); setAnchor(null);
       toast.success("Comment posted");
       loadComments();
     } catch (err) { toast.error(apiError(err)); }
     finally { setBusy(false); }
+  };
+
+  // Wire up per-block click-to-anchor once the iframe loads.
+  const onIframeLoad = () => {
+    try {
+      const doc = iframeRef.current?.contentDocument;
+      if (!doc) return;
+      // Inject subtle hover + selected outline
+      const style = doc.createElement("style");
+      style.textContent = `[data-block-id]{cursor:pointer;transition:box-shadow .15s;position:relative}
+        [data-block-id]:hover{box-shadow:0 0 0 2px #F472B6 inset}
+        [data-block-id].__anchored{box-shadow:0 0 0 3px #F472B6 inset}`;
+      doc.head.appendChild(style);
+      doc.querySelectorAll("[data-block-id]").forEach((el) => {
+        el.addEventListener("click", (ev) => {
+          ev.preventDefault(); ev.stopPropagation();
+          doc.querySelectorAll("[data-block-id].__anchored").forEach((n) => n.classList.remove("__anchored"));
+          el.classList.add("__anchored");
+          setAnchor({ block_id: el.getAttribute("data-block-id"),
+                       block_type: el.getAttribute("data-block-type") || "block" });
+        });
+      });
+    } catch (_) { /* cross-origin — silently skip */ }
   };
 
   if (error) {
@@ -95,6 +122,8 @@ export default function PublicNewsletterReview() {
           ) : (
             <iframe title="review-preview" srcDoc={html}
               data-testid="review-iframe"
+              ref={iframeRef}
+              onLoad={onIframeLoad}
               className="w-full bg-white rounded-md shadow-2xl"
               style={{ minHeight: "80vh", border: 0 }}
               sandbox="allow-same-origin" />
@@ -108,6 +137,21 @@ export default function PublicNewsletterReview() {
                 placeholder="Your name" required maxLength={60}
                 data-testid="review-name"
                 className="bg-[#0A0A0A] border-[#27272A] text-white text-xs" />
+              {anchor ? (
+                <div className="flex items-center gap-2 rounded-md bg-fuchsia-500/10 border border-fuchsia-500/40 px-2 py-1 text-[11px]"
+                  data-testid="review-anchor-pill">
+                  <span className="text-fuchsia-200">
+                    Anchored to <strong className="uppercase tracking-widest">{anchor.block_type}</strong> block
+                  </span>
+                  <button type="button" onClick={() => setAnchor(null)}
+                    data-testid="review-anchor-clear"
+                    className="ml-auto text-fuchsia-300 hover:text-white">clear</button>
+                </div>
+              ) : (
+                <div className="text-[10px] text-[#71717A] italic">
+                  Tip: click any block in the preview to attach your comment to it.
+                </div>
+              )}
               <Textarea value={body} onChange={(e) => setBody(e.target.value)}
                 placeholder="What should be changed?" rows={4} required maxLength={2000}
                 data-testid="review-body"

@@ -780,6 +780,7 @@ function SettingsTab({ pub, onDeleted }) {
   const [f, setF] = useState({
     name: pub.name, description: pub.description || "",
     sender_name: pub.sender_name || "", sender_email: pub.sender_email || "",
+    require_approval: !!pub.require_approval,
   });
   const [busy, setBusy] = useState(false);
   const save = async () => {
@@ -815,6 +816,20 @@ function SettingsTab({ pub, onDeleted }) {
             onChange={(e) => setF({ ...f, sender_email: e.target.value })}
             placeholder="you@yourdomain.com"
             className="mt-1 bg-[#0A0A0A] border-[#27272A] text-white" /></div>
+        <div className="pt-2 border-t border-[#27272A]">
+          <label className="flex items-start gap-2 cursor-pointer" data-testid="settings-require-approval-row">
+            <input type="checkbox" checked={f.require_approval}
+              onChange={(e) => setF({ ...f, require_approval: e.target.checked })}
+              data-testid="settings-require-approval"
+              className="mt-1 accent-amber-400" />
+            <span className="text-xs text-white">
+              Require approval before send
+              <div className="text-[11px] text-[#71717A] mt-0.5">
+                Blocks the "Send to all" button until every review comment is resolved. Great for teams with an editorial process.
+              </div>
+            </span>
+          </label>
+        </div>
         <Button data-testid="settings-save" onClick={save} disabled={busy} className="btn-primary rounded-md gap-2">
           {busy && <Loader2 className="w-4 h-4 spin" />} Save
         </Button>

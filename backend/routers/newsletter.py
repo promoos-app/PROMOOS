@@ -91,6 +91,7 @@ class PublicationIn(BaseModel):
     thanks_headline: Optional[str] = "You're in ✓"
     thanks_body: Optional[str] = "Check your inbox to confirm your address."
     referral_rewards: Optional[List[dict]] = None  # [{count: 3, coupon_percent: 10}, ...]
+    require_approval: Optional[bool] = False
 
 
 class SubscriberIn(BaseModel):
@@ -196,6 +197,7 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
                 [{"count": 3, "coupon_percent": 10},
                  {"count": 10, "coupon_percent": 20},
                  {"count": 25, "coupon_percent": 30}],
+            "require_approval": bool(body.require_approval),
             "created_by": user["id"],
             "created_at": now_iso(),
             "updated_at": now_iso(),
@@ -458,6 +460,11 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
                             user: dict = Depends(get_current_user)):
         require_writer(user)
         await _get_pub(pid, user["workspace_id"])
+        # Snapshot the pre-update state so merchants can roll back any save.
+        prev = await db.newsletter_posts.find_one(
+            {"id": post_id, "publication_id": pid}, {"_id": 0})
+        if prev and prev.get("status") in ("draft", "scheduled"):
+            await _snapshot_post(prev, user, reason="autosave")
         upd = {"title": body.title.strip()[:200],
                "subtitle": (body.subtitle or "")[:280],
                "blocks": _sanitize_blocks(body.blocks or []),
@@ -700,6 +707,7 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
     class ReviewCommentIn(BaseModel):
         reviewer_name: str
         body: str
+        block_id: Optional[str] = None    # Optional anchor to a specific block
 
     @api.post("/newsletter/public/review/{token}/comments")
     async def public_review_comment(token: str, body: ReviewCommentIn, request: Request):
@@ -718,11 +726,13 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
         doc = {"id": str(uuid.uuid4()), "post_id": payload["post_id"],
                 "publication_id": payload["pid"], "reviewer_name": name,
                 "body": text, "resolved": False,
+                "block_id": (body.block_id or None),
                 "ip": (request.client.host if request.client else None),
                 "created_at": now_iso()}
         await db.newsletter_comments.insert_one({**doc})
         return {"ok": True, "comment": {k: doc[k] for k in
-                                            ("id", "reviewer_name", "body", "resolved", "created_at")}}
+                                            ("id", "reviewer_name", "body", "resolved",
+                                             "block_id", "created_at")}}
 
     @api.get("/newsletter/public/review/{token}/comments")
     async def public_review_list_comments(token: str):
@@ -759,6 +769,80 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
         if r.matched_count == 0:
             raise HTTPException(404, "Comment not found")
         return {"ok": True}
+
+    # ---- Version history --------------------------------------------------
+    async def _snapshot_post(post: dict, user: dict, reason: str = "autosave"):
+        """Save a version snapshot; capped at 30 per post to bound storage."""
+        try:
+            existing = await db.newsletter_post_versions.count_documents({"post_id": post["id"]})
+            version_num = existing + 1
+            snap = {"id": str(uuid.uuid4()), "post_id": post["id"],
+                    "publication_id": post.get("publication_id"),
+                    "workspace_id": post.get("workspace_id"),
+                    "version_num": version_num, "reason": reason,
+                    "title": post.get("title", ""),
+                    "subtitle": post.get("subtitle", ""),
+                    "blocks": post.get("blocks", []),
+                    "channels": post.get("channels", ["email"]),
+                    "sms_body": post.get("sms_body", ""),
+                    "saved_by": user["id"], "saved_by_name": user.get("name", ""),
+                    "created_at": now_iso()}
+            await db.newsletter_post_versions.insert_one(snap)
+            # Trim oldest beyond 30
+            if version_num > 30:
+                cutoff_vs = await db.newsletter_post_versions.find(
+                    {"post_id": post["id"]},
+                    {"_id": 1, "version_num": 1}
+                ).sort("version_num", 1).to_list(version_num - 30)
+                if cutoff_vs:
+                    await db.newsletter_post_versions.delete_many(
+                        {"_id": {"$in": [v["_id"] for v in cutoff_vs]}})
+        except Exception as e:
+            logger.warning(f"version snapshot failed for {post.get('id')}: {e}")
+
+    @api.get("/newsletter/publications/{pid}/posts/{post_id}/versions")
+    async def list_versions(pid: str, post_id: str,
+                              user: dict = Depends(get_current_user)):
+        await _get_pub(pid, user["workspace_id"])
+        return await db.newsletter_post_versions.find(
+            {"post_id": post_id, "publication_id": pid},
+            {"_id": 0, "blocks": 0}   # list view is metadata-only
+        ).sort("version_num", -1).to_list(50)
+
+    @api.get("/newsletter/publications/{pid}/posts/{post_id}/versions/{vid}")
+    async def get_version(pid: str, post_id: str, vid: str,
+                            user: dict = Depends(get_current_user)):
+        await _get_pub(pid, user["workspace_id"])
+        v = await db.newsletter_post_versions.find_one(
+            {"id": vid, "post_id": post_id, "publication_id": pid}, {"_id": 0})
+        if not v: raise HTTPException(404, "Version not found")
+        return v
+
+    @api.post("/newsletter/publications/{pid}/posts/{post_id}/versions/{vid}/restore")
+    async def restore_version(pid: str, post_id: str, vid: str,
+                                user: dict = Depends(get_current_user)):
+        """Overwrite the current draft with a saved version (creates a fresh snapshot first)."""
+        require_writer(user)
+        await _get_pub(pid, user["workspace_id"])
+        v = await db.newsletter_post_versions.find_one(
+            {"id": vid, "post_id": post_id, "publication_id": pid}, {"_id": 0})
+        if not v: raise HTTPException(404, "Version not found")
+        cur = await db.newsletter_posts.find_one(
+            {"id": post_id, "publication_id": pid}, {"_id": 0})
+        if not cur: raise HTTPException(404, "Post not found")
+        if cur.get("status") == "sent":
+            raise HTTPException(400, "Cannot restore a version of an already-sent post")
+        # Snapshot current state before restoring so restore is itself reversible.
+        await _snapshot_post(cur, user, reason=f"pre-restore(v{v['version_num']})")
+        await db.newsletter_posts.update_one(
+            {"id": post_id, "publication_id": pid},
+            {"$set": {"title": v["title"], "subtitle": v.get("subtitle", ""),
+                      "blocks": v.get("blocks", []),
+                      "channels": v.get("channels", ["email"]),
+                      "sms_body": v.get("sms_body", ""),
+                      "updated_at": now_iso(),
+                      "restored_from_version": v["version_num"]}})
+        return {"ok": True, "restored_from_version": v["version_num"]}
 
 
     class FromTemplateIn(BaseModel):
@@ -804,7 +888,16 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
     async def send_now(pid: str, post_id: str,
                          user: dict = Depends(get_current_user)):
         require_writer(user)
-        await _get_pub(pid, user["workspace_id"])
+        pub = await _get_pub(pid, user["workspace_id"])
+        # Approval gate — publication-level toggle blocks sends until every
+        # review comment is resolved. Prevents shipping newsletters mid-review.
+        if pub.get("require_approval"):
+            unresolved = await db.newsletter_comments.count_documents(
+                {"post_id": post_id, "publication_id": pid, "resolved": False})
+            if unresolved:
+                raise HTTPException(400,
+                    f"Approval required: {unresolved} unresolved review comment(s). "
+                    f"Resolve them or disable 'Require approval' in Newsletter → Settings.")
         r = await db.newsletter_posts.update_one(
             {"id": post_id, "publication_id": pid, "status": "draft"},
             {"$set": {"status": "scheduled", "scheduled_at": now_iso(),
@@ -851,7 +944,14 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
 """]
         for b in post.get("blocks", []):
             await _hydrate_block(b, pub["workspace_id"])
-            pieces.append(_render_block(b, pub, subscriber_id, for_email))
+            rendered = _render_block(b, pub, subscriber_id, for_email)
+            # Wrap each block with a stable anchor so the review UI can link
+            # comments to a specific block. Zero visual impact.
+            if rendered and b.get("id"):
+                rendered = (f'<div data-block-id="{b["id"]}" '
+                            f'data-block-type="{b.get("type","")}">'
+                            f'{rendered}</div>')
+            pieces.append(rendered)
         # Footer with unsubscribe link (only for real sends).
         footer_html = ""
         if for_email and not test and subscriber_id != "test":

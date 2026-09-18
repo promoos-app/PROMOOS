@@ -1,6 +1,13 @@
 # PromoOS — AI Promotional Commerce Platform (PRD)
 
-## STATUS: FEATURE-COMPLETE (Feb 2026)
+## STATUS: LAUNCH-READY (Feb 2026) — promoos.sale
+- **Live domain**: `PUBLIC_APP_URL=https://promoos.sale` set in backend/.env
+
+## Latest (Iter 36, Feb 2026) — Comment Anchoring + Version History + Approval Gate
+- **Comment anchoring**: `_render_post_html` now wraps every block with `data-block-id`/`data-block-type`. Public review page injects click-to-anchor CSS into the iframe — clicking a block outlines it in fuchsia and pins the anchor pill. Comment payload carries `block_id`; editor sidebar shows an "ON: <type>" chip on each anchored comment
+- **Version history**: Every save creates a snapshot in `newsletter_post_versions` (30-cap, oldest pruned). Editor gets a "Versions" toolbar button opening a dialog with per-version rows + Restore. Restore itself is reversible — it snapshots the current state before overwriting
+- **Approval gate**: Publication setting `require_approval`; `send-now` returns HTTP 400 if any review comment is unresolved. Editor shows an amber banner when approval is required and comments are still open. Settings tab has a "Require approval before send" checkbox
+- Curl-verified end-to-end: v1→v2 saves, restore returns to v1, approval blocks send with clear 400 message, disabling approval unblocks it
 
 ## Latest (Iter 35, Feb 2026) — Full Newsletter Customization + Team Review
 - **Every block fully stylable**: heading/text/button/image/video/divider now honor `align`, `color`, `background`, `font_size`, `radius`, `padding`, `width`, `link`, `poster` props with hex-only validation (`_safe_color`). New "Style" toggle in each block editor exposes align chips, color pickers, size/radius sliders

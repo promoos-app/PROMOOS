@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   ArrowLeft, Save, Send, Trash2, Plus, ChevronUp, ChevronDown, Loader2,
-  Heading, Type, Image as ImageIcon, MousePointerClick, Ticket, Gift, Rocket, Minus, Share2, Users, Sparkles, Upload, Search, Check as CheckIcon, Eye, Video, Music, MoveVertical, MessageSquare, Link2, Save as SaveIcon, Palette,
+  Heading, Type, Image as ImageIcon, MousePointerClick, Ticket, Gift, Rocket, Minus, Share2, Users, Sparkles, Upload, Search, Check as CheckIcon, Eye, Video, Music, MoveVertical, MessageSquare, Link2, Save as SaveIcon, Palette, History, RotateCcw, AlertCircle,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
@@ -34,6 +34,7 @@ export default function NewsletterPostEditor() {
   const { pubId, postId } = useParams();
   const navigate = useNavigate();
   const [post, setPost] = useState(null);
+  const [pub, setPub] = useState(null);
   const [saving, setSaving] = useState(false);
   const [sendTo, setSendTo] = useState("");
   const [aiOpen, setAiOpen] = useState(false);
@@ -43,6 +44,30 @@ export default function NewsletterPostEditor() {
   const [previewHtml, setPreviewHtml] = useState("");
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewDevice, setPreviewDevice] = useState("desktop");    // desktop | mobile
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [versions, setVersions] = useState([]);
+  const [versionsBusy, setVersionsBusy] = useState(false);
+
+  const openVersions = async () => {
+    setVersionsOpen(true); setVersionsBusy(true);
+    try {
+      const { data } = await api.get(
+        `/newsletter/publications/${pubId}/posts/${postId}/versions`);
+      setVersions(data);
+    } catch (e) { toast.error(apiError(e)); }
+    finally { setVersionsBusy(false); }
+  };
+  const restoreVersion = async (vid, num) => {
+    if (!window.confirm(`Restore version ${num}? Your current draft will be snapshotted first, so this is reversible.`)) return;
+    try {
+      await api.post(`/newsletter/publications/${pubId}/posts/${postId}/versions/${vid}/restore`);
+      toast.success(`Restored v${num}`);
+      const { data } = await api.get(`/newsletter/publications/${pubId}/posts/${postId}`);
+      setPost(data);
+      setVersionsOpen(false);
+      openVersions();  // refresh list
+    } catch (e) { toast.error(apiError(e)); }
+  };
 
   const openPreview = async () => {
     setPreviewOpen(true); setPreviewBusy(true); setPreviewHtml("");
@@ -119,6 +144,8 @@ export default function NewsletterPostEditor() {
   useEffect(() => {
     api.get(`/newsletter/publications/${pubId}/posts/${postId}`)
       .then((r) => setPost(r.data)).catch((e) => toast.error(apiError(e)));
+    api.get(`/newsletter/publications/${pubId}`)
+      .then((r) => setPub(r.data)).catch(() => {});
   }, [pubId, postId]);
 
   const set = (k, v) => setPost((p) => ({ ...p, [k]: v }));
@@ -238,6 +265,10 @@ export default function NewsletterPostEditor() {
             className="rounded-md gap-2 border border-[#27272A] h-9 text-xs hover:border-emerald-400">
             <SaveIcon className="w-3.5 h-3.5" /> Save as template
           </Button>
+          <Button data-testid="editor-versions" onClick={openVersions} variant="ghost"
+            className="rounded-md gap-2 border border-[#27272A] h-9 text-xs hover:border-amber-400">
+            <History className="w-3.5 h-3.5" /> Versions
+          </Button>
           <Button data-testid="editor-send-test" onClick={sendTest} variant="ghost"
             className="rounded-md gap-2 border border-[#27272A] h-9 text-xs hover:border-[#CCFF00]">
             <Send className="w-3.5 h-3.5" /> Test
@@ -252,6 +283,18 @@ export default function NewsletterPostEditor() {
           </Button>
         </div>
       </div>
+
+      {/* Approval gate banner — visible when publication requires approval and
+          there are still unresolved review comments. */}
+      {pub && pub.require_approval && comments.filter((c) => !c.resolved).length > 0 && (
+        <div data-testid="approval-gate-banner"
+          className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 flex items-center gap-2 text-sm">
+          <AlertCircle className="w-4 h-4 text-amber-300 shrink-0" />
+          <span className="text-amber-100">
+            Approval required — resolve {comments.filter((c) => !c.resolved).length} review comment{comments.filter((c) => !c.resolved).length > 1 ? "s" : ""} before you can send.
+          </span>
+        </div>
+      )}
 
       {/* Preview dialog — WYSIWYG email render in a sandboxed iframe. */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
@@ -351,6 +394,48 @@ export default function NewsletterPostEditor() {
         </DialogContent>
       </Dialog>
 
+      {/* Versions dialog — full save history with restore. */}
+      <Dialog open={versionsOpen} onOpenChange={setVersionsOpen}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-2xl max-h-[85vh] overflow-y-auto"
+          data-testid="versions-dialog">
+          <DialogHeader>
+            <DialogTitle>Version history</DialogTitle>
+            <div className="text-xs text-[#71717A] mt-1">
+              Every save is snapshotted (up to 30). Restore any version — your current draft will be snapshotted first so it's reversible.
+            </div>
+          </DialogHeader>
+          {versionsBusy ? (
+            <div className="py-12 text-center"><Loader2 className="w-6 h-6 spin mx-auto text-[#CCFF00]" /></div>
+          ) : versions.length === 0 ? (
+            <div className="py-12 text-center text-[#71717A] text-xs italic">
+              No versions yet. Save the draft to start building history.
+            </div>
+          ) : (
+            <div className="divide-y divide-[#27272A] rounded-md border border-[#27272A]">
+              {versions.map((v) => (
+                <div key={v.id} data-testid={`version-row-${v.version_num}`}
+                  className="px-4 py-3 flex items-center gap-3 hover:bg-white/5">
+                  <div className="w-10 h-10 rounded-md bg-amber-500/10 border border-amber-500/40 flex items-center justify-center text-amber-300 font-mono font-bold text-xs shrink-0">
+                    v{v.version_num}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{v.title || "(no title)"}</div>
+                    <div className="text-[11px] text-[#71717A]">
+                      {new Date(v.created_at).toLocaleString()} · {v.saved_by_name || v.saved_by?.slice(0, 8)} · {v.reason}
+                    </div>
+                  </div>
+                  <Button size="sm" onClick={() => restoreVersion(v.id, v.version_num)}
+                    data-testid={`restore-version-${v.version_num}`}
+                    className="rounded-md gap-1 h-8 text-[11px] bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-white">
+                    <RotateCcw className="w-3 h-3" /> Restore
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_240px] gap-4">
         <div className="surface rounded-lg p-6 space-y-3">
           <div className="flex items-center gap-2 flex-wrap pb-3 border-b border-[#27272A]" data-testid="channel-chips">
@@ -436,7 +521,9 @@ export default function NewsletterPostEditor() {
               <div className="text-[10px] text-[#71717A] italic">No comments yet. Share the review link with your team.</div>
             ) : (
               <div className="space-y-2 max-h-64 overflow-y-auto">
-                {comments.map((c) => (
+                {comments.map((c) => {
+                  const blk = c.block_id && (post?.blocks || []).find((b) => b.id === c.block_id);
+                  return (
                   <div key={c.id} data-testid={`comment-${c.id}`}
                     className={`rounded-md p-2 border text-[11px] ${
                       c.resolved
@@ -457,9 +544,14 @@ export default function NewsletterPostEditor() {
                         </button>
                       )}
                     </div>
+                    {blk && (
+                      <div className="mb-1 inline-block px-1.5 py-0.5 rounded bg-fuchsia-500/20 text-fuchsia-200 text-[9px] uppercase tracking-widest">
+                        On: {blk.type}
+                      </div>
+                    )}
                     <div className="text-[#E4E4E7] whitespace-pre-wrap">{c.body}</div>
                   </div>
-                ))}
+                )})}
               </div>
             )}
           </div>
