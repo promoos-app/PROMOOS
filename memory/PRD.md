@@ -2,6 +2,12 @@
 
 ## STATUS: LAUNCH-READY (Feb 2026) — promoos.sale
 
+## Latest (Iter 38, Feb 2026) — Universal Color Customization
+- **Per-post `theme`** persists 8 surface colors: `title_color`, `subtitle_color`, `body_bg`, `card_bg`, `header_bg`, `header_text`, `footer_bg`, `footer_text`. All hex-validated via `_safe_color`; falls back to publication primary when unset
+- **New "Theme" toolbar button** opens a dialog with 8 color pickers + hex readouts + Reset button
+- **Promo blocks get color props**: coupon (accent + card_bg + headline_color), giftcard (background + text color), funnel/subscribe_form/referral_cta (accent + optional bg). Inline `ColorRow` widget under each block editor
+- Curl-verified 9 scenarios (title pink, subtitle green, body indigo, card slate, header orange, coupon magenta accent + blush bg, giftcard cyan, subscribe amber) all render correctly
+
 ## Latest (Iter 37, Feb 2026) — Universal Hyperlinks
 - **Heading href**: optional `href` prop wraps entire heading in a link; validated by `_safe_href`
 - **Text markdown**: `[label](https://url)` inline links + bare-URL auto-linking, HTML-escaped for XSS safety

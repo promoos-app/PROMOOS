@@ -156,6 +156,7 @@ class PostIn(BaseModel):
     blocks: Optional[List[dict]] = None
     channels: Optional[List[str]] = None  # ["email", "sms", "whatsapp"]
     sms_body: Optional[str] = ""
+    theme: Optional[dict] = None   # {title_color, subtitle_color, body_bg, card_bg, header_bg, header_text, footer_bg, footer_text}
 
 
 class ScheduleIn(BaseModel):
@@ -468,6 +469,7 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             ]),
             "channels": _sanitize_channels(body.channels),
             "sms_body": (body.sms_body or "")[:300],
+            "theme": body.theme or {},
             "status": "draft",
             "scheduled_at": None,
             "sent_at": None,
@@ -512,6 +514,8 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
                "channels": _sanitize_channels(body.channels),
                "sms_body": (body.sms_body or "")[:300],
                "updated_at": now_iso()}
+        if body.theme is not None:
+            upd["theme"] = body.theme or {}
         r = await db.newsletter_posts.update_one(
             {"id": post_id, "publication_id": pid,
              "status": {"$in": ["draft", "scheduled"]}}, {"$set": upd})
@@ -972,16 +976,26 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
     async def _render_post_html(pub: dict, post: dict, subscriber_id: str,
                                   for_email: bool, test: bool = False) -> str:
         primary = pub.get("primary_color", "#005CEE")
+        # Per-post theme — merchants can override every surface color.
+        theme = post.get("theme") or {}
+        title_color    = _safe_color(theme.get("title_color"),    "#0A0A0A")
+        subtitle_color = _safe_color(theme.get("subtitle_color"), "#71717A")
+        body_bg        = _safe_color(theme.get("body_bg"),        "#0A0A0A")
+        card_bg        = _safe_color(theme.get("card_bg"),        "#FFFFFF")
+        header_bg      = _safe_color(theme.get("header_bg"),      primary)
+        header_text    = _safe_color(theme.get("header_text"),    "#FFFFFF")
+        footer_bg      = _safe_color(theme.get("footer_bg"),      "#FAFAFA")
+        footer_text    = _safe_color(theme.get("footer_text"),    "#71717A")
         pieces = [f"""<!doctype html><html><head><meta charset="utf-8">
 <title>{post['title']}</title></head>
-<body style="margin:0;padding:0;background:#0A0A0A;font-family:Helvetica,Arial,sans-serif;color:#0A0A0A">
+<body style="margin:0;padding:0;background:{body_bg};font-family:Helvetica,Arial,sans-serif;color:#0A0A0A">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 12px">
 <tr><td align="center">
-<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="background:#FFFFFF;border-radius:12px;overflow:hidden;max-width:640px">
-<tr><td style="padding:24px 32px;background:{primary};color:#fff;font-weight:700;font-size:14px;letter-spacing:1px;text-transform:uppercase">{pub['name']}</td></tr>
+<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="background:{card_bg};border-radius:12px;overflow:hidden;max-width:640px">
+<tr><td style="padding:24px 32px;background:{header_bg};color:{header_text};font-weight:700;font-size:14px;letter-spacing:1px;text-transform:uppercase">{pub['name']}</td></tr>
 <tr><td style="padding:32px 32px 8px">
-<h1 style="margin:0 0 8px;font-size:28px;line-height:1.15;color:#0A0A0A">{post['title']}</h1>
-{f'<p style="margin:0 0 24px;color:#71717A;font-size:14px">{post["subtitle"]}</p>' if post.get('subtitle') else ''}
+<h1 style="margin:0 0 8px;font-size:28px;line-height:1.15;color:{title_color}">{post['title']}</h1>
+{f'<p style="margin:0 0 24px;color:{subtitle_color};font-size:14px">{post["subtitle"]}</p>' if post.get('subtitle') else ''}
 """]
         for b in post.get("blocks", []):
             await _hydrate_block(b, pub["workspace_id"])
@@ -998,8 +1012,8 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
         if for_email and not test and subscriber_id != "test":
             unsub_url = f"{PUBLIC_URL}/api/newsletter/track/unsubscribe/{post['id']}/{subscriber_id}" if PUBLIC_URL else "#"
             footer_html = f"""
-<tr><td style="padding:24px 32px;background:#FAFAFA;border-top:1px solid #E4E4E7;font-size:11px;color:#71717A;text-align:center">
-<div>Sent by {pub.get('sender_name') or pub['name']} · <a href="{unsub_url}" style="color:#71717A">Unsubscribe</a></div>
+<tr><td style="padding:24px 32px;background:{footer_bg};border-top:1px solid #E4E4E7;font-size:11px;color:{footer_text};text-align:center">
+<div>Sent by {pub.get('sender_name') or pub['name']} · <a href="{unsub_url}" style="color:{footer_text}">Unsubscribe</a></div>
 <div style="margin-top:6px">Powered by PromoOS Newsletters</div>
 </td></tr>"""
         # Open pixel (email only)
@@ -1116,15 +1130,20 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             h = p.get("_hydrated") or {}
             code = h.get("code") or p.get("code", "CODE")
             landing = f"{PUBLIC_URL}/c/{code}" if PUBLIC_URL else "#"
-            return f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0"><tr><td style="padding:20px;border:2px dashed {primary};border-radius:10px;text-align:center">
+            accent = _safe_color(p.get("accent"), primary)
+            card_bg2 = _safe_color(p.get("background"), "#FFFFFF")
+            head_c = _safe_color(p.get("headline_color"), "#0A0A0A")
+            return f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0"><tr><td style="padding:20px;border:2px dashed {accent};border-radius:10px;text-align:center;background:{card_bg2}">
 <div style="font-size:13px;color:#71717A;text-transform:uppercase;letter-spacing:2px;margin-bottom:8px">Reader-only offer</div>
-<div style="font-size:20px;font-weight:800;margin-bottom:12px;color:#0A0A0A">{h.get('headline') or 'A gift for you'}</div>
-<div style="font-family:monospace;font-size:22px;font-weight:800;letter-spacing:4px;color:{primary};margin-bottom:16px">{code}</div>
-<a href="{landing}" style="display:inline-block;background:{primary};color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:700">{h.get('cta') or 'Redeem'}</a>
+<div style="font-size:20px;font-weight:800;margin-bottom:12px;color:{head_c}">{h.get('headline') or 'A gift for you'}</div>
+<div style="font-family:monospace;font-size:22px;font-weight:800;letter-spacing:4px;color:{accent};margin-bottom:16px">{code}</div>
+<a href="{landing}" style="display:inline-block;background:{accent};color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:700">{h.get('cta') or 'Redeem'}</a>
 </td></tr></table>"""
         if t == "giftcard":
             h = p.get("_hydrated") or {}
-            return f"""<div style="margin:16px 0;padding:24px;background:#0A0A0A;color:#fff;border-radius:12px;text-align:center">
+            gc_bg = _safe_color(p.get("background"), "#0A0A0A")
+            gc_fg = _safe_color(p.get("color"), "#FFFFFF")
+            return f"""<div style="margin:16px 0;padding:24px;background:{gc_bg};color:{gc_fg};border-radius:12px;text-align:center">
 <div style="font-size:12px;letter-spacing:3px;text-transform:uppercase;opacity:0.6">Gift Card</div>
 <div style="font-size:36px;font-weight:800;margin:12px 0">${h.get('amount') or 25}</div>
 <div style="font-size:13px;opacity:0.8">{h.get('message') or 'Redeem at checkout.'}</div>
@@ -1133,22 +1152,26 @@ def register(api, db, now_iso, get_current_user, require_writer, ctx):
             h = p.get("_hydrated") or {}
             slug = h.get("slug") or p.get("slug", "")
             landing = f"{PUBLIC_URL}/f/{slug}" if (PUBLIC_URL and slug) else "#"
+            accent = _safe_color(p.get("accent"), primary)
             return (f'<div style="margin:16px 0;padding:20px;border:1px solid #E4E4E7;border-radius:10px">'
                     f'<div style="font-size:12px;color:#71717A;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">Featured</div>'
                     f'<div style="font-size:18px;font-weight:700;margin-bottom:12px">{h.get("name","Take a look")}</div>'
-                    f'<a href="{landing}" style="color:{primary};font-weight:700;text-decoration:none">Explore →</a></div>')
+                    f'<a href="{landing}" style="color:{accent};font-weight:700;text-decoration:none">Explore →</a></div>')
         if t == "subscribe_form":
             url = f"{PUBLIC_URL}/n/{pub['slug']}" if PUBLIC_URL else "#"
-            return (f'<div style="margin:24px 0;padding:24px;background:#F4F4F5;border-radius:10px;text-align:center">'
+            sf_bg = _safe_color(p.get("background"), "#F4F4F5")
+            sf_accent = _safe_color(p.get("accent"), primary)
+            return (f'<div style="margin:24px 0;padding:24px;background:{sf_bg};border-radius:10px;text-align:center">'
                     f'<div style="font-size:16px;font-weight:700;margin-bottom:6px">Enjoying this?</div>'
                     f'<div style="font-size:13px;color:#71717A;margin-bottom:12px">Share the link so friends can subscribe.</div>'
-                    f'<a href="{url}" style="color:{primary};font-weight:700;text-decoration:none">{url}</a></div>')
+                    f'<a href="{url}" style="color:{sf_accent};font-weight:700;text-decoration:none">{url}</a></div>')
         if t == "referral_cta":
             if subscriber_id in ("test", ""):
                 return ""  # can only render for a real subscriber
             ref_url = f"{PUBLIC_URL}/n/{pub['slug']}?ref={subscriber_id}" if PUBLIC_URL else "#"
-            return (f'<div style="margin:24px 0;padding:20px;background:{primary}10;border:1px solid {primary}44;border-radius:10px;text-align:center">'
-                    f'<div style="font-size:14px;font-weight:700;color:{primary};margin-bottom:6px">Refer 3 friends → 10% off coupon</div>'
+            accent = _safe_color(p.get("accent"), primary)
+            return (f'<div style="margin:24px 0;padding:20px;background:{accent}10;border:1px solid {accent}44;border-radius:10px;text-align:center">'
+                    f'<div style="font-size:14px;font-weight:700;color:{accent};margin-bottom:6px">Refer 3 friends → 10% off coupon</div>'
                     f'<div style="font-size:12px;color:#3F3F46;margin-bottom:12px">Share your link — every signup unlocks bigger rewards.</div>'
                     f'<div style="font-family:monospace;font-size:11px;background:#fff;padding:8px;border-radius:6px;border:1px solid #E4E4E7">{ref_url}</div></div>')
         return ""

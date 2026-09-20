@@ -47,6 +47,9 @@ export default function NewsletterPostEditor() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versions, setVersions] = useState([]);
   const [versionsBusy, setVersionsBusy] = useState(false);
+  const [themeOpen, setThemeOpen] = useState(false);
+  const themeVal = (k, dflt) => (post?.theme && post.theme[k]) || dflt;
+  const setTheme = (k, v) => setPost((p) => ({ ...p, theme: { ...(p.theme || {}), [k]: v } }));
 
   const openVersions = async () => {
     setVersionsOpen(true); setVersionsBusy(true);
@@ -167,7 +170,8 @@ export default function NewsletterPostEditor() {
     try {
       await api.put(`/newsletter/publications/${pubId}/posts/${postId}`,
         { title: post.title, subtitle: post.subtitle, blocks: post.blocks,
-          channels: post.channels, sms_body: post.sms_body });
+          channels: post.channels, sms_body: post.sms_body,
+          theme: post.theme || {} });
       toast.success("Draft saved");
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
   };
@@ -253,6 +257,10 @@ export default function NewsletterPostEditor() {
           <Button data-testid="editor-preview" onClick={openPreview} variant="ghost"
             className="rounded-md gap-2 border border-[#27272A] h-9 text-xs hover:border-sky-400">
             <Eye className="w-3.5 h-3.5" /> Preview
+          </Button>
+          <Button data-testid="editor-theme" onClick={() => setThemeOpen(true)} variant="ghost"
+            className="rounded-md gap-2 border border-[#27272A] h-9 text-xs hover:border-fuchsia-300">
+            <Palette className="w-3.5 h-3.5" /> Theme
           </Button>
           <Button data-testid="editor-share" onClick={createShareLink} disabled={shareBusy}
             variant="ghost"
@@ -433,6 +441,49 @@ export default function NewsletterPostEditor() {
               ))}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Theme dialog — every surface color is user-controlled. */}
+      <Dialog open={themeOpen} onOpenChange={setThemeOpen}>
+        <DialogContent className="bg-[#141414] border-[#27272A] text-white max-w-2xl" data-testid="theme-dialog">
+          <DialogHeader>
+            <DialogTitle>Newsletter theme</DialogTitle>
+            <div className="text-xs text-[#71717A] mt-1">
+              Every surface color is yours. Changes apply on next save and preview.
+            </div>
+          </DialogHeader>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              ["title_color",    "Title",     "#0A0A0A"],
+              ["subtitle_color", "Subtitle",  "#71717A"],
+              ["body_bg",        "Page bg",   "#0A0A0A"],
+              ["card_bg",        "Card bg",   "#FFFFFF"],
+              ["header_bg",      "Header bg", "#005CEE"],
+              ["header_text",    "Header text","#FFFFFF"],
+              ["footer_bg",      "Footer bg", "#FAFAFA"],
+              ["footer_text",    "Footer text","#71717A"],
+            ].map(([k, label, dflt]) => (
+              <label key={k} className="flex flex-col text-[10px] text-[#71717A]">
+                {label}
+                <input type="color" value={themeVal(k, dflt)}
+                  onChange={(e) => setTheme(k, e.target.value)}
+                  data-testid={`theme-${k}`}
+                  className="mt-0.5 h-10 w-full bg-transparent border border-[#27272A] rounded cursor-pointer" />
+                <span className="mt-0.5 font-mono text-[9px] text-[#52525B]">{themeVal(k, dflt)}</span>
+              </label>
+            ))}
+          </div>
+          <div className="pt-3 border-t border-[#27272A] flex items-center justify-between">
+            <button onClick={() => setPost((p) => ({ ...p, theme: {} }))}
+              data-testid="theme-reset"
+              className="text-[11px] text-[#71717A] hover:text-white">Reset to defaults</button>
+            <Button onClick={() => { save(); setThemeOpen(false); }}
+              data-testid="theme-save"
+              className="btn-primary rounded-md gap-2">
+              <SaveIcon className="w-4 h-4" /> Save theme
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -644,29 +695,70 @@ function BlockEditor({ b, i, disabled, onChange, onRemove, onMove }) {
         </div>
       )}
       {b.type === "coupon" && (
-        <Input value={p.code || ""} onChange={(e) => onChange({ code: e.target.value.toUpperCase() })}
-          placeholder="COUPON CODE (must exist in this workspace)" disabled={disabled}
-          data-testid={`block-coupon-code-${i}`}
-          className="bg-[#141414] border-[#27272A] text-white text-xs font-mono" />
+        <div className="space-y-2">
+          <Input value={p.code || ""} onChange={(e) => onChange({ code: e.target.value.toUpperCase() })}
+            placeholder="COUPON CODE (must exist in this workspace)" disabled={disabled}
+            data-testid={`block-coupon-code-${i}`}
+            className="bg-[#141414] border-[#27272A] text-white text-xs font-mono" />
+          <ColorRow onChange={onChange} p={p} i={i} keys={[
+            ["accent", "Accent", "#005CEE"],
+            ["background", "Card bg", "#FFFFFF"],
+            ["headline_color", "Headline", "#0A0A0A"],
+          ]} />
+        </div>
       )}
       {b.type === "giftcard" && (
-        <Input value={p.giftcard_id || ""} onChange={(e) => onChange({ giftcard_id: e.target.value })}
-          placeholder="Gift card ID"
-          data-testid={`block-giftcard-id-${i}`}
-          className="bg-[#141414] border-[#27272A] text-white text-xs font-mono" />
+        <div className="space-y-2">
+          <Input value={p.giftcard_id || ""} onChange={(e) => onChange({ giftcard_id: e.target.value })}
+            placeholder="Gift card ID"
+            data-testid={`block-giftcard-id-${i}`}
+            className="bg-[#141414] border-[#27272A] text-white text-xs font-mono" />
+          <ColorRow onChange={onChange} p={p} i={i} keys={[
+            ["background", "Card bg", "#0A0A0A"],
+            ["color", "Text", "#FFFFFF"],
+          ]} />
+        </div>
       )}
       {b.type === "funnel" && (
-        <Input value={p.slug || ""} onChange={(e) => onChange({ slug: e.target.value })}
-          placeholder="Funnel slug (e.g. summer-drop)"
-          data-testid={`block-funnel-slug-${i}`}
-          className="bg-[#141414] border-[#27272A] text-white text-xs font-mono" />
+        <div className="space-y-2">
+          <Input value={p.slug || ""} onChange={(e) => onChange({ slug: e.target.value })}
+            placeholder="Funnel slug (e.g. summer-drop)"
+            data-testid={`block-funnel-slug-${i}`}
+            className="bg-[#141414] border-[#27272A] text-white text-xs font-mono" />
+          <ColorRow onChange={onChange} p={p} i={i} keys={[["accent", "Accent", "#005CEE"]]} />
+        </div>
       )}
-      {(b.type === "subscribe_form" || b.type === "referral_cta" || b.type === "divider") && (
+      {b.type === "subscribe_form" && (
+        <ColorRow onChange={onChange} p={p} i={i} keys={[
+          ["background", "Card bg", "#F4F4F5"],
+          ["accent", "Accent", "#005CEE"],
+        ]} />
+      )}
+      {b.type === "referral_cta" && (
+        <ColorRow onChange={onChange} p={p} i={i} keys={[["accent", "Accent", "#005CEE"]]} />
+      )}
+      {b.type === "divider" && (
         <div className="text-[11px] text-[#71717A]">No config needed — auto-rendered.</div>
       )}
       {["heading", "text", "button", "image", "video", "divider"].includes(b.type) && (
         <BlockStylePanel p={p} onChange={onChange} type={b.type} i={i} />
       )}
+    </div>
+  );
+}
+
+function ColorRow({ p, onChange, i, keys }) {
+  return (
+    <div className="flex flex-wrap gap-2 pt-1">
+      {keys.map(([k, label, dflt]) => (
+        <label key={k} className="flex items-center gap-1.5 text-[10px] text-[#71717A]">
+          <input type="color" value={p[k] || dflt}
+            onChange={(e) => onChange({ [k]: e.target.value })}
+            data-testid={`block-${i}-color-${k}`}
+            className="h-6 w-8 bg-transparent border border-[#27272A] rounded cursor-pointer" />
+          {label}
+        </label>
+      ))}
     </div>
   );
 }
